@@ -1,0 +1,89 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+/* ── Light theme overrides ────────────────────────────────────────────────────
+   Applied when <html class="light"> is set by ThemeProvider.
+   Default (no class / .dark class) = dark mode (existing behavior preserved).
+   ──────────────────────────────────────────────────────────────────────────── */
+
+/* Body */
+html.light body {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+/* Backgrounds */
+html.light .bg-slate-950 { background-color: #f1f5f9; }
+html.light .bg-slate-900 { background-color: #ffffff; }
+html.light .bg-slate-800 { background-color: #f1f5f9; }
+html.light .bg-slate-800\/50 { background-color: rgb(241 245 249 / 0.5); }
+html.light .bg-slate-700 { background-color: #e2e8f0; }
+html.light .bg-slate-600 { background-color: #cbd5e1; }
+
+/* Borders */
+html.light .border-slate-800 { border-color: #e2e8f0; }
+html.light .border-slate-700 { border-color: #cbd5e1; }
+html.light .border-slate-600 { border-color: #94a3b8; }
+
+/* Text */
+html.light .text-slate-100 { color: #0f172a; }
+html.light .text-slate-200 { color: #1e293b; }
+html.light .text-slate-300 { color: #334155; }
+html.light .text-slate-400 { color: #64748b; }
+html.light .text-slate-500 { color: #94a3b8; }
+html.light .text-slate-600 { color: #94a3b8; }
+
+/* Placeholder */
+html.light .placeholder-slate-500::placeholder { color: #94a3b8; }
+
+/* Hover states */
+html.light .hover\:bg-slate-800:hover { background-color: #e2e8f0; }
+html.light .hover\:bg-slate-700:hover { background-color: #cbd5e1; }
+html.light .hover\:border-slate-700:hover { border-color: #cbd5e1; }
+html.light .hover\:text-slate-100:hover { color: #0f172a; }
+html.light .hover\:text-slate-300:hover { color: #334155; }
+
+/* Group-hover */
+html.light .group:hover .group-hover\:text-slate-400 { color: #64748b; }
+
+/* Error / success banners */
+html.light .bg-red-900\/30 { background-color: rgb(254 226 226 / 0.8); }
+html.light .border-red-800 { border-color: #fca5a5; }
+html.light .text-red-300 { color: #dc2626; }
+
+/* Prose: undo prose-invert in light mode */
+html.light .prose-invert {
+  --tw-prose-body: #374151;
+  --tw-prose-headings: #111827;
+  --tw-prose-lead: #4b5563;
+  --tw-prose-links: #2563eb;
+  --tw-prose-bold: #111827;
+  --tw-prose-counters: #6b7280;
+  --tw-prose-bullets: #6b7280;
+  --tw-prose-hr: #e5e7eb;
+  --tw-prose-quotes: #111827;
+  --tw-prose-quote-borders: #e5e7eb;
+  --tw-prose-captions: #6b7280;
+  --tw-prose-code: #111827;
+  --tw-prose-pre-code: #e5e7eb;
+  --tw-prose-pre-bg: #1f2937;
+  --tw-prose-th-borders: #d1d5db;
+  --tw-prose-td-borders: #e5e7eb;
+}
+
+/* Sidebar active item */
+html.light .bg-blue-600\/20 { background-color: rgb(37 99 235 / 0.12); }
+
+/* Scrollbar (optional: lighter in light mode) */
+html.light ::-webkit-scrollbar-track { background: #f1f5f9; }
+html.light ::-webkit-scrollbar-thumb { background: #cbd5e1; }
+html.light ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }

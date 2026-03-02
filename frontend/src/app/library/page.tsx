@@ -1,0 +1,487 @@
+"use client";
+
+import { useEffect, useState, useCallback } from "react";
+import {
+  BookOpen, Upload, Trash2, MessageSquare, X, Folder, FolderOpen,
+  ExternalLink, Globe, FileText, FileCode, File, Link, Youtube, RefreshCw,
+} from "lucide-react";
+import { api, postStream } from "@/lib/api";
+import type { Document } from "@/lib/types";
+import Badge from "@/components/ui/Badge";
+import LoadingSpinner from "@/components/ui/LoadingSpinner";
+import StreamingText from "@/components/ui/StreamingText";
+
+interface CollectionMeta {
+  collection_id: string;
+  collection_name: string;
+}
+
+function parseMeta(json: string | null): CollectionMeta | null {
+  if (!json) return null;
+  try {
+    const m = JSON.parse(json);
+    if (m.collection_id && m.collection_name) return m as CollectionMeta;
+  } catch {}
+  return null;
+}
+
+interface Collection {
+  id: string;
+  name: string;
+  docs: Document[];
+}
+
+function DocIcon({ doc }: { doc: Document }) {
+  if (doc.source_type === "youtube") {
+    return <Youtube size={13} className="text-red-400 flex-shrink-0" />;
+  }
+  if (doc.source_type === "url" || doc.source_type === "scraped") {
+    return <Globe size={13} className="text-blue-400 flex-shrink-0" />;
+  }
+  const ext = (doc.filename || "").split(".").pop()?.toLowerCase();
+  if (ext === "html" || ext === "htm") {
+    return <FileCode size={13} className="text-green-400 flex-shrink-0" />;
+  }
+  if (ext === "txt") {
+    return <FileText size={13} className="text-slate-400 flex-shrink-0" />;
+  }
+  return <File size={13} className="text-red-300 flex-shrink-0" />;
+}
+
+export default function LibraryPage() {
+  const [docs, setDocs] = useState<Document[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [openFolders, setOpenFolders] = useState<Set<string>>(new Set());
+
+  // URL ingestion
+  const [urlInput, setUrlInput] = useState("");
+  const [ingesting, setIngesting] = useState(false);
+  const [ingestError, setIngestError] = useState<string | null>(null);
+
+  // Q&A state
+  const [qaOpen, setQaOpen] = useState(false);
+  const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState("");
+  const [qaRunning, setQaRunning] = useState(false);
+
+  const loadDocs = useCallback(() => {
+    api.documents.list().then((data) => {
+      setDocs(data as Document[]);
+      setLoading(false);
+    });
+  }, []);
+
+  useEffect(() => {
+    loadDocs();
+    const interval = setInterval(loadDocs, 5000);
+    return () => clearInterval(interval);
+  }, [loadDocs]);
+
+  const handleUpload = async (file: File) => {
+    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+    if (!["pdf", "txt", "html", "htm"].includes(ext)) {
+      alert("Only PDF, TXT, and HTML files are supported.");
+      return;
+    }
+    setUploading(true);
+    try {
+      await api.documents.upload(file);
+      loadDocs();
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleUpload(file);
+  };
+
+  const handleIngestUrl = async () => {
+    if (!urlInput.trim()) return;
+    setIngesting(true);
+    setIngestError(null);
+    try {
+      await api.documents.ingestUrl(urlInput.trim());
+      setUrlInput("");
+      loadDocs();
+    } catch (err) {
+      setIngestError(err instanceof Error ? err.message : "Failed to add URL");
+    } finally {
+      setIngesting(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (!confirm("Delete this document and its index?")) return;
+    await api.documents.delete(id);
+    setDocs((prev) => prev.filter((d) => d.id !== id));
+  };
+
+  const handleDeleteCollection = async (collectionDocs: Document[]) => {
+    if (!confirm(`Delete all ${collectionDocs.length} sources in this collection?`)) return;
+    for (const doc of collectionDocs) {
+      await api.documents.delete(doc.id);
+    }
+    setDocs((prev) => prev.filter((d) => !collectionDocs.find((cd) => cd.id === d.id)));
+  };
+
+  const handleAsk = async () => {
+    if (!question.trim()) return;
+    setQaRunning(true);
+    setAnswer("");
+    try {
+      await postStream(
+        "http://localhost:8000/api/documents/ask",
+        {
+          question,
+          doc_ids: selectedDocs.size > 0 ? Array.from(selectedDocs) : null,
+          top_k: 5,
+        },
+        (event, data) => {
+          const d = data as Record<string, unknown>;
+          if (event === "token") {
+            setAnswer((prev) => prev + (d.text as string));
+          } else if (event === "complete" || event === "error") {
+            setQaRunning(false);
+          }
+        }
+      );
+    } catch {
+      setQaRunning(false);
+    }
+  };
+
+  const toggleDocSelection = (id: string) => {
+    setSelectedDocs((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) { next.delete(id); } else { next.add(id); }
+      return next;
+    });
+  };
+
+  const toggleFolder = (id: string) => {
+    setOpenFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) { next.delete(id); } else { next.add(id); }
+      return next;
+    });
+  };
+
+  const toggleCollectionSelection = (collectionDocs: Document[]) => {
+    const ids = collectionDocs.map((d) => d.id);
+    const allSelected = ids.every((id) => selectedDocs.has(id));
+    setSelectedDocs((prev) => {
+      const next = new Set(prev);
+      if (allSelected) {
+        ids.forEach((id) => next.delete(id));
+      } else {
+        ids.forEach((id) => next.add(id));
+      }
+      return next;
+    });
+  };
+
+  const statusVariant = (status: string) => {
+    if (status === "indexed") return "green";
+    if (status === "error") return "red";
+    return "amber";
+  };
+
+  // Separate documents into collections and standalone docs
+  const collections: Collection[] = [];
+  const standaloneDocs: Document[] = [];
+  const collectionMap = new Map<string, Collection>();
+
+  for (const doc of docs) {
+    const meta = parseMeta(doc.metadata_json);
+    if (meta) {
+      if (!collectionMap.has(meta.collection_id)) {
+        const col: Collection = { id: meta.collection_id, name: meta.collection_name, docs: [] };
+        collectionMap.set(meta.collection_id, col);
+        collections.push(col);
+      }
+      collectionMap.get(meta.collection_id)!.docs.push(doc);
+    } else {
+      standaloneDocs.push(doc);
+    }
+  }
+
+  return (
+    <div className="p-8 max-w-5xl mx-auto">
+      <div className="flex items-center justify-between mb-8">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-100 mb-1">Document Library</h1>
+          <p className="text-slate-400 text-sm">
+            Upload files or add URLs to index and query with AI
+          </p>
+        </div>
+        <button
+          onClick={() => setQaOpen(true)}
+          className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-100 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+        >
+          <MessageSquare size={15} />
+          Ask Documents
+        </button>
+      </div>
+
+      {/* URL / YouTube ingestion */}
+      <div className="mb-4">
+        <div className="flex gap-2">
+          <input
+            type="url"
+            value={urlInput}
+            onChange={(e) => setUrlInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && handleIngestUrl()}
+            placeholder="Paste a web page URL or YouTube link..."
+            disabled={ingesting}
+            className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100
+                       placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
+          />
+          <button
+            onClick={handleIngestUrl}
+            disabled={ingesting || !urlInput.trim()}
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50
+                       disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            {ingesting ? (
+              <RefreshCw size={14} className="animate-spin" />
+            ) : (
+              <Link size={14} />
+            )}
+            {ingesting ? "Adding..." : "Add URL"}
+          </button>
+        </div>
+        {ingestError && (
+          <p className="mt-2 text-xs text-red-400">{ingestError}</p>
+        )}
+      </div>
+
+      {/* File upload zone */}
+      <div
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={handleDrop}
+        className={`border-2 border-dashed rounded-xl p-6 text-center mb-8 transition-colors ${
+          dragging ? "border-blue-500 bg-blue-900/10" : "border-slate-700 hover:border-slate-600"
+        }`}
+      >
+        <Upload size={22} className="mx-auto mb-2 text-slate-500" />
+        <p className="text-slate-400 text-sm mb-1">
+          Drag & drop a file here, or{" "}
+          <label className="text-blue-400 hover:underline cursor-pointer">
+            browse
+            <input
+              type="file"
+              accept=".pdf,.txt,.html,.htm"
+              className="hidden"
+              onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
+            />
+          </label>
+        </p>
+        <p className="text-slate-600 text-xs">PDF, TXT, HTML</p>
+        {uploading && <div className="mt-2"><LoadingSpinner size="sm" /></div>}
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-8"><LoadingSpinner /></div>
+      ) : docs.length === 0 ? (
+        <div className="text-center py-12 text-slate-500">
+          <BookOpen size={36} className="mx-auto mb-3 opacity-30" />
+          <p>No documents yet. Add a URL or upload a file.</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {/* Collections (research session sources) */}
+          {collections.map((col) => {
+            const isOpen = openFolders.has(col.id);
+            const allSelected = col.docs.every((d) => selectedDocs.has(d.id));
+            return (
+              <div key={col.id} className="border border-slate-800 rounded-xl overflow-hidden">
+                <div
+                  className="flex items-center gap-3 p-4 bg-slate-900 hover:bg-slate-800/60 cursor-pointer transition-colors"
+                  onClick={() => toggleFolder(col.id)}
+                >
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={() => toggleCollectionSelection(col.docs)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="rounded"
+                  />
+                  {isOpen ? (
+                    <FolderOpen size={16} className="text-amber-400 flex-shrink-0" />
+                  ) : (
+                    <Folder size={16} className="text-amber-400 flex-shrink-0" />
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="text-slate-100 text-sm font-medium truncate">{col.name}</p>
+                    <p className="text-slate-500 text-xs">{col.docs.length} web sources</p>
+                  </div>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDeleteCollection(col.docs); }}
+                    className="p-1.5 text-slate-500 hover:text-red-400 transition-colors"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+
+                {isOpen && (
+                  <div className="divide-y divide-slate-800 border-t border-slate-800">
+                    {col.docs.map((doc) => (
+                      <div
+                        key={doc.id}
+                        className={`flex items-center gap-3 px-4 py-3 bg-slate-950 transition-colors ${
+                          selectedDocs.has(doc.id) ? "bg-blue-900/10" : ""
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedDocs.has(doc.id)}
+                          onChange={() => toggleDocSelection(doc.id)}
+                          className="rounded ml-6"
+                        />
+                        <DocIcon doc={doc} />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-slate-200 text-sm truncate">{doc.title || doc.filename}</p>
+                          {doc.url && (
+                            <a
+                              href={doc.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-slate-500 text-xs hover:text-slate-300 flex items-center gap-1 mt-0.5 truncate"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <ExternalLink size={10} />
+                              {doc.url}
+                            </a>
+                          )}
+                        </div>
+                        <Badge variant={statusVariant(doc.status) as "green" | "red" | "amber"}>
+                          {doc.status}
+                        </Badge>
+                        <button
+                          onClick={() => handleDelete(doc.id)}
+                          className="p-1.5 text-slate-500 hover:text-red-400 transition-colors"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Standalone docs */}
+          {standaloneDocs.map((doc) => (
+            <div
+              key={doc.id}
+              className={`bg-slate-900 border rounded-xl p-4 flex items-center gap-4 transition-colors ${
+                selectedDocs.has(doc.id) ? "border-blue-500/50" : "border-slate-800"
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={selectedDocs.has(doc.id)}
+                onChange={() => toggleDocSelection(doc.id)}
+                className="rounded"
+              />
+              <DocIcon doc={doc} />
+              <div className="flex-1 min-w-0">
+                <p className="text-slate-100 font-medium text-sm truncate">
+                  {doc.title || doc.filename}
+                </p>
+                {doc.url && (
+                  <a
+                    href={doc.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-slate-500 text-xs hover:text-slate-300 flex items-center gap-1 mt-0.5 truncate"
+                  >
+                    <ExternalLink size={10} />
+                    {doc.url}
+                  </a>
+                )}
+                <div className="flex items-center gap-3 mt-1">
+                  <Badge variant={statusVariant(doc.status) as "green" | "red" | "amber"}>
+                    {doc.status}
+                  </Badge>
+                  {doc.page_count && (
+                    <span className="text-slate-500 text-xs">{doc.page_count} pages</span>
+                  )}
+                  {doc.chunk_count > 0 && (
+                    <span className="text-slate-500 text-xs">{doc.chunk_count} chunks</span>
+                  )}
+                  <span className="text-slate-600 text-xs">
+                    {new Date(doc.created_at).toLocaleDateString()}
+                  </span>
+                </div>
+              </div>
+              <button
+                onClick={() => handleDelete(doc.id)}
+                className="p-2 text-slate-500 hover:text-red-400 transition-colors"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Q&A Panel */}
+      {qaOpen && (
+        <div className="fixed inset-y-0 right-0 w-[480px] bg-slate-900 border-l border-slate-800 flex flex-col z-50">
+          <div className="flex items-center justify-between p-4 border-b border-slate-800">
+            <h3 className="text-slate-100 font-semibold text-sm">Ask Documents</h3>
+            <button onClick={() => setQaOpen(false)} className="text-slate-500 hover:text-white">
+              <X size={18} />
+            </button>
+          </div>
+          {selectedDocs.size > 0 && (
+            <div className="px-4 py-2 bg-blue-900/20 border-b border-slate-800">
+              <p className="text-xs text-blue-400">
+                Searching {selectedDocs.size} selected document{selectedDocs.size > 1 ? "s" : ""}
+              </p>
+            </div>
+          )}
+          <div className="flex-1 overflow-y-auto p-4">
+            {answer ? (
+              <StreamingText text={answer} />
+            ) : (
+              <p className="text-slate-500 text-sm">
+                {qaRunning ? "Searching..." : "Ask a question about your documents."}
+              </p>
+            )}
+          </div>
+          <div className="p-4 border-t border-slate-800">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !qaRunning && handleAsk()}
+                placeholder="Ask a question..."
+                className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+                disabled={qaRunning}
+              />
+              <button
+                onClick={handleAsk}
+                disabled={qaRunning || !question.trim()}
+                className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm transition-colors"
+              >
+                {qaRunning ? <LoadingSpinner size="sm" /> : "Ask"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
