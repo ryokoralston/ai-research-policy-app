@@ -40,7 +40,7 @@ export interface Report {
   id: string;
   title: string;
   report_type: "congressional_brief" | "policy_memo" | "risk_assessment";
-  status: "draft" | "complete" | "archived";
+  status: "draft" | "in_review" | "pre_approval" | "completed" | "complete" | "archived";
   word_count: number | null;
   session_id: string | null;
   created_at: string;

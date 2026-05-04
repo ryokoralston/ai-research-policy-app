@@ -161,7 +161,7 @@ export default function ReportViewPage() {
     }
   };
 
-  const handleStatusChange = async (newStatus: string) => {
+  const handleStatusChange = async (newStatus: Report["status"]) => {
     if (!report) return;
     setStatusSaving(true);
     try {
@@ -195,7 +195,7 @@ export default function ReportViewPage() {
             <div className="flex items-center gap-1.5">
               <select
                 value={report.status}
-                onChange={(e) => handleStatusChange(e.target.value)}
+                onChange={(e) => handleStatusChange(e.target.value as Report["status"])}
                 disabled={statusSaving}
                 className={[
                   "appearance-none text-xs font-medium px-2 py-0.5 rounded border-0 cursor-pointer",
