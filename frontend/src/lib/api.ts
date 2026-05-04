@@ -25,6 +25,7 @@ export const api = {
     get: (id: string) => request<unknown>(`/api/research/${id}`),
     delete: (id: string) =>
       request<{ deleted: string }>(`/api/research/${id}`, { method: "DELETE" }),
+    startUrl: () => `${BASE_URL}/api/research/start`,
     streamUrl: (sessionId: string) => `${BASE_URL}/api/research/${sessionId}/stream`,
     saveToLibrary: (sessionId: string) =>
       request<{ saved: number; collection_id: string }>(

@@ -153,7 +153,7 @@ export default function LibraryPage() {
     setAnswer("");
     try {
       await postStream(
-        "http://localhost:8000/api/documents/ask",
+        api.documents.askUrl(),
         {
           question,
           doc_ids: selectedDocs.size > 0 ? Array.from(selectedDocs) : null,

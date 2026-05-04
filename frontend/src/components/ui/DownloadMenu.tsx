@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Download, ChevronDown, FileText, File } from "lucide-react";
+import { api } from "@/lib/api";
 
 interface DownloadMenuProps {
   reportId: string;
@@ -20,7 +21,7 @@ export default function DownloadMenu({ reportId, variant = "button" }: DownloadM
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const base = `http://localhost:8000/api/reports/${reportId}/export`;
+  const base = api.reports.exportUrl(reportId);
 
   return (
     <div ref={ref} className="relative">

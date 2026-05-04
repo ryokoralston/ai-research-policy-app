@@ -73,7 +73,7 @@ export default function AnalysisPage() {
 
     try {
       await postStream(
-        "http://localhost:8000/api/analysis/start",
+        api.analysis.start(),
         { subject, analysis_type: analysisType, context: context || undefined, run_web_research: runWebResearch },
         (event, data) => {
           const d = data as Record<string, unknown>;

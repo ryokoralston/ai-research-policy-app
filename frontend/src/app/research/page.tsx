@@ -48,7 +48,7 @@ export default function ResearchPage() {
 
     try {
       // Start research session
-      const res = await fetch("http://localhost:8000/api/research/start", {
+      const res = await fetch(api.research.startUrl(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query, max_sources: maxSources }),
@@ -59,7 +59,7 @@ export default function ResearchPage() {
 
       // Stream the SSE results (GET endpoint)
       const streamRes = await fetch(
-        `http://localhost:8000/api/research/${session_id}/stream`,
+        api.research.streamUrl(session_id),
         { signal: abortRef.current.signal }
       );
       if (!streamRes.ok || !streamRes.body) {
