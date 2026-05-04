@@ -51,6 +51,16 @@ export const api = {
     get: (id: string) => request<unknown>(`/api/documents/${id}`),
     delete: (id: string) =>
       request<{ deleted: string }>(`/api/documents/${id}`, { method: "DELETE" }),
+    assignFolder: (doc_ids: string[], folder_id: string, folder_name: string) =>
+      request<{ updated: number }>("/api/documents/assign-folder", {
+        method: "POST",
+        body: JSON.stringify({ doc_ids, folder_id, folder_name }),
+      }),
+    renameFolder: (folder_id: string, new_name: string) =>
+      request<{ updated: number }>("/api/documents/rename-folder", {
+        method: "POST",
+        body: JSON.stringify({ folder_id, new_name }),
+      }),
     askUrl: () => `${BASE_URL}/api/documents/ask`,
   },
 

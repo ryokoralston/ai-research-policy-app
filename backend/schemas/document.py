@@ -23,6 +23,17 @@ class DocumentDetail(DocumentResponse):
     file_path: str | None
 
 
+class DocumentFolderRequest(BaseModel):
+    doc_ids: list[str]
+    folder_id: str
+    folder_name: str
+
+
+class FolderRenameRequest(BaseModel):
+    folder_id: str
+    new_name: str
+
+
 class DocumentAskRequest(BaseModel):
     question: str
     doc_ids: list[str] | None = None  # None = search all documents

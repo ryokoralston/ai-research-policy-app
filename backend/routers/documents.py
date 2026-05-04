@@ -12,7 +12,7 @@ from config import get_settings
 from database import get_db
 from models import Document, DocumentChunk
 from schemas import DocumentResponse, DocumentDetail, DocumentAskRequest
-from schemas.document import IngestUrlRequest
+from schemas.document import IngestUrlRequest, DocumentFolderRequest, FolderRenameRequest
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -196,6 +196,40 @@ def get_document(doc_id: str, db: Session = Depends(get_db)):
     resp = DocumentDetail.model_validate(doc)
     resp.chunk_count = chunk_count
     return resp
+
+
+@router.post("/assign-folder", response_model=dict)
+def assign_folder(body: DocumentFolderRequest, db: Session = Depends(get_db)):
+    import json
+    updated = 0
+    for doc_id in body.doc_ids:
+        doc = db.query(Document).filter(Document.id == doc_id).first()
+        if doc:
+            doc.metadata_json = json.dumps({
+                "collection_id": body.folder_id,
+                "collection_name": body.folder_name,
+            })
+            updated += 1
+    db.commit()
+    return {"updated": updated}
+
+
+@router.post("/rename-folder", response_model=dict)
+def rename_folder(body: FolderRenameRequest, db: Session = Depends(get_db)):
+    import json
+    updated = 0
+    for doc in db.query(Document).all():
+        if doc.metadata_json:
+            try:
+                meta = json.loads(doc.metadata_json)
+                if meta.get("collection_id") == body.folder_id:
+                    meta["collection_name"] = body.new_name
+                    doc.metadata_json = json.dumps(meta)
+                    updated += 1
+            except Exception:
+                pass
+    db.commit()
+    return {"updated": updated}
 
 
 @router.delete("/{doc_id}", response_model=dict)

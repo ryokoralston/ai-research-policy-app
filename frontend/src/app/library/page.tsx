@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   BookOpen, Upload, Trash2, MessageSquare, X, Folder, FolderOpen,
   ExternalLink, Globe, FileText, FileCode, File, Link, Youtube, RefreshCw,
+  FolderPlus, Pencil, Check,
 } from "lucide-react";
 import { api, postStream } from "@/lib/api";
 import type { Document } from "@/lib/types";
@@ -67,6 +68,17 @@ export default function LibraryPage() {
   const [answer, setAnswer] = useState("");
   const [qaRunning, setQaRunning] = useState(false);
 
+  // Folder modal state
+  const [folderModalOpen, setFolderModalOpen] = useState(false);
+  const [folderName, setFolderName] = useState("");
+  const [selectedFolderId, setSelectedFolderId] = useState<string>("");
+
+  // Folder rename state
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
+  const [renamingFolderName, setRenamingFolderName] = useState("");
+  const renameInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const loadDocs = useCallback(() => {
     api.documents.list().then((data) => {
       setDocs(data as Document[]);
@@ -80,15 +92,21 @@ export default function LibraryPage() {
     return () => clearInterval(interval);
   }, [loadDocs]);
 
-  const handleUpload = async (file: File) => {
-    const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
-    if (!["pdf", "txt", "html", "htm"].includes(ext)) {
-      alert("Only PDF, TXT, and HTML files are supported.");
+  useEffect(() => {
+    if (renamingFolderId) renameInputRef.current?.focus();
+  }, [renamingFolderId]);
+
+  const handleUpload = async (files: File[]) => {
+    const invalid = files.filter(
+      (f) => !["pdf", "txt", "html", "htm"].includes(f.name.split(".").pop()?.toLowerCase() ?? "")
+    );
+    if (invalid.length > 0) {
+      alert(`Unsupported file type: ${invalid.map((f) => f.name).join(", ")}\nOnly PDF, TXT, and HTML files are supported.`);
       return;
     }
     setUploading(true);
     try {
-      await api.documents.upload(file);
+      await Promise.all(files.map((f) => api.documents.upload(f)));
       loadDocs();
     } finally {
       setUploading(false);
@@ -98,8 +116,7 @@ export default function LibraryPage() {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleUpload(file);
+    if (e.dataTransfer.files.length > 0) handleUpload(Array.from(e.dataTransfer.files));
   };
 
   const handleIngestUrl = async () => {
@@ -187,12 +204,6 @@ export default function LibraryPage() {
     });
   };
 
-  const statusVariant = (status: string) => {
-    if (status === "indexed") return "green";
-    if (status === "error") return "red";
-    return "amber";
-  };
-
   // Separate documents into collections and standalone docs
   const collections: Collection[] = [];
   const standaloneDocs: Document[] = [];
@@ -211,6 +222,52 @@ export default function LibraryPage() {
       standaloneDocs.push(doc);
     }
   }
+
+  const allDocIds = docs.map((d) => d.id);
+  const allSelected = allDocIds.length > 0 && allDocIds.every((id) => selectedDocs.has(id));
+  const someSelected = !allSelected && allDocIds.some((id) => selectedDocs.has(id));
+
+  const toggleSelectAll = () => {
+    if (allSelected) {
+      setSelectedDocs(new Set());
+    } else {
+      setSelectedDocs(new Set(allDocIds));
+    }
+  };
+
+  const handleAssignFolder = async () => {
+    const name = folderName.trim() ||
+      (selectedFolderId ? collections.find((c) => c.id === selectedFolderId)?.name ?? "" : "");
+    if (!name) return;
+    const folderId = selectedFolderId || crypto.randomUUID();
+    await api.documents.assignFolder(Array.from(selectedDocs), folderId, name);
+    setFolderModalOpen(false);
+    setFolderName("");
+    setSelectedFolderId("");
+    loadDocs();
+  };
+
+  const startRename = (col: Collection, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRenamingFolderId(col.id);
+    setRenamingFolderName(col.name);
+  };
+
+  const commitRename = async () => {
+    if (!renamingFolderId || !renamingFolderName.trim()) {
+      setRenamingFolderId(null);
+      return;
+    }
+    await api.documents.renameFolder(renamingFolderId, renamingFolderName.trim());
+    setRenamingFolderId(null);
+    loadDocs();
+  };
+
+  const statusVariant = (status: string) => {
+    if (status === "indexed") return "green";
+    if (status === "error") return "red";
+    return "amber";
+  };
 
   return (
     <div className="p-8 max-w-5xl mx-auto">
@@ -249,17 +306,11 @@ export default function LibraryPage() {
             className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50
                        disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
           >
-            {ingesting ? (
-              <RefreshCw size={14} className="animate-spin" />
-            ) : (
-              <Link size={14} />
-            )}
+            {ingesting ? <RefreshCw size={14} className="animate-spin" /> : <Link size={14} />}
             {ingesting ? "Adding..." : "Add URL"}
           </button>
         </div>
-        {ingestError && (
-          <p className="mt-2 text-xs text-red-400">{ingestError}</p>
-        )}
+        {ingestError && <p className="mt-2 text-xs text-red-400">{ingestError}</p>}
       </div>
 
       {/* File upload zone */}
@@ -273,18 +324,21 @@ export default function LibraryPage() {
       >
         <Upload size={22} className="mx-auto mb-2 text-slate-500" />
         <p className="text-slate-400 text-sm mb-1">
-          Drag & drop a file here, or{" "}
+          Drag & drop files here, or{" "}
           <label className="text-blue-400 hover:underline cursor-pointer">
             browse
             <input
               type="file"
               accept=".pdf,.txt,.html,.htm"
-              className="hidden"
-              onChange={(e) => e.target.files?.[0] && handleUpload(e.target.files[0])}
+              multiple
+              style={{ display: "none" }}
+              onChange={(e) =>
+                e.target.files && e.target.files.length > 0 && handleUpload(Array.from(e.target.files))
+              }
             />
           </label>
         </p>
-        <p className="text-slate-600 text-xs">PDF, TXT, HTML</p>
+        <p className="text-slate-600 text-xs">PDF, TXT, HTML — multiple files supported</p>
         {uploading && <div className="mt-2"><LoadingSpinner size="sm" /></div>}
       </div>
 
@@ -297,19 +351,53 @@ export default function LibraryPage() {
         </div>
       ) : (
         <div className="space-y-4">
-          {/* Collections (research session sources) */}
+          {/* Select All bar */}
+          <div className="flex items-center gap-3 px-4 py-2.5 bg-slate-900 border border-slate-800 rounded-xl">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              ref={(el) => { if (el) el.indeterminate = someSelected; }}
+              onChange={toggleSelectAll}
+              className="rounded"
+            />
+            <span
+              className="text-slate-300 text-sm cursor-pointer select-none"
+              onClick={toggleSelectAll}
+            >
+              Select All
+            </span>
+            <div className="ml-auto flex items-center gap-3">
+              {selectedDocs.size > 0 && (
+                <>
+                  <span className="text-blue-400 text-xs">
+                    {selectedDocs.size} / {docs.length} selected
+                  </span>
+                  <button
+                    onClick={() => setFolderModalOpen(true)}
+                    className="flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    <FolderPlus size={13} />
+                    Add to Folder
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Collections */}
           {collections.map((col) => {
             const isOpen = openFolders.has(col.id);
-            const allSelected = col.docs.every((d) => selectedDocs.has(d.id));
+            const colAllSelected = col.docs.every((d) => selectedDocs.has(d.id));
+            const isRenaming = renamingFolderId === col.id;
             return (
               <div key={col.id} className="border border-slate-800 rounded-xl overflow-hidden">
                 <div
                   className="flex items-center gap-3 p-4 bg-slate-900 hover:bg-slate-800/60 cursor-pointer transition-colors"
-                  onClick={() => toggleFolder(col.id)}
+                  onClick={() => !isRenaming && toggleFolder(col.id)}
                 >
                   <input
                     type="checkbox"
-                    checked={allSelected}
+                    checked={colAllSelected}
                     onChange={() => toggleCollectionSelection(col.docs)}
                     onClick={(e) => e.stopPropagation()}
                     className="rounded"
@@ -319,10 +407,39 @@ export default function LibraryPage() {
                   ) : (
                     <Folder size={16} className="text-amber-400 flex-shrink-0" />
                   )}
-                  <div className="flex-1 min-w-0">
-                    <p className="text-slate-100 text-sm font-medium truncate">{col.name}</p>
-                    <p className="text-slate-500 text-xs">{col.docs.length} web sources</p>
+                  <div className="flex-1 min-w-0" onClick={(e) => e.stopPropagation()}>
+                    {isRenaming ? (
+                      <div className="flex items-center gap-2">
+                        <input
+                          ref={renameInputRef}
+                          value={renamingFolderName}
+                          onChange={(e) => setRenamingFolderName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") commitRename();
+                            if (e.key === "Escape") setRenamingFolderId(null);
+                          }}
+                          onBlur={commitRename}
+                          className="flex-1 bg-slate-800 border border-blue-500 rounded px-2 py-0.5 text-sm text-slate-100 focus:outline-none"
+                        />
+                        <button
+                          onMouseDown={(e) => { e.preventDefault(); commitRename(); }}
+                          className="p-1 text-blue-400 hover:text-blue-300"
+                        >
+                          <Check size={14} />
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-slate-100 text-sm font-medium truncate">{col.name}</p>
+                    )}
+                    <p className="text-slate-500 text-xs">{col.docs.length} documents</p>
                   </div>
+                  <button
+                    onClick={(e) => startRename(col, e)}
+                    className="p-1.5 text-slate-500 hover:text-blue-400 transition-colors"
+                    title="Rename folder"
+                  >
+                    <Pencil size={13} />
+                  </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); handleDeleteCollection(col.docs); }}
                     className="p-1.5 text-slate-500 hover:text-red-400 transition-colors"
@@ -432,6 +549,80 @@ export default function LibraryPage() {
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Folder Modal */}
+      {folderModalOpen && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-sm shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-slate-100 font-semibold">Add to Folder</h3>
+              <button
+                onClick={() => { setFolderModalOpen(false); setFolderName(""); setSelectedFolderId(""); }}
+                className="text-slate-500 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p className="text-slate-400 text-xs mb-4">
+              {selectedDocs.size} document{selectedDocs.size > 1 ? "s" : ""} selected
+            </p>
+
+            {collections.length > 0 && (
+              <div className="mb-4">
+                <p className="text-slate-400 text-xs mb-2">Add to existing folder:</p>
+                <div className="space-y-1 max-h-36 overflow-y-auto">
+                  {collections.map((col) => (
+                    <button
+                      key={col.id}
+                      onClick={() => { setSelectedFolderId(col.id); setFolderName(""); }}
+                      className={`w-full text-left flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${
+                        selectedFolderId === col.id
+                          ? "bg-blue-600/30 border border-blue-500/50 text-blue-300"
+                          : "bg-slate-800 hover:bg-slate-700 text-slate-300"
+                      }`}
+                    >
+                      <Folder size={13} className="text-amber-400 flex-shrink-0" />
+                      {col.name}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2 my-3">
+                  <div className="flex-1 h-px bg-slate-700" />
+                  <span className="text-slate-500 text-xs">or create new</span>
+                  <div className="flex-1 h-px bg-slate-700" />
+                </div>
+              </div>
+            )}
+
+            <input
+              type="text"
+              value={folderName}
+              onChange={(e) => { setFolderName(e.target.value); setSelectedFolderId(""); }}
+              onKeyDown={(e) => e.key === "Enter" && handleAssignFolder()}
+              placeholder="New folder name..."
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500 mb-4"
+              autoFocus
+            />
+
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => { setFolderModalOpen(false); setFolderName(""); setSelectedFolderId(""); }}
+                className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAssignFolder}
+                disabled={!folderName.trim() && !selectedFolderId}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+              >
+                <FolderPlus size={13} />
+                Add to Folder
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
