@@ -77,7 +77,6 @@ export default function LibraryPage() {
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const [renamingFolderName, setRenamingFolderName] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
-  const _fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadDocs = useCallback(() => {
     api.documents.list().then((data) => {
