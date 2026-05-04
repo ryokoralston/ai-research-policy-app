@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: ai-research-policy-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    plan: starter
+    disk:
+      name: data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite:////data/research.db
+      - key: CHROMA_PERSIST_DIR
+        value: /data/chroma
+      - key: UPLOADS_DIR
+        value: /data/uploads
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
