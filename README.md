@@ -2,6 +2,16 @@
 
 A web application for AI policy research, powered by Claude (Anthropic) and Tavily. Research, analyze, and generate reports — all in one place.
 
+## Screenshots
+
+| Dashboard | Research Agent |
+|---|---|
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Research](docs/screenshots/research.png) |
+
+| Document Library | Multi-Persona Debate |
+|---|---|
+| ![Library](docs/screenshots/library.png) | ![Debate](docs/screenshots/debate.png) |
+
 ## Features
 
 - **Research** — Automatically decomposes queries into sub-searches, runs parallel web searches via Tavily, and synthesizes results with Claude (streaming output)
