@@ -44,6 +44,7 @@ class DocumentAskRequest(BaseModel):
     doc_ids: list[str] | None = None  # None = search all documents
     top_k: int = 5
     chat_history: list[ChatMessage] | None = None  # previous turns for multi-turn chat
+    custom_system: str | None = None  # optional user-defined system prompt override
 
 
 class IngestUrlRequest(BaseModel):

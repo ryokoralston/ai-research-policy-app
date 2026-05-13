@@ -97,6 +97,7 @@ async def answer_question(
     top_k: int,
     db: Session,
     chat_history: list[dict] | None = None,
+    custom_system: str | None = None,
 ) -> AsyncIterator[str]:
     """Stream an answer using retrieved document chunks.
     chat_history = [{"role": "user"|"assistant", "content": "..."}, ...]
@@ -121,13 +122,20 @@ async def answer_question(
         )
     context = "\n\n---\n\n".join(context_parts)
 
-    system = (
+    # Use custom system prompt if provided, otherwise fall back to default
+    default_system = (
         "You are a research assistant for an AI policy institute. "
         "Answer questions based only on the provided source documents. "
         "Be concise and direct — aim for 3–5 sentences unless the question requires more detail. "
         "Cite sources using [Doc Title] format. "
         "If the documents do not contain enough information to answer, say so explicitly. "
         "You have access to the conversation history — use it to answer follow-up questions naturally."
+    )
+    system = (
+        f"{custom_system}\n\nAdditional constraint: Answer based only on the provided source documents. "
+        f"Cite sources using [Doc Title] format. "
+        f"If the documents do not contain enough information to answer, say so explicitly."
+        if custom_system else default_system
     )
 
     # Build full messages array: previous turns + current question with context

@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import {
   BookOpen, Upload, Trash2, MessageSquare, X, Folder, FolderOpen,
   ExternalLink, Globe, FileText, FileCode, File, Link, Youtube, RefreshCw,
-  FolderPlus, Pencil, Check,
+  FolderPlus, Pencil, Check, Settings2, ChevronDown,
 } from "lucide-react";
 import { api, postStream } from "@/lib/api";
 import type { Document } from "@/lib/types";
@@ -74,6 +74,8 @@ export default function LibraryPage() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [qaRunning, setQaRunning] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [showSystemPrompt, setShowSystemPrompt] = useState(false);
 
   // Folder modal state
   const [folderModalOpen, setFolderModalOpen] = useState(false);
@@ -187,6 +189,7 @@ export default function LibraryPage() {
           doc_ids: selectedDocs.size > 0 ? Array.from(selectedDocs) : null,
           top_k: 5,
           chat_history: apiHistory,
+          custom_system: systemPrompt.trim() || null,
         },
         (event, data) => {
           const d = data as Record<string, unknown>;
@@ -697,6 +700,38 @@ export default function LibraryPage() {
                 <X size={18} />
               </button>
             </div>
+          </div>
+
+          {/* System prompt configurator */}
+          <div className="border-b border-slate-800">
+            <button
+              onClick={() => setShowSystemPrompt((v) => !v)}
+              className="w-full flex items-center gap-2 px-4 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+            >
+              <Settings2 size={12} />
+              <span>System Prompt</span>
+              {systemPrompt && <span className="ml-auto text-blue-400">Custom</span>}
+              <ChevronDown size={12} className={`ml-auto transition-transform ${showSystemPrompt ? "rotate-180" : ""} ${systemPrompt ? "ml-0" : ""}`} />
+            </button>
+            {showSystemPrompt && (
+              <div className="px-4 pb-3">
+                <textarea
+                  value={systemPrompt}
+                  onChange={(e) => setSystemPrompt(e.target.value)}
+                  placeholder={`Default: "You are a research assistant for an AI policy institute..."\n\nOverride with your own instructions, e.g.:\n"Explain everything as if I'm a non-expert."`}
+                  rows={4}
+                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500 resize-none"
+                />
+                {systemPrompt && (
+                  <button
+                    onClick={() => setSystemPrompt("")}
+                    className="mt-1 text-xs text-slate-500 hover:text-red-400 transition-colors"
+                  >
+                    Reset to default
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Scope indicator */}
