@@ -75,26 +75,43 @@ async def generate_text(
     model: str | None = None,
     max_tokens: int = 4096,
     temperature: float = 1.0,
+    prefill: str = "",
+    stop_sequences: list[str] | None = None,
 ) -> str:
     """Non-streaming text generation. Returns full response text.
 
     temperature: 0.0 = deterministic (good for JSON/structured output),
                  1.0 = default (more varied responses).
+
+    prefill: Optional assistant message prefix. Claude treats this as text it
+             already wrote and continues from there. Useful for steering
+             output format (e.g. prefill='[' forces a JSON array start).
+             The returned string is prefill + generated content stitched together.
+
+    stop_sequences: Claude stops generating when any of these strings appears.
+                    The stop string itself is NOT included in the output.
+                    Combine with prefill to extract clean structured data:
+                      prefill='```json\\n', stop_sequences=['\\n```']
     """
     ai_settings = _load_ai_settings()
     model = model or ai_settings["fast_model"]
 
+    # Build messages, optionally appending a prefill assistant turn
+    messages: list[dict] = [{"role": "user", "content": prompt}]
+    if prefill:
+        messages.append({"role": "assistant", "content": prefill})
+
     if _is_openai(model):
         client = _get_openai_client(ai_settings)
-        messages = []
+        oai_messages = []
         if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
+            oai_messages.append({"role": "system", "content": system})
+        oai_messages.extend(messages)
         response = await client.chat.completions.create(
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
-            messages=messages,
+            messages=oai_messages,
         )
         return response.choices[0].message.content or ""
 
@@ -103,12 +120,16 @@ async def generate_text(
         "model": model,
         "max_tokens": max_tokens,
         "temperature": temperature,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages,
     }
     if system:
         kwargs["system"] = system
+    if stop_sequences:
+        kwargs["stop_sequences"] = stop_sequences
     message = await client.messages.create(**kwargs)
-    return message.content[0].text  # type: ignore[union-attr]
+    generated = message.content[0].text  # type: ignore[union-attr]
+    # Stitch prefill + generated so the caller always gets the complete string
+    return prefill + generated
 
 
 async def stream_text(

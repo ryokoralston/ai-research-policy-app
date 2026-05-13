@@ -31,17 +31,23 @@ async def run_research_agent(
 
     decomp_prompt = (
         f"You are a policy research assistant. Given this research question, "
-        f"generate 3 specific search queries that together provide comprehensive coverage. "
-        f"Return ONLY a JSON array of strings, nothing else.\n\n"
+        f"generate 3 specific search queries that together provide comprehensive coverage.\n\n"
         f"Research question: {query}"
     )
     try:
-        # temperature=0.2: JSON配列を確実に出力させるため低め
-        decomp_raw = await generate_text(decomp_prompt, temperature=0.2)
-        # Extract JSON array even if there's extra text
-        start = decomp_raw.find("[")
-        end = decomp_raw.rfind("]") + 1
-        sub_queries: list[str] = json.loads(decomp_raw[start:end])
+        # Pre-fill forces Claude to start with a JSON array open bracket.
+        # Stop sequence cuts off generation once the array closes,
+        # preventing any trailing explanation text.
+        # Result: '```json\n["query1", "query2", "query3"]\n'
+        decomp_raw = await generate_text(
+            decomp_prompt,
+            temperature=0.2,
+            prefill="```json\n",
+            stop_sequences=["\n```"],
+        )
+        # Strip the markdown fence prefix that came from the prefill
+        json_str = decomp_raw[len("```json\n"):]
+        sub_queries: list[str] = json.loads(json_str)
     except Exception:
         sub_queries = [query]
 
