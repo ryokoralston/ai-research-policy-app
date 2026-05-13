@@ -36,7 +36,8 @@ async def run_research_agent(
         f"Research question: {query}"
     )
     try:
-        decomp_raw = await generate_text(decomp_prompt)
+        # temperature=0.2: JSON配列を確実に出力させるため低め
+        decomp_raw = await generate_text(decomp_prompt, temperature=0.2)
         # Extract JSON array even if there's extra text
         start = decomp_raw.find("[")
         end = decomp_raw.rfind("]") + 1
@@ -99,7 +100,8 @@ async def run_research_agent(
         )
 
         try:
-            ai_summary = await generate_text(summary_prompt)
+            # temperature=0.3: 事実の要約なので低め（再現性重視）
+            ai_summary = await generate_text(summary_prompt, temperature=0.3)
         except Exception as e:
             ai_summary = result.snippet or ""
 
@@ -164,7 +166,8 @@ async def run_research_agent(
     )
 
     full_synthesis = ""
-    async for token in stream_text(synthesis_prompt, system=system):
+    # temperature=0.7: 読みやすい文体で総合するため少し高め
+    async for token in stream_text(synthesis_prompt, system=system, temperature=0.7):
         full_synthesis += token
         await queue.put(sse_event("synthesis_token", {"text": token}))
 

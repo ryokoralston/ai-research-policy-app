@@ -101,7 +101,8 @@ async def run_risk_analysis(
         )
 
         section_content = ""
-        async for token in stream_text(prompt, system=template["system"]):
+        # temperature=0.3: リスク分析は論理的・再現性重視のため低め
+        async for token in stream_text(prompt, system=template["system"], temperature=0.3):
             section_content += token
             yield sse_event("token", {"text": token, "section": section_key})
 

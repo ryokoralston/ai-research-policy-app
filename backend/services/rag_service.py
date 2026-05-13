@@ -150,7 +150,8 @@ async def answer_question(
     yield sse_event("start", {"question": question, "sources_count": len(chunks)})
 
     full_text = ""
-    async for token in stream_chat(messages, system=system):
+    # temperature=0.3: ドキュメントに基づく事実回答なので低め
+    async for token in stream_chat(messages, system=system, temperature=0.3):
         full_text += token
         yield sse_event("token", {"text": token})
 

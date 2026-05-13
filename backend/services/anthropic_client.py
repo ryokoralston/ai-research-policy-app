@@ -74,8 +74,13 @@ async def generate_text(
     system: str = "",
     model: str | None = None,
     max_tokens: int = 4096,
+    temperature: float = 1.0,
 ) -> str:
-    """Non-streaming text generation. Returns full response text."""
+    """Non-streaming text generation. Returns full response text.
+
+    temperature: 0.0 = deterministic (good for JSON/structured output),
+                 1.0 = default (more varied responses).
+    """
     ai_settings = _load_ai_settings()
     model = model or ai_settings["fast_model"]
 
@@ -88,6 +93,7 @@ async def generate_text(
         response = await client.chat.completions.create(
             model=model,
             max_tokens=max_tokens,
+            temperature=temperature,
             messages=messages,
         )
         return response.choices[0].message.content or ""
@@ -96,6 +102,7 @@ async def generate_text(
     kwargs: dict = {
         "model": model,
         "max_tokens": max_tokens,
+        "temperature": temperature,
         "messages": [{"role": "user", "content": prompt}],
     }
     if system:
@@ -109,8 +116,12 @@ async def stream_text(
     system: str = "",
     model: str | None = None,
     max_tokens: int = 8192,
+    temperature: float = 1.0,
 ) -> AsyncIterator[str]:
-    """Streaming text generation. Yields text tokens as they arrive."""
+    """Streaming text generation. Yields text tokens as they arrive.
+
+    temperature: 0.0 = deterministic, 1.0 = default (more varied).
+    """
     ai_settings = _load_ai_settings()
     model = model or ai_settings["main_model"]
 
@@ -123,6 +134,7 @@ async def stream_text(
         stream = await client.chat.completions.create(
             model=model,
             max_tokens=max_tokens,
+            temperature=temperature,
             messages=messages,
             stream=True,
         )
@@ -136,6 +148,7 @@ async def stream_text(
     kwargs: dict = {
         "model": model,
         "max_tokens": max_tokens,
+        "temperature": temperature,
         "messages": [{"role": "user", "content": prompt}],
     }
     if system:
@@ -150,9 +163,13 @@ async def stream_chat(
     system: str = "",
     model: str | None = None,
     max_tokens: int = 8192,
+    temperature: float = 1.0,
 ) -> AsyncIterator[str]:
     """Streaming multi-turn chat. messages = [{"role": "user"|"assistant", "content": "..."}, ...]
-    Preserves the full conversation history so Claude can reference previous turns."""
+    Preserves the full conversation history so Claude can reference previous turns.
+
+    temperature: 0.0 = deterministic, 1.0 = default (more varied).
+    """
     ai_settings = _load_ai_settings()
     model = model or ai_settings["main_model"]
 
@@ -165,6 +182,7 @@ async def stream_chat(
         stream = await client.chat.completions.create(
             model=model,
             max_tokens=max_tokens,
+            temperature=temperature,
             messages=full_messages,
             stream=True,
         )
@@ -178,6 +196,7 @@ async def stream_chat(
     kwargs: dict = {
         "model": model,
         "max_tokens": max_tokens,
+        "temperature": temperature,
         "messages": messages,  # full history, alternating user/assistant
     }
     if system:
