@@ -257,9 +257,16 @@ def delete_document(doc_id: str, db: Session = Depends(get_db)):
 
 @router.post("/ask")
 async def ask_documents(request: DocumentAskRequest, db: Session = Depends(get_db)):
+    history = (
+        [{"role": m.role, "content": m.content} for m in request.chat_history]
+        if request.chat_history else None
+    )
+
     async def event_generator():
         from services.rag_service import answer_question
-        async for event in answer_question(request.question, request.doc_ids, request.top_k, db):
+        async for event in answer_question(
+            request.question, request.doc_ids, request.top_k, db, history
+        ):
             yield event
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

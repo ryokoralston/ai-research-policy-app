@@ -9,7 +9,7 @@ from models import Document, DocumentChunk
 from rag.chunker import chunk_pdf, chunk_html, chunk_plain_text
 from rag.vector_store import VectorStore
 from services.embedding_service import EmbeddingService
-from services.anthropic_client import stream_text, sse_event
+from services.anthropic_client import stream_text, stream_chat, sse_event
 
 
 async def index_document(doc_id: str, db: Session) -> None:
@@ -96,8 +96,12 @@ async def answer_question(
     doc_ids: list[str] | None,
     top_k: int,
     db: Session,
+    chat_history: list[dict] | None = None,
 ) -> AsyncIterator[str]:
-    """Stream an answer to a question using retrieved document chunks."""
+    """Stream an answer using retrieved document chunks.
+    chat_history = [{"role": "user"|"assistant", "content": "..."}, ...]
+    Previous turns are passed to Claude so it can reference earlier exchanges.
+    """
     from rag.retriever import Retriever
 
     retriever = Retriever()
@@ -122,14 +126,23 @@ async def answer_question(
         "Answer questions based only on the provided source documents. "
         "Be concise and direct — aim for 3–5 sentences unless the question requires more detail. "
         "Cite sources using [Doc Title] format. "
-        "If the documents do not contain enough information to answer, say so explicitly."
+        "If the documents do not contain enough information to answer, say so explicitly. "
+        "You have access to the conversation history — use it to answer follow-up questions naturally."
     )
-    prompt = f"Question: {question}\n\nSource documents:\n---\n{context}\n---\n\nAnswer concisely with citations."
+
+    # Build full messages array: previous turns + current question with context
+    current_prompt = (
+        f"Question: {question}\n\n"
+        f"Source documents:\n---\n{context}\n---\n\n"
+        f"Answer concisely with citations."
+    )
+    messages = list(chat_history or [])
+    messages.append({"role": "user", "content": current_prompt})
 
     yield sse_event("start", {"question": question, "sources_count": len(chunks)})
 
     full_text = ""
-    async for token in stream_text(prompt, system=system):
+    async for token in stream_chat(messages, system=system):
         full_text += token
         yield sse_event("token", {"text": token})
 

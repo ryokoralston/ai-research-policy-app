@@ -145,6 +145,48 @@ async def stream_text(
             yield text
 
 
+async def stream_chat(
+    messages: list[dict],
+    system: str = "",
+    model: str | None = None,
+    max_tokens: int = 8192,
+) -> AsyncIterator[str]:
+    """Streaming multi-turn chat. messages = [{"role": "user"|"assistant", "content": "..."}, ...]
+    Preserves the full conversation history so Claude can reference previous turns."""
+    ai_settings = _load_ai_settings()
+    model = model or ai_settings["main_model"]
+
+    if _is_openai(model):
+        client = _get_openai_client(ai_settings)
+        full_messages = []
+        if system:
+            full_messages.append({"role": "system", "content": system})
+        full_messages.extend(messages)
+        stream = await client.chat.completions.create(
+            model=model,
+            max_tokens=max_tokens,
+            messages=full_messages,
+            stream=True,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+        return
+
+    client = _get_anthropic_client(ai_settings)
+    kwargs: dict = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": messages,  # full history, alternating user/assistant
+    }
+    if system:
+        kwargs["system"] = system
+    async with client.messages.stream(**kwargs) as stream:
+        async for text in stream.text_stream:
+            yield text
+
+
 def sse_event(event: str, data: dict) -> str:
     """Format a Server-Sent Event string."""
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"

@@ -34,10 +34,16 @@ class FolderRenameRequest(BaseModel):
     new_name: str
 
 
+class ChatMessage(BaseModel):
+    role: str   # "user" or "assistant"
+    content: str
+
+
 class DocumentAskRequest(BaseModel):
     question: str
     doc_ids: list[str] | None = None  # None = search all documents
     top_k: int = 5
+    chat_history: list[ChatMessage] | None = None  # previous turns for multi-turn chat
 
 
 class IngestUrlRequest(BaseModel):
