@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from models import RiskAnalysis, ResearchSession
 from schemas import AnalysisStartRequest
-from services.anthropic_client import stream_text, sse_event
+from services.anthropic_client import generate_text, stream_text, sse_event
 from services.research_agent import run_research_agent
 from templates import TEMPLATES
 
@@ -17,17 +17,13 @@ import asyncio
 
 
 def _strip_metadata(content: str, section_title: str = "") -> str:
-    """Remove metadata lines and duplicate section headers from section content."""
+    """Remove duplicate section headers from section content.
+    SCORES_JSON lines are no longer generated — scores are extracted via a
+    separate generate_text() call using prefill + stop sequences."""
     lines = content.splitlines()
     filtered = []
     for line in lines:
         stripped = line.strip()
-        # Remove SCORES_JSON lines
-        if stripped.startswith("SCORES_JSON:"):
-            continue
-        # Remove bare JSON objects (e.g. probability dicts)
-        if re.match(r'^\{".+"\}$', stripped) or re.match(r'^\{".+":.*\}$', stripped):
-            continue
         # Remove duplicate section header (e.g. "## Risk Dimensions" or "# Risk Dimensions")
         if section_title and re.match(r'^#{1,3}\s*' + re.escape(section_title) + r'\s*$', stripped, re.IGNORECASE):
             continue
@@ -106,15 +102,30 @@ async def run_risk_analysis(
             section_content += token
             yield sse_event("token", {"text": token, "section": section_key})
 
-        # Extract JSON scores before stripping metadata
+        # Extract scores using prefill + stop sequences (structured data technique).
+        # A separate generate_text() call gets clean JSON with no surrounding text,
+        # replacing the old fragile SCORES_JSON regex approach.
         if section_key == "risk_dimensions":
-            scores_match = re.search(r"SCORES_JSON:\s*(\{[^}]+\})", section_content)
-            if scores_match:
-                try:
-                    extracted_scores = json.loads(scores_match.group(1))
-                    yield sse_event("scores", {"scores": extracted_scores})
-                except json.JSONDecodeError:
-                    pass
+            scores_prompt = (
+                f"Based on this risk dimension analysis of '{request.subject}', "
+                f"extract the numerical score (1-10) for each dimension.\n\n"
+                f"Analysis:\n{section_content}\n\n"
+                f"Return a JSON object with exactly these keys: "
+                f"capability, deployment, governance, geopolitical, misuse, systemic"
+            )
+            try:
+                scores_raw = await generate_text(
+                    scores_prompt,
+                    temperature=0.0,        # fully deterministic — scores must be consistent
+                    prefill="```json\n",    # force Claude to open a code fence
+                    stop_sequences=["\n```"],  # stop when code fence closes
+                )
+                # Strip the markdown fence prefix that came from the prefill
+                json_str = scores_raw[len("```json\n"):]
+                extracted_scores = json.loads(json_str.strip())
+                yield sse_event("scores", {"scores": extracted_scores})
+            except (json.JSONDecodeError, Exception):
+                pass
 
         # Strip metadata lines and duplicate section headers from content
         section_content = _strip_metadata(section_content, section_title)

@@ -2,7 +2,6 @@ RISK_ASSESSMENT_SYSTEM = """You are a senior AI risk analyst at a policy researc
 
 Requirements:
 - Score each risk dimension 1-10 with clear justification
-- After each risk dimension section, output a JSON block with the score
 - Distinguish clearly between near-term (1-2 year), medium-term (3-5 year), and long-term (5+ year) risks
 - Ground all claims in available evidence
 - Be calibrated: avoid both excessive alarm and unwarranted reassurance
@@ -32,9 +31,7 @@ RISK_ASSESSMENT_SECTIONS = [
             "3. **Governance & Oversight Gap** (1=well-governed, 10=governance vacuum)\n"
             "4. **Geopolitical Risk Concentration** (1=distributed/benign, 10=concentrated/adversarial)\n"
             "5. **Misuse Potential** (1=difficult to misuse, 10=trivially weaponizable)\n"
-            "6. **Systemic/Cascading Risk** (1=contained, 10=civilization-scale)\n\n"
-            "After this section, output EXACTLY this JSON block (no markdown fence):\n"
-            "SCORES_JSON: {\"capability\": N, \"deployment\": N, \"governance\": N, \"geopolitical\": N, \"misuse\": N, \"systemic\": N}"
+            "6. **Systemic/Cascading Risk** (1=contained, 10=civilization-scale)"
         ),
     },
     {
