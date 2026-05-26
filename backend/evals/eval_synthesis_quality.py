@@ -164,7 +164,7 @@ TEST_DATASET = [
 
 # ── Prompt Under Test ─────────────────────────────────────────────────────────
 
-PROMPT_VERSION = "v2"
+PROMPT_VERSION = "v3"
 
 def build_synthesis_prompt(query: str, sources: list[dict]) -> str:
     sources_text = "\n\n".join(
@@ -180,10 +180,14 @@ def build_synthesis_prompt(query: str, sources: list[dict]) -> str:
         f"## Areas of Consensus\n(What sources agree on)\n\n"
         f"## Areas of Uncertainty or Debate\n(Contested claims, conflicting evidence)\n\n"
         f"## Evidence Gaps\n(Important questions the available sources do not answer)\n\n"
+        f"## Policy Recommendations\n"
+        f"(3-4 concrete, actionable recommendations for policymakers. "
+        f"For each: state the specific action, identify who should implement it "
+        f"— Congress, federal agency, international body, or industry — "
+        f"and explain what risk it addresses. "
+        f"Prioritize from most to least feasible.)\n\n"
         f"## Recommended Further Research\n"
-        f"(2-3 specific directions. For each: name the exact research question, "
-        f"who should conduct it — e.g. academic researchers, government agencies, NGOs — "
-        f"and what policy decision it would inform.)\n\n"
+        f"(2-3 specific research directions with clear policy relevance)\n\n"
         f"Cite sources inline as [Source N] throughout. "
         f"Every claim must reference at least one source."
     )
@@ -202,8 +206,11 @@ SYNTHESIS_SYSTEM = (
 async def run_prompt(test_case: dict) -> str:
     """Generate a synthesis for the given query + sources."""
     prompt = build_synthesis_prompt(test_case["query"], test_case["sources"])
-    # temperature=0.7: readable narrative synthesis (same as production)
-    return await generate_text(prompt, system=SYNTHESIS_SYSTEM, temperature=0.7)
+    # max_tokens=8192: v3 prompt added Policy Recommendations section;
+    # default 4096 caused truncation mid-sentence before reaching that section
+    return await generate_text(
+        prompt, system=SYNTHESIS_SYSTEM, temperature=0.7, max_tokens=8192
+    )
 
 
 # ── Model-Based Grader (LLM-as-judge) ────────────────────────────────────────
@@ -228,7 +235,7 @@ async def grade_output(query: str, synthesis: str) -> dict:
     """
     grader_prompt = (
         f"Research question: {query}\n\n"
-        f"Synthesis to evaluate:\n---\n{synthesis[:3000]}\n---\n\n"
+        f"Synthesis to evaluate:\n---\n{synthesis[:8000]}\n---\n\n"
         f"Score this synthesis on four dimensions (1=poor, 10=excellent):\n"
         f"1. citation_use   — Are [Source N] citations used correctly throughout?\n"
         f"2. coverage       — Are all required sections present and substantive?\n"
