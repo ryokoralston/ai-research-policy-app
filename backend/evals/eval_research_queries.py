@@ -27,10 +27,50 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.anthropic_client import generate_text
 
-# ── Test Dataset ──────────────────────────────────────────────────────────────
-# A collection of research questions the app might receive.
-# Tip: use Claude to generate more test cases (see course note "Generating Test Datasets").
+DATASET_FILE = Path(__file__).parent / "dataset_research_queries.json"
 
+# ── Dataset Generator ─────────────────────────────────────────────────────────
+# Uses claude-haiku-4-5 (fast + cheap) to auto-generate test cases.
+# Run once with --generate to create dataset_research_queries.json,
+# then subsequent runs load from file.
+
+async def generate_dataset(n: int = 8) -> list[dict]:
+    """Ask Haiku to generate n AI policy research questions for eval."""
+    prompt = (
+        f"Generate an evaluation dataset for a prompt evaluation. "
+        f"The dataset will be used to evaluate prompts that decompose AI policy "
+        f"research questions into specific web search queries.\n\n"
+        f"Generate an array of JSON objects, each with a 'task' property "
+        f"containing a realistic AI policy research question.\n\n"
+        f"Focus on questions about: AI regulation, governance risks, "
+        f"geopolitical AI competition, AI safety policy, sector-specific AI impacts.\n\n"
+        f"Please generate {n} objects."
+    )
+    raw = await generate_text(
+        prompt,
+        model="claude-haiku-4-5-20251001",  # fast + cheap for data generation
+        temperature=1.0,                     # high temp = more varied questions
+        prefill="```json",
+        stop_sequences=["```"],
+    )
+    json_str = raw[len("```json"):].strip()
+    return json.loads(json_str)
+
+
+async def load_or_generate_dataset() -> list[dict]:
+    """Load dataset from file if it exists; otherwise generate and save it."""
+    if DATASET_FILE.exists():
+        with open(DATASET_FILE) as f:
+            return json.load(f)
+    print("  Generating dataset with Haiku...")
+    dataset = await generate_dataset()
+    with open(DATASET_FILE, "w") as f:
+        json.dump(dataset, f, indent=2)
+    print(f"  Saved {len(dataset)} cases to {DATASET_FILE.name}")
+    return dataset
+
+
+# ── Fallback Dataset (used if --no-generate flag passed) ─────────────────────
 TEST_DATASET = [
     {"task": "What are the main AI governance risks from autonomous weapons systems?"},
     {"task": "How is the EU AI Act being implemented across member states?"},
@@ -159,18 +199,20 @@ async def run_test_case(test_case: dict, index: int, total: int) -> dict:
 
 # ── Run Full Eval ─────────────────────────────────────────────────────────────
 
-async def run_eval():
+async def run_eval(use_generated: bool = False):
+    dataset = await load_or_generate_dataset() if use_generated else TEST_DATASET
+
     print(f"{'='*60}")
     print(f"  Prompt Eval: Research Query Decomposition  ({PROMPT_VERSION})")
-    print(f"  Dataset size: {len(TEST_DATASET)} test cases")
+    print(f"  Dataset size: {len(dataset)} test cases")
+    print(f"  Dataset source: {'generated (Haiku)' if use_generated else 'hardcoded'}")
     print(f"{'='*60}")
 
     results = []
-    for i, test_case in enumerate(TEST_DATASET, 1):
-        result = await run_test_case(test_case, i, len(TEST_DATASET))
+    for i, test_case in enumerate(dataset, 1):
+        result = await run_test_case(test_case, i, len(dataset))
         results.append(result)
 
-    # Summary
     avg = sum(r["score"] for r in results) / len(results)
     max_score = results[0]["max_score"]
     pct = avg / max_score * 100
@@ -184,4 +226,7 @@ async def run_eval():
 
 
 if __name__ == "__main__":
-    asyncio.run(run_eval())
+    # python -m evals.eval_research_queries --generate  →  Haikuでデータセット生成
+    # python -m evals.eval_research_queries             →  手書きデータセットを使用
+    use_generated = "--generate" in sys.argv
+    asyncio.run(run_eval(use_generated=use_generated))
