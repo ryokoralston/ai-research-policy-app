@@ -173,27 +173,80 @@ def grade_output(output: str) -> dict:
     return {"score": score, "max_score": 10, "reasons": reasons, "queries": queries}
 
 
+# ── Model Grader (quality check) ─────────────────────────────────────────────
+# Code grader checks structure; model grader checks content quality.
+# Combined score = (code_score + model_score) / 2
+
+async def grade_query_quality(task: str, queries: list[str]) -> dict:
+    """Ask Claude to score query relevance and specificity (1–10)."""
+    if not queries:
+        return {"score": 0, "reasoning": "No queries to evaluate"}
+
+    queries_text = "\n".join(f"{i+1}. {q}" for i, q in enumerate(queries))
+    prompt = (
+        f"You are evaluating search queries generated for an AI policy research task.\n\n"
+        f"Research task: {task}\n\n"
+        f"Generated queries:\n{queries_text}\n\n"
+        f"Score these queries 1-10 based on:\n"
+        f"- Relevance: Do they directly address the research task?\n"
+        f"- Specificity: Are they precise enough to find useful sources?\n"
+        f"- Coverage: Together, do they cover different angles of the topic?\n\n"
+        f"Provide strengths (1-2), weaknesses (1-2), and a score.\n"
+        f'Return JSON with keys: "strengths" (array), "weaknesses" (array), '
+        f'"reasoning" (string), "score" (int 1-10)'
+    )
+    try:
+        raw = await generate_text(
+            prompt,
+            temperature=0.0,
+            prefill="```json",
+            stop_sequences=["```"],
+        )
+        json_str = raw[len("```json"):].strip()
+        return json.loads(json_str)
+    except Exception as e:
+        return {"score": 5, "reasoning": f"Grader error: {e}",
+                "strengths": [], "weaknesses": []}
+
+
 # ── Run Single Test Case ──────────────────────────────────────────────────────
 
 async def run_test_case(test_case: dict, index: int, total: int) -> dict:
     print(f"\nTest {index}/{total}: {test_case['task'][:60]}...")
     output = await run_prompt(test_case)
-    grade = grade_output(output)
 
-    for reason in grade["reasons"]:
+    # Code grader: structure check (0–10)
+    code_grade = grade_output(output)
+    for reason in code_grade["reasons"]:
         print(f"  {reason}")
 
-    if grade["queries"]:
-        for i, q in enumerate(grade["queries"], 1):
+    # Model grader: quality check (only if structure is valid)
+    model_score = 0
+    model_reasoning = ""
+    if code_grade["queries"]:
+        for i, q in enumerate(code_grade["queries"], 1):
             print(f"  [{i}] {q}")
+        model_grade = await grade_query_quality(test_case["task"], code_grade["queries"])
+        model_score = model_grade.get("score", 0)
+        model_reasoning = model_grade.get("reasoning", "")
+        print(f"  Quality score : {model_score}/10  ({model_reasoning[:60]}...)")
 
-    print(f"  Score: {grade['score']}/{grade['max_score']}")
+    # Combined score = average of code + model
+    combined = (code_grade["score"] + model_score) / 2
+    print(f"  Code score    : {code_grade['score']}/10")
+    print(f"  Combined      : {combined:.1f}/10")
+
     return {
         "task": test_case["task"],
-        "score": grade["score"],
-        "max_score": grade["max_score"],
-        "reasons": grade["reasons"],
-        "queries": grade["queries"],
+        "code_score": code_grade["score"],
+        "model_score": model_score,
+        "combined_score": combined,
+        "max_score": 10,
+        "reasons": code_grade["reasons"],
+        "queries": code_grade["queries"],
+        "model_reasoning": model_reasoning,
+        # keep "score" for summary compatibility
+        "score": combined,
     }
 
 
@@ -213,14 +266,16 @@ async def run_eval(use_generated: bool = False):
         result = await run_test_case(test_case, i, len(dataset))
         results.append(result)
 
-    avg = sum(r["score"] for r in results) / len(results)
-    max_score = results[0]["max_score"]
-    pct = avg / max_score * 100
+    avg_code     = sum(r["code_score"]     for r in results) / len(results)
+    avg_model    = sum(r["model_score"]    for r in results) / len(results)
+    avg_combined = sum(r["combined_score"] for r in results) / len(results)
 
     print(f"\n{'='*60}")
-    print(f"  Prompt version : {PROMPT_VERSION}")
-    print(f"  Average score  : {avg:.1f} / {max_score}  ({pct:.0f}%)")
-    print(f"  Pass rate      : {sum(1 for r in results if r['score'] >= 8)}/{len(results)} (score ≥ 8)")
+    print(f"  Prompt version   : {PROMPT_VERSION}")
+    print(f"  Avg code score   : {avg_code:.1f} / 10  (structure)")
+    print(f"  Avg model score  : {avg_model:.1f} / 10  (quality)")
+    print(f"  Avg combined     : {avg_combined:.1f} / 10")
+    print(f"  Pass rate        : {sum(1 for r in results if r['combined_score'] >= 8)}/{len(results)} (≥ 8)")
     print(f"{'='*60}")
     return results
 
