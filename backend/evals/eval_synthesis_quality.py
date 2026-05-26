@@ -234,7 +234,14 @@ async def grade_output(query: str, synthesis: str) -> dict:
         f"2. coverage       — Are all required sections present and substantive?\n"
         f"3. clarity        — Is the writing clear, precise, and policy-appropriate?\n"
         f"4. actionability  — Are the recommendations specific and useful?\n\n"
-        f'Return JSON with keys: "citation_use", "coverage", "clarity", "actionability", "reasoning"'
+        f"For each dimension provide:\n"
+        f"- strengths: 1-2 specific things done well\n"
+        f"- weaknesses: 1-2 specific areas for improvement\n"
+        f"- score: number 1-10\n\n"
+        f"Also provide an overall reasoning string summarizing the synthesis quality.\n\n"
+        f'Return JSON with keys: "citation_use", "coverage", "clarity", "actionability" '
+        f'(each an object with "strengths" array, "weaknesses" array, "score" int), '
+        f'plus a top-level "reasoning" string.'
     )
 
     try:
@@ -248,12 +255,16 @@ async def grade_output(query: str, synthesis: str) -> dict:
         json_str = raw[len("```json"):].strip()
         result = json.loads(json_str)
 
-        scores = [result[k] for k in ("citation_use", "coverage", "clarity", "actionability")]
+        dims = ("citation_use", "coverage", "clarity", "actionability")
+        scores = [result[k]["score"] for k in dims]
         result["average"] = sum(scores) / len(scores)
         return result
     except Exception as e:
         return {
-            "citation_use": 0, "coverage": 0, "clarity": 0, "actionability": 0,
+            "citation_use": {"score": 0, "strengths": [], "weaknesses": []},
+            "coverage":     {"score": 0, "strengths": [], "weaknesses": []},
+            "clarity":      {"score": 0, "strengths": [], "weaknesses": []},
+            "actionability":{"score": 0, "strengths": [], "weaknesses": []},
             "average": 0, "reasoning": f"Grader error: {e}"
         }
 
@@ -266,10 +277,14 @@ async def run_test_case(test_case: dict, index: int, total: int) -> dict:
     synthesis = await run_prompt(test_case)
     grade = await grade_output(test_case["query"], synthesis)
 
-    print(f"  citation_use  : {grade['citation_use']}/10")
-    print(f"  coverage      : {grade['coverage']}/10")
-    print(f"  clarity       : {grade['clarity']}/10")
-    print(f"  actionability : {grade['actionability']}/10")
+    for dim in ("citation_use", "coverage", "clarity", "actionability"):
+        d = grade[dim]
+        score = d["score"] if isinstance(d, dict) else d
+        strength = d["strengths"][0] if isinstance(d, dict) and d["strengths"] else ""
+        weakness = d["weaknesses"][0] if isinstance(d, dict) and d["weaknesses"] else ""
+        print(f"  {dim:<16}: {score}/10")
+        if strength: print(f"    + {strength[:80]}")
+        if weakness: print(f"    - {weakness[:80]}")
     print(f"  Average       : {grade['average']:.1f}/10")
     print(f"  Reasoning     : {str(grade.get('reasoning', ''))[:120]}")
 
@@ -305,7 +320,8 @@ async def run_eval():
 
     # Per-dimension averages
     for dim in ("citation_use", "coverage", "clarity", "actionability"):
-        dim_avg = sum(r["grade"][dim] for r in results) / len(results)
+        d_vals = [r["grade"][dim] for r in results]
+        dim_avg = sum(v["score"] if isinstance(v, dict) else v for v in d_vals) / len(d_vals)
         print(f"  {dim:<16}: {dim_avg:.1f}/10")
     print(f"{'='*60}")
 
