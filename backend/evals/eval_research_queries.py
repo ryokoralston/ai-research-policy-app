@@ -40,10 +40,17 @@ async def generate_dataset(n: int = 8) -> list[dict]:
         f"Generate an evaluation dataset for a prompt evaluation. "
         f"The dataset will be used to evaluate prompts that decompose AI policy "
         f"research questions into specific web search queries.\n\n"
-        f"Generate an array of JSON objects, each with a 'task' property "
-        f"containing a realistic AI policy research question.\n\n"
+        f"Generate an array of JSON objects, each with:\n"
+        f"- 'task': a realistic AI policy research question\n"
+        f"- 'solution_criteria': a string describing what makes a good set of "
+        f"search queries for this task (e.g. what topics, angles, or sources "
+        f"the queries should collectively cover)\n\n"
         f"Focus on questions about: AI regulation, governance risks, "
         f"geopolitical AI competition, AI safety policy, sector-specific AI impacts.\n\n"
+        f"Example:\n"
+        f'{{"task": "What are the risks of AI in hiring?", '
+        f'"solution_criteria": "Queries should cover bias/discrimination risks, '
+        f'legal frameworks (EEOC, EU AI Act), and employer best practices"}}\n\n'
         f"Please generate {n} objects."
     )
     raw = await generate_text(
@@ -72,14 +79,22 @@ async def load_or_generate_dataset() -> list[dict]:
 
 # ── Fallback Dataset (used if --no-generate flag passed) ─────────────────────
 TEST_DATASET = [
-    {"task": "What are the main AI governance risks from autonomous weapons systems?"},
-    {"task": "How is the EU AI Act being implemented across member states?"},
-    {"task": "What is the current state of AI regulation in China?"},
-    {"task": "What are the economic impacts of large language models on employment?"},
-    {"task": "How are AI models being used in clinical healthcare decision-making?"},
-    {"task": "What oversight mechanisms exist for AI in the US federal government?"},
-    {"task": "What are the risks of AI-generated disinformation in elections?"},
-    {"task": "How are technology companies self-regulating AI development?"},
+    {"task": "What are the main AI governance risks from autonomous weapons systems?",
+     "solution_criteria": "Queries should cover accountability gaps, international law (CCW), and specific risk scenarios like target misidentification"},
+    {"task": "How is the EU AI Act being implemented across member states?",
+     "solution_criteria": "Queries should cover national authority designation, compliance timelines, and divergence between member states"},
+    {"task": "What is the current state of AI regulation in China?",
+     "solution_criteria": "Queries should cover algorithmic recommendation rules, generative AI regulations, and comparison with Western approaches"},
+    {"task": "What are the economic impacts of large language models on employment?",
+     "solution_criteria": "Queries should cover job displacement evidence, new job creation, wage effects, and sector-specific impacts"},
+    {"task": "How are AI models being used in clinical healthcare decision-making?",
+     "solution_criteria": "Queries should cover diagnostic AI, clinical decision support systems, regulatory approval (FDA), and patient safety concerns"},
+    {"task": "What oversight mechanisms exist for AI in the US federal government?",
+     "solution_criteria": "Queries should cover EO 14110, NIST AI RMF, OMB guidance, and agency-level implementation gaps"},
+    {"task": "What are the risks of AI-generated disinformation in elections?",
+     "solution_criteria": "Queries should cover deepfakes, LLM-generated content, detection tools, and existing legal/platform responses"},
+    {"task": "How are technology companies self-regulating AI development?",
+     "solution_criteria": "Queries should cover voluntary commitments, AI safety teams, industry consortia, and effectiveness evidence"},
 ]
 
 
@@ -177,20 +192,26 @@ def grade_output(output: str) -> dict:
 # Code grader checks structure; model grader checks content quality.
 # Combined score = (code_score + model_score) / 2
 
-async def grade_query_quality(task: str, queries: list[str]) -> dict:
+async def grade_query_quality(task: str, queries: list[str],
+                              solution_criteria: str = "") -> dict:
     """Ask Claude to score query relevance and specificity (1–10)."""
     if not queries:
         return {"score": 0, "reasoning": "No queries to evaluate"}
 
     queries_text = "\n".join(f"{i+1}. {q}" for i, q in enumerate(queries))
+    criteria_section = (
+        f"\nSolution criteria (what good queries should cover):\n{solution_criteria}\n"
+        if solution_criteria else ""
+    )
     prompt = (
         f"You are evaluating search queries generated for an AI policy research task.\n\n"
-        f"Research task: {task}\n\n"
+        f"Research task: {task}\n"
+        f"{criteria_section}\n"
         f"Generated queries:\n{queries_text}\n\n"
         f"Score these queries 1-10 based on:\n"
         f"- Relevance: Do they directly address the research task?\n"
         f"- Specificity: Are they precise enough to find useful sources?\n"
-        f"- Coverage: Together, do they cover different angles of the topic?\n\n"
+        f"- Coverage: Together, do they cover the angles specified in the criteria?\n\n"
         f"Provide strengths (1-2), weaknesses (1-2), and a score.\n"
         f'Return JSON with keys: "strengths" (array), "weaknesses" (array), '
         f'"reasoning" (string), "score" (int 1-10)'
@@ -226,7 +247,11 @@ async def run_test_case(test_case: dict, index: int, total: int) -> dict:
     if code_grade["queries"]:
         for i, q in enumerate(code_grade["queries"], 1):
             print(f"  [{i}] {q}")
-        model_grade = await grade_query_quality(test_case["task"], code_grade["queries"])
+        model_grade = await grade_query_quality(
+            test_case["task"],
+            code_grade["queries"],
+            solution_criteria=test_case.get("solution_criteria", ""),
+        )
         model_score = model_grade.get("score", 0)
         model_reasoning = model_grade.get("reasoning", "")
         print(f"  Quality score : {model_score}/10  ({model_reasoning[:60]}...)")
