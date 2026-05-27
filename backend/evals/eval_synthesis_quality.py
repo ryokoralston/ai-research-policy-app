@@ -235,7 +235,7 @@ async def grade_output(query: str, synthesis: str) -> dict:
     """
     grader_prompt = (
         f"<task>\n{query}\n</task>\n\n"
-        f"<solution>\n{synthesis[:8000]}\n</solution>\n\n"
+        f"<solution>\n{synthesis[:16000]}\n</solution>\n\n"
         f"Score this synthesis on four dimensions (1=poor, 10=excellent):\n"
         f"1. citation_use   — Are [Source N] citations used correctly throughout?\n"
         f"2. coverage       — Are all required sections present and substantive?\n"
@@ -263,10 +263,17 @@ async def grade_output(query: str, synthesis: str) -> dict:
         result = json.loads(json_str)
 
         dims = ("citation_use", "coverage", "clarity", "actionability")
+        # Explicit KeyError check: report which dimension is missing
+        for k in dims:
+            if k not in result:
+                raise KeyError(f"Grader response missing dimension: '{k}'")
+            if "score" not in result[k]:
+                raise KeyError(f"Grader dimension '{k}' missing 'score' key")
         scores = [result[k]["score"] for k in dims]
         result["average"] = sum(scores) / len(scores)
         return result
     except Exception as e:
+        print(f"  ⚠️  Grader error: {e}")
         return {
             "citation_use": {"score": 0, "strengths": [], "weaknesses": []},
             "coverage":     {"score": 0, "strengths": [], "weaknesses": []},

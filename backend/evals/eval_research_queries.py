@@ -61,12 +61,16 @@ async def generate_dataset(n: int = 8) -> list[dict]:
         stop_sequences=["```"],
     )
     json_str = raw[len("```json"):].strip()
-    return json.loads(json_str)
+    try:
+        return json.loads(json_str)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"generate_dataset: invalid JSON from model: {e}\nRaw: {raw[:200]}")
 
 
-async def load_or_generate_dataset() -> list[dict]:
-    """Load dataset from file if it exists; otherwise generate and save it."""
-    if DATASET_FILE.exists():
+async def load_or_generate_dataset(force: bool = False) -> list[dict]:
+    """Load dataset from file if it exists; otherwise generate and save it.
+    Pass force=True to regenerate even if the file exists (--generate flag)."""
+    if DATASET_FILE.exists() and not force:
         with open(DATASET_FILE) as f:
             return json.load(f)
     print("  Generating dataset with Haiku...")
@@ -254,7 +258,8 @@ async def run_test_case(test_case: dict, index: int, total: int) -> dict:
         )
         model_score = model_grade.get("score", 0)
         model_reasoning = model_grade.get("reasoning", "")
-        print(f"  Quality score : {model_score}/10  ({model_reasoning[:60]}...)")
+        preview = (model_reasoning[:60] + "...") if len(model_reasoning) > 60 else model_reasoning
+        print(f"  Quality score : {model_score}/10  ({preview})")
 
     # Combined score = average of code + model
     combined = (code_grade["score"] + model_score) / 2
@@ -278,7 +283,7 @@ async def run_test_case(test_case: dict, index: int, total: int) -> dict:
 # ── Run Full Eval ─────────────────────────────────────────────────────────────
 
 async def run_eval(use_generated: bool = False):
-    dataset = await load_or_generate_dataset() if use_generated else TEST_DATASET
+    dataset = await load_or_generate_dataset(force=True) if use_generated else TEST_DATASET
 
     print(f"{'='*60}")
     print(f"  Prompt Eval: Research Query Decomposition  ({PROMPT_VERSION})")
