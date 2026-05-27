@@ -199,15 +199,15 @@ async def grade_query_quality(task: str, queries: list[str],
         return {"score": 0, "reasoning": "No queries to evaluate"}
 
     queries_text = "\n".join(f"{i+1}. {q}" for i, q in enumerate(queries))
-    criteria_section = (
-        f"\nSolution criteria (what good queries should cover):\n{solution_criteria}\n"
+    criteria_block = (
+        f"\n<criteria>\n{solution_criteria}\n</criteria>"
         if solution_criteria else ""
     )
     prompt = (
         f"You are evaluating search queries generated for an AI policy research task.\n\n"
-        f"Research task: {task}\n"
-        f"{criteria_section}\n"
-        f"Generated queries:\n{queries_text}\n\n"
+        f"<task>\n{task}\n</task>"
+        f"{criteria_block}\n\n"
+        f"<queries>\n{queries_text}\n</queries>\n\n"
         f"Score these queries 1-10 based on:\n"
         f"- Relevance: Do they directly address the research task?\n"
         f"- Specificity: Are they precise enough to find useful sources?\n"

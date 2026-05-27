@@ -234,8 +234,8 @@ async def grade_output(query: str, synthesis: str) -> dict:
     Returns average score (0–10) plus per-dimension breakdown.
     """
     grader_prompt = (
-        f"Research question: {query}\n\n"
-        f"Synthesis to evaluate:\n---\n{synthesis[:8000]}\n---\n\n"
+        f"<task>\n{query}\n</task>\n\n"
+        f"<solution>\n{synthesis[:8000]}\n</solution>\n\n"
         f"Score this synthesis on four dimensions (1=poor, 10=excellent):\n"
         f"1. citation_use   — Are [Source N] citations used correctly throughout?\n"
         f"2. coverage       — Are all required sections present and substantive?\n"
