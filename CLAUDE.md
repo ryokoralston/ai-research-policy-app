@@ -14,6 +14,21 @@
 - App UI must always be in English — never add Japanese text to the app.
 - Japanese responses preferred when user writes in Japanese.
 
+## Bug Fix Workflow (7 Steps)
+
+When fixing any bug, follow these steps **in order**. Do not start fixing code until Step 3 is complete.
+At the end of each step, report what was found and what comes next.
+If information is insufficient, ask — do not guess.
+Use simple explanations so non-engineers can understand.
+
+1. **現象の整理** — Summarize the problem in plain language. Ask if any information is missing.
+2. **再現の確認** — Describe exact steps to reproduce. Identify required conditions (data, environment, sequence).
+3. **原因の調査** — Identify root cause. Do not write any fix until this step is complete.
+4. **修正** — Fix the code, targeting the root cause identified in Step 3.
+5. **テスト・確認** — Verify the fix works and check for side effects. Run relevant evals/tests.
+6. **リリース・本番反映** — Commit and push after tests pass (following commit rules above).
+7. **振り返り・再発防止** — Note why it happened and what can prevent recurrence.
+
 ## Stack Quick Reference
 
 - **Backend**: Python + FastAPI — `cd backend && source venv/bin/activate && uvicorn main:app --reload --port 8000`
