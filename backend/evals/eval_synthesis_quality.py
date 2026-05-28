@@ -30,6 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.anthropic_client import generate_text
+from evals.report import build_html_report, save_report
 
 # ── Test Dataset ──────────────────────────────────────────────────────────────
 # Each case has a research query + a small set of pre-written source summaries
@@ -223,7 +224,8 @@ GRADER_SYSTEM = (
     "Be strict but fair. Score only what is present in the synthesis."
 )
 
-async def grade_output(query: str, synthesis: str) -> dict:
+async def grade_output(query: str, synthesis: str,
+                       extra_criteria: str = "") -> dict:
     """
     Ask Claude to grade the synthesis on four dimensions (1–10 each):
       - citation_use    : Are [Source N] citations used correctly and consistently?
@@ -231,12 +233,26 @@ async def grade_output(query: str, synthesis: str) -> dict:
       - clarity         : Is the writing clear and policy-appropriate?
       - actionability   : Are the recommendations specific and useful?
 
+    extra_criteria: mandatory requirements — ANY violation → score ≤ 3 on that dim.
     Returns average score (0–10) plus per-dimension breakdown.
     """
+    mandatory_block = ""
+    if extra_criteria:
+        mandatory_block = (
+            f"\nMandatory Requirements — ANY VIOLATION means a score of 3 or lower:\n"
+            f"<extra_important_criteria>\n{extra_criteria}\n</extra_important_criteria>\n"
+        )
+
     grader_prompt = (
         f"<task>\n{query}\n</task>\n\n"
         f"<solution>\n{synthesis[:16000]}\n</solution>\n\n"
-        f"Score this synthesis on four dimensions (1=poor, 10=excellent):\n"
+        f"{mandatory_block}"
+        f"Score this synthesis on four dimensions using these tiers:\n"
+        f"  1–3 : Fails one or more mandatory requirements\n"
+        f"  4–6 : Meets mandatory requirements but has significant gaps\n"
+        f"  7–8 : Meets requirements with only minor issues\n"
+        f"  9–10: Fully meets all requirements\n\n"
+        f"Dimensions:\n"
         f"1. citation_use   — Are [Source N] citations used correctly throughout?\n"
         f"2. coverage       — Are all required sections present and substantive?\n"
         f"3. clarity        — Is the writing clear, precise, and policy-appropriate?\n"
@@ -289,7 +305,14 @@ async def run_test_case(test_case: dict, index: int, total: int) -> dict:
     print(f"\nTest {index}/{total}: {test_case['query'][:60]}...")
 
     synthesis = await run_prompt(test_case)
-    grade = await grade_output(test_case["query"], synthesis)
+    grade = await grade_output(
+        test_case["query"],
+        synthesis,
+        extra_criteria=(
+            "Every factual claim must be supported by at least one [Source N] citation. "
+            "The Policy Recommendations section must be present and contain at least 3 items."
+        ),
+    )
 
     for dim in ("citation_use", "coverage", "clarity", "actionability"):
         d = grade[dim]
@@ -305,6 +328,7 @@ async def run_test_case(test_case: dict, index: int, total: int) -> dict:
     return {
         "query": test_case["query"],
         "grade": grade,
+        "synthesis": synthesis,
         "synthesis_preview": synthesis[:200],
     }
 
@@ -338,6 +362,35 @@ async def run_eval():
         dim_avg = sum(v["score"] if isinstance(v, dict) else v for v in d_vals) / len(d_vals)
         print(f"  {dim:<16}: {dim_avg:.1f}/10")
     print(f"{'='*60}")
+
+    # HTML report
+    dims = ("citation_use", "coverage", "clarity", "actionability")
+    entries = [
+        {
+            "scenario":   r["query"],
+            "inputs":     {"query": r["query"][:80]},
+            "criteria":   [
+                "Every claim cites [Source N]",
+                "All sections present (Findings/Consensus/Gaps/Recommendations)",
+                "Policy Recommendations: ≥3 actionable items",
+            ],
+            "output":     r["synthesis"],
+            "score":      r["grade"]["average"],
+            "reasoning":  str(r["grade"].get("reasoning", ""))[:200],
+            "extra_info": {
+                dim: f"{r['grade'][dim]['score']}/10"
+                for dim in dims
+                if isinstance(r["grade"].get(dim), dict)
+            },
+        }
+        for r in results
+    ]
+    html = build_html_report(
+        entries,
+        title=f"Synthesis Quality Eval  ({PROMPT_VERSION})",
+        pass_threshold=7.0,
+    )
+    save_report(html, "evals/reports/synthesis_quality.html")
 
     return results
 

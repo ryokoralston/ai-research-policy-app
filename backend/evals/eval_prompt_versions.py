@@ -27,6 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.anthropic_client import generate_text
+from evals.report import build_html_report, save_report
 
 # ── Shared Dataset ────────────────────────────────────────────────────────────
 # Same 4 cases for all versions → scores are directly comparable.
@@ -272,6 +273,35 @@ async def run_comparison():
               f"(code {result['avg_code']:.1f}, model {result['avg_model']:.1f})")
 
     print_comparison(all_results)
+
+    # HTML report — one row per version showing score progression
+    best = max(all_results, key=lambda r: r["avg_combined"])
+    entries = [
+        {
+            "scenario":   r["name"],
+            "inputs":     {"technique": r["description"]},
+            "criteria":   ["Valid JSON array of 3 queries", "High relevance + coverage"],
+            "output":     (
+                f"code={r['avg_code']:.1f}/10  "
+                f"model={r['avg_model']:.1f}/10  "
+                f"combined={r['avg_combined']:.1f}/10\n"
+                f"pass={r['pass_rate']}/{r['n']}"
+            ),
+            "score":      r["avg_combined"],
+            "reasoning":  (
+                "🏆 Best version" if r["name"] == best["name"]
+                else r["description"]
+            ),
+        }
+        for r in all_results
+    ]
+    html = build_html_report(
+        entries,
+        title="Prompt Engineering: Iterative Improvement",
+        pass_threshold=8.0,
+    )
+    save_report(html, "evals/reports/prompt_versions.html")
+
     return all_results
 
 

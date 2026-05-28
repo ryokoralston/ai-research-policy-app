@@ -26,6 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.anthropic_client import generate_text
+from evals.report import build_html_report, save_report
 
 DATASET_FILE = Path(__file__).parent / "dataset_research_queries.json"
 
@@ -307,6 +308,31 @@ async def run_eval(use_generated: bool = False):
     print(f"  Avg combined     : {avg_combined:.1f} / 10")
     print(f"  Pass rate        : {sum(1 for r in results if r['combined_score'] >= 8)}/{len(results)} (≥ 8)")
     print(f"{'='*60}")
+
+    # HTML report
+    entries = [
+        {
+            "scenario":   r["task"],
+            "inputs":     {"task": r["task"][:80]},
+            "criteria":   ["Valid JSON array", "Exactly 3 queries", "Each query >15 chars",
+                           r.get("model_reasoning", "")[:60]],
+            "output":     "\n".join(r["queries"]) if r.get("queries") else "(no queries)",
+            "score":      r["combined_score"],
+            "reasoning":  r.get("model_reasoning", "")[:200],
+            "extra_info": {
+                "code": f"{r['code_score']}/10",
+                "model": f"{r['model_score']}/10",
+            },
+        }
+        for r in results
+    ]
+    html = build_html_report(
+        entries,
+        title=f"Query Decomposition Eval  ({PROMPT_VERSION})",
+        pass_threshold=8.0,
+    )
+    save_report(html, "evals/reports/research_queries.html")
+
     return results
 
 
