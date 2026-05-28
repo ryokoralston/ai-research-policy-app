@@ -117,11 +117,11 @@ async def run_risk_analysis(
                 scores_raw = await generate_text(
                     scores_prompt,
                     temperature=0.0,        # fully deterministic — scores must be consistent
-                    prefill="```json\n",    # force Claude to open a code fence
-                    stop_sequences=["\n```"],  # stop when code fence closes
+                    prefill="```json",      # force Claude to open a code fence
+                    stop_sequences=["```"],  # stop when code fence closes
                 )
-                # Strip the markdown fence prefix that came from the prefill
-                json_str = scores_raw[len("```json\n"):]
+                # Strip the markdown fence prefix, then strip surrounding whitespace
+                json_str = scores_raw[len("```json"):].strip()
                 extracted_scores = json.loads(json_str.strip())
                 yield sse_event("scores", {"scores": extracted_scores})
             except (json.JSONDecodeError, Exception):
