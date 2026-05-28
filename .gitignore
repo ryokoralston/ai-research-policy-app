@@ -40,4 +40,8 @@ Thumbs.db
 *.swp
 
 # ── Claude Code ───────────────────────────────────────────────────────────────
+# Ignore personal/local Claude files, but share project-wide config
 .claude/
+!.claude/settings.json
+!.claude/claude-security-guidance.md
+!.claude/security-patterns.yaml

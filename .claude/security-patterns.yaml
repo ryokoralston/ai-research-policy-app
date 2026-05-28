@@ -1,0 +1,33 @@
+patterns:
+  # API key literals
+  - rule_name: hardcoded_anthropic_key
+    substrings: ["sk-ant-"]
+    reminder: "Hardcoded Anthropic API key. Load from environment: os.getenv('ANTHROPIC_API_KEY')"
+
+  - rule_name: hardcoded_tavily_key
+    substrings: ["tvly-"]
+    reminder: "Hardcoded Tavily API key. Load from environment: os.getenv('TAVILY_API_KEY')"
+
+  # Dangerous execution in backend Python
+  - rule_name: dynamic_exec
+    regex: "\\b(eval|exec)\\s*\\("
+    paths: ["**/*.py"]
+    reminder: "eval()/exec() on research content or model output is a code injection risk. Use json.loads() for structured data."
+
+  # Raw SQL construction
+  - rule_name: raw_sql_string
+    regex: "f['\"].*SELECT.*WHERE.*['\"]"
+    paths: ["**/*.py"]
+    reminder: "Raw f-string SQL detected. Use SQLAlchemy ORM or parameterized queries to prevent injection."
+
+  # Frontend unsafe HTML injection
+  - rule_name: dangerous_inner_html
+    substrings: ["dangerouslySetInnerHTML", "innerHTML ="]
+    paths: ["**/*.tsx", "**/*.ts", "**/*.jsx", "**/*.js"]
+    reminder: "Synthesis text from the API is untrusted. Use a safe Markdown renderer instead of raw HTML injection."
+
+  # Database file exposure
+  - rule_name: db_file_in_response
+    substrings: ["research.db", ".sqlite"]
+    paths: ["**/routers/**", "**/main.py"]
+    reminder: "Do not expose the SQLite database path or file via an API response."
