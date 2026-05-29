@@ -19,6 +19,63 @@ from services.anthropic_client import generate_text, stream_text, sse_event
 from services.tavily_client import TavilyClient, SearchResult as TavilyResult
 
 
+# "Being Specific" lesson (Anthropic Academy), technique 1: Output Quality
+# Guidelines — tell Claude exactly what the output should look like.
+_SUMMARY_GUIDELINES = (
+    "Write the summary meeting ALL of these guidelines:\n"
+    "- Length: 80-150 words total.\n"
+    "- Open with a 2-3 sentence overview of the source's main finding.\n"
+    "- List 2-3 key claims as bullet points, keeping specific figures, "
+    "dates, and named actors.\n"
+    "- Note any limitations: bias, opinion-vs-evidence, missing data, or "
+    "unsupported assertions.\n"
+    "- End with one sentence on relevance to the research query.\n"
+    "- Use a neutral, factual tone — do not editorialize."
+)
+
+# Technique 2: Process Steps — think-then-write. Kept off by default: the
+# eval (eval_being_specific.py) showed steps add no measurable quality gain
+# for single-source summarization (a simple task) while making the prompt
+# longer. The lesson reserves process steps for complex, multi-angle problems.
+_SUMMARY_PROCESS_STEPS = (
+    "Before writing, work through these steps internally:\n"
+    "1. Identify the source's central thesis or finding.\n"
+    "2. Extract the specific, verifiable claims (figures, dates, named actors).\n"
+    "3. Assess reliability: is this primary evidence, peer-reviewed research, "
+    "opinion, or projection? Note any gaps.\n"
+    "4. Judge what this source uniquely contributes to the query.\n\n"
+    "Then output ONLY the final summary (not your step-by-step reasoning).\n"
+)
+
+
+def build_source_summary_prompt(
+    query: str,
+    title: str,
+    url: str,
+    content: str,
+    include_process_steps: bool = False,
+) -> str:
+    """Build the per-source summarization prompt.
+
+    Applies the "Being Specific" lesson: Output Quality Guidelines always; an
+    optional Process Steps preamble (default off — see _SUMMARY_PROCESS_STEPS).
+
+    Extracted as a function (with the include_process_steps seam) so
+    evals/eval_being_specific.py can test the exact production prompt and the
+    process-steps variant side by side — no duplicated copy that can drift.
+    """
+    prompt = (
+        f"You are summarizing a web source for AI policy research.\n"
+        f"Original query: {query}\n"
+        f"Source: {title} ({url})\n"
+        f"Content:\n{content}\n\n"
+    )
+    if include_process_steps:
+        prompt += _SUMMARY_PROCESS_STEPS + "\n"
+    prompt += _SUMMARY_GUIDELINES
+    return prompt
+
+
 async def run_research_agent(
     session_id: str,
     query: str,
@@ -94,16 +151,11 @@ async def run_research_agent(
         if len(content_for_summary) > 6000:
             content_for_summary = content_for_summary[:6000] + "..."
 
-        summary_prompt = (
-            f"You are summarizing a web source for AI policy research.\n"
-            f"Original query: {query}\n"
-            f"Source: {result.title} ({result.url})\n"
-            f"Content:\n{content_for_summary}\n\n"
-            f"Provide:\n"
-            f"1. A 2-3 sentence summary of the key information\n"
-            f"2. Key claims (2-3 bullet points)\n"
-            f"3. Relevance to the research query (1 sentence)\n\n"
-            f"Be concise and factual."
+        summary_prompt = build_source_summary_prompt(
+            query=query,
+            title=result.title,
+            url=result.url,
+            content=content_for_summary,
         )
 
         try:
