@@ -88,7 +88,8 @@ async def run_risk_analysis(
             f"Analysis type: {request.analysis_type}\n\n"
         )
         if source_material:
-            prompt += f"Research material:\n---\n{source_material[:6000]}\n---\n\n"
+            # Upgrade weak --- delimiters to a descriptive XML tag (lesson).
+            prompt += f"<research_material>\n{source_material[:6000]}\n</research_material>\n\n"
 
         prompt += (
             f"Write the '{section_title}' section of the risk assessment.\n"
@@ -109,7 +110,7 @@ async def run_risk_analysis(
             scores_prompt = (
                 f"Based on this risk dimension analysis of '{request.subject}', "
                 f"extract the numerical score (1-10) for each dimension.\n\n"
-                f"Analysis:\n{section_content}\n\n"
+                f"<dimension_analysis>\n{section_content}\n</dimension_analysis>\n\n"
                 f"Return a JSON object with exactly these keys: "
                 f"capability, deployment, governance, geopolitical, misuse, systemic"
             )

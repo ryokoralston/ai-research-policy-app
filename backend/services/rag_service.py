@@ -141,7 +141,9 @@ async def answer_question(
     # Build full messages array: previous turns + current question with context
     current_prompt = (
         f"Question: {question}\n\n"
-        f"Source documents:\n---\n{context}\n---\n\n"
+        # "Structure with XML tags" lesson: retrieved chunks are bounded by a
+        # descriptive tag so Claude never confuses document text for the question.
+        f"<source_documents>\n{context}\n</source_documents>\n\n"
         f"Answer concisely with citations."
     )
     messages = list(chat_history or [])

@@ -67,8 +67,11 @@ def build_source_summary_prompt(
     prompt = (
         f"You are summarizing a web source for AI policy research.\n"
         f"Original query: {query}\n"
-        f"Source: {title} ({url})\n"
-        f"Content:\n{content}\n\n"
+        f"Source: {title} ({url})\n\n"
+        # "Structure with XML tags" lesson: the fetched page is up to 6000 chars
+        # of arbitrary text. Wrapping it in a descriptive tag gives Claude a hard
+        # boundary so it never mistakes the source body for our instructions.
+        f"<source_content>\n{content}\n</source_content>\n\n"
     )
     if include_process_steps:
         prompt += _SUMMARY_PROCESS_STEPS + "\n"
@@ -222,8 +225,10 @@ async def run_research_agent(
     )
     synthesis_prompt = (
         f"Research question: {query}\n\n"
-        f"You have analyzed {len(summarized)} sources. Below are their summaries:\n\n"
-        f"{sources_text}\n\n"
+        f"You have analyzed {len(summarized)} sources. Their summaries are below.\n\n"
+        # Wrap the concatenated per-source summaries so Claude treats them as one
+        # bounded evidence block, distinct from the synthesis instructions.
+        f"<source_summaries>\n{sources_text}\n</source_summaries>\n\n"
         f"Write a comprehensive research synthesis that includes:\n"
         f"## Key Findings\n(3-5 bullet points with [Source N] citations)\n\n"
         f"## Areas of Consensus\n(What sources agree on)\n\n"

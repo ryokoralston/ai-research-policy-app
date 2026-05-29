@@ -136,7 +136,8 @@ async def _generate_single_pass(
         f"Write a complete '{request.report_type.replace('_', ' ').title()}' report.\n"
         f"Title: {request.title}\n"
         f"Audience: {request.audience}\n\n"
-        f"SOURCE MATERIAL:\n---\n{source_material[:8000]}\n---\n\n"
+        # "Structure with XML tags" lesson: descriptive tag instead of --- fences
+        f"<source_material>\n{source_material[:8000]}\n</source_material>\n\n"
         f"Structure the report with these sections: {', '.join(section_titles)}\n\n"
         f"Format in clean Markdown with ## section headers.\n\n"
         f"⚠️ STRICT REQUIREMENT: The TOTAL word count of the entire report MUST be "
@@ -306,7 +307,7 @@ def _build_section_prompt(
         f"You are writing a '{report_type.replace('_', ' ').title()}' report.\n"
         f"Report title: {report_title}\n"
         f"Target audience: {audience}\n\n"
-        f"SOURCE MATERIAL:\n---\n{source_material[:8000]}\n---\n"
+        f"<source_material>\n{source_material[:8000]}\n</source_material>\n"
         f"{prev_context}\n\n"
         f"Now write the '{section_def['title']}' section.\n"
         f"Instructions: {section_def['instructions']}\n\n"
