@@ -26,6 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.anthropic_client import generate_text
+from services.research_agent import build_decomposition_prompt
 from evals.report import build_html_report, save_report
 
 DATASET_FILE = Path(__file__).parent / "dataset_research_queries.json"
@@ -110,6 +111,7 @@ TEST_DATASET = [
 PROMPT_VERSION = "v2"
 
 def build_prompt(task: str) -> str:
+    """Baseline prompt: structured instructions, NO worked example."""
     return (
         f"You are a policy research assistant. Given this research question, "
         f"generate exactly 3 specific search queries that together provide comprehensive coverage.\n\n"
@@ -118,12 +120,19 @@ def build_prompt(task: str) -> str:
     )
 
 
+# "Providing Examples" lesson: the production prompt (research_agent.py) adds a
+# worked multi-shot example. Imported so this eval scores the LIVE prompt and can
+# measure the example's effect (build_prompt = no example, this = with example).
+def build_prompt_with_example(task: str) -> str:
+    return build_decomposition_prompt(task)
+
+
 # ── Run Prompt ────────────────────────────────────────────────────────────────
 
-async def run_prompt(test_case: dict) -> str:
-    """Call generate_text() with the current prompt and return raw output."""
+async def run_prompt(test_case: dict, builder=build_prompt) -> str:
+    """Call generate_text() with the given prompt builder and return raw output."""
     return await generate_text(
-        build_prompt(test_case["task"]),
+        builder(test_case["task"]),
         temperature=0.2,
         prefill="```json",
         stop_sequences=["```"],
@@ -237,9 +246,9 @@ async def grade_query_quality(task: str, queries: list[str],
 
 # ── Run Single Test Case ──────────────────────────────────────────────────────
 
-async def run_test_case(test_case: dict, index: int, total: int) -> dict:
+async def run_test_case(test_case: dict, index: int, total: int, builder=build_prompt) -> dict:
     print(f"\nTest {index}/{total}: {test_case['task'][:60]}...")
-    output = await run_prompt(test_case)
+    output = await run_prompt(test_case, builder)
 
     # Code grader: structure check (0–10)
     code_grade = grade_output(output)
@@ -283,18 +292,19 @@ async def run_test_case(test_case: dict, index: int, total: int) -> dict:
 
 # ── Run Full Eval ─────────────────────────────────────────────────────────────
 
-async def run_eval(use_generated: bool = False):
+async def run_eval(use_generated: bool = False, builder=build_prompt,
+                   version_label: str = PROMPT_VERSION, save_html: bool = True):
     dataset = await load_or_generate_dataset(force=True) if use_generated else TEST_DATASET
 
     print(f"{'='*60}")
-    print(f"  Prompt Eval: Research Query Decomposition  ({PROMPT_VERSION})")
+    print(f"  Prompt Eval: Research Query Decomposition  ({version_label})")
     print(f"  Dataset size: {len(dataset)} test cases")
     print(f"  Dataset source: {'generated (Haiku)' if use_generated else 'hardcoded'}")
     print(f"{'='*60}")
 
     results = []
     for i, test_case in enumerate(dataset, 1):
-        result = await run_test_case(test_case, i, len(dataset))
+        result = await run_test_case(test_case, i, len(dataset), builder)
         results.append(result)
 
     avg_code     = sum(r["code_score"]     for r in results) / len(results)
@@ -302,7 +312,7 @@ async def run_eval(use_generated: bool = False):
     avg_combined = sum(r["combined_score"] for r in results) / len(results)
 
     print(f"\n{'='*60}")
-    print(f"  Prompt version   : {PROMPT_VERSION}")
+    print(f"  Prompt version   : {version_label}")
     print(f"  Avg code score   : {avg_code:.1f} / 10  (structure)")
     print(f"  Avg model score  : {avg_model:.1f} / 10  (quality)")
     print(f"  Avg combined     : {avg_combined:.1f} / 10")
@@ -326,18 +336,42 @@ async def run_eval(use_generated: bool = False):
         }
         for r in results
     ]
-    html = build_html_report(
-        entries,
-        title=f"Query Decomposition Eval  ({PROMPT_VERSION})",
-        pass_threshold=8.0,
-    )
-    save_report(html, "evals/reports/research_queries.html")
+    if save_html:
+        html = build_html_report(
+            entries,
+            title=f"Query Decomposition Eval  ({version_label})",
+            pass_threshold=8.0,
+        )
+        save_report(html, "evals/reports/research_queries.html")
 
     return results
+
+
+async def run_example_comparison(use_generated: bool = False):
+    """A/B test the "Providing Examples" lesson: baseline (no example) vs the
+    production prompt (with a worked multi-shot example)."""
+    print("\n### BASELINE — structured prompt, NO example ###")
+    base = await run_eval(use_generated, builder=build_prompt,
+                          version_label="v2 (no example)", save_html=False)
+    print("\n### PRODUCTION — prompt WITH worked example ###")
+    prod = await run_eval(use_generated, builder=build_prompt_with_example,
+                          version_label="v3 (with example)", save_html=True)
+
+    base_avg = sum(r["combined_score"] for r in base) / len(base)
+    prod_avg = sum(r["combined_score"] for r in prod) / len(prod)
+    print(f"\n{'='*60}")
+    print(f"  Providing Examples — A/B result")
+    print(f"  v2 (no example)   : {base_avg:.1f} / 10")
+    print(f"  v3 (with example) : {prod_avg:.1f} / 10   (delta {prod_avg - base_avg:+.1f})")
+    print(f"{'='*60}")
+    return base_avg, prod_avg
 
 
 if __name__ == "__main__":
     # python -m evals.eval_research_queries --generate  →  Haikuでデータセット生成
     # python -m evals.eval_research_queries             →  手書きデータセットを使用
     use_generated = "--generate" in sys.argv
-    asyncio.run(run_eval(use_generated=use_generated))
+    if "--compare-examples" in sys.argv:
+        asyncio.run(run_example_comparison(use_generated=use_generated))
+    else:
+        asyncio.run(run_eval(use_generated=use_generated))

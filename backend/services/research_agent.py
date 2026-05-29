@@ -79,6 +79,42 @@ def build_source_summary_prompt(
     return prompt
 
 
+def build_decomposition_prompt(query: str) -> str:
+    """Build the query-decomposition prompt.
+
+    "Providing Examples" lesson: a worked multi-shot example (XML-wrapped, with
+    a note on *why* the output is good) shows Claude the target — three queries
+    that hit distinct angles, stay specific, and don't echo the question. The
+    example question is intentionally NOT one of the eval dataset cases, so the
+    eval does not get to "see the answer" for any case it scores.
+
+    Extracted as a function so evals/eval_research_queries.py tests the exact
+    production prompt (no copy that can drift). Note: the production call adds
+    prefill='```json' + stop_sequences, so this text must NOT include a fence.
+    """
+    return (
+        "You are a policy research assistant. Given a research question, "
+        "generate exactly 3 specific search queries that together provide "
+        "comprehensive coverage from distinct angles.\n\n"
+        "Here is an example research question with an ideal decomposition:\n"
+        "<example>\n"
+        "<sample_input>What are the privacy implications of AI-powered "
+        "surveillance in public spaces?</sample_input>\n"
+        "<ideal_output>[\"legal frameworks governing AI surveillance and "
+        "facial recognition in public spaces\", \"civil liberties and privacy "
+        "rights concerns raised by AI public surveillance systems\", "
+        "\"comparative government policies on AI surveillance deployment and "
+        "oversight\"]</ideal_output>\n"
+        "This output is ideal because the three queries cover distinct angles "
+        "(legal frameworks, civil liberties, comparative policy), each adds "
+        "specific terms not present in the original question, and none simply "
+        "restates it.\n"
+        "</example>\n\n"
+        f"Research question: {query}\n\n"
+        'Return ONLY a JSON array of 3 strings, like: ["query1", "query2", "query3"]'
+    )
+
+
 async def run_research_agent(
     session_id: str,
     query: str,
@@ -89,12 +125,7 @@ async def run_research_agent(
     # ── Step 1: Query Decomposition ───────────────────────────────────────────
     await queue.put(sse_event("status", {"message": "Decomposing research query..."}))
 
-    decomp_prompt = (
-        f"You are a policy research assistant. Given this research question, "
-        f"generate exactly 3 specific search queries that together provide comprehensive coverage.\n\n"
-        f"Research question: {query}\n\n"
-        f'Return ONLY a JSON array of 3 strings, like: ["query1", "query2", "query3"]'
-    )
+    decomp_prompt = build_decomposition_prompt(query)
     try:
         # Pre-fill forces Claude to start with a JSON array open bracket.
         # Stop sequence cuts off generation once the array closes,
