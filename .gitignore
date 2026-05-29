@@ -42,6 +42,12 @@ Thumbs.db
 # ── Jupyter ───────────────────────────────────────────────────────────────────
 .ipynb_checkpoints/
 
+# ── Eval generated artifacts ──────────────────────────────────────────────────
+# HTML reports (report.py) and Claude-generated datasets (generate_dataset.py)
+# are regenerated on each run — the scripts are source, their output is not.
+backend/evals/reports/
+backend/evals/eval_dataset_generated.json
+
 # ── Claude Code ───────────────────────────────────────────────────────────────
 # Ignore personal/local Claude files, but share project-wide config
 .claude/
