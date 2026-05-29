@@ -39,6 +39,9 @@ Thumbs.db
 .vscode/
 *.swp
 
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
 # ── Claude Code ───────────────────────────────────────────────────────────────
 # Ignore personal/local Claude files, but share project-wide config
 .claude/

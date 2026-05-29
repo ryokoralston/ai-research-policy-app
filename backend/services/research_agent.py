@@ -145,7 +145,10 @@ async def run_research_agent(
     db_results: list[SearchResult] = []
     summarized: list[dict] = []
 
-    for order, result in enumerate(unique_results):
+    async def _summarize_source(result: TavilyResult) -> str:
+        """Summarize a single source. Each call is independent, so all sources
+        are summarized concurrently (see asyncio.gather below) instead of one at
+        a time — this is the slowest part of the pipeline and dominates latency."""
         content_for_summary = result.content or result.snippet or ""
         # Trim to avoid huge prompts
         if len(content_for_summary) > 6000:
@@ -157,13 +160,19 @@ async def run_research_agent(
             url=result.url,
             content=content_for_summary,
         )
-
         try:
             # temperature=0.3: 事実の要約なので低め（再現性重視）
-            ai_summary = await generate_text(summary_prompt, temperature=0.3)
-        except Exception as e:
-            ai_summary = result.snippet or ""
+            return await generate_text(summary_prompt, temperature=0.3)
+        except Exception:
+            return result.snippet or ""
 
+    # Fan out all per-source summaries in parallel, then process results in the
+    # original relevance order so DB result_order and SSE events stay consistent.
+    summaries = await asyncio.gather(
+        *(_summarize_source(r) for r in unique_results)
+    )
+
+    for order, (result, ai_summary) in enumerate(zip(unique_results, summaries)):
         db_result = SearchResult(
             id=str(uuid.uuid4()),
             session_id=session_id,
