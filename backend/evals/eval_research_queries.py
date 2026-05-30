@@ -292,6 +292,13 @@ async def run_test_case(test_case: dict, index: int, total: int, builder=build_p
 
 # ── Run Full Eval ─────────────────────────────────────────────────────────────
 
+# Bound concurrency like the course notebook's ThreadPoolExecutor(max_workers=…).
+# Each test case makes its own API calls (run_prompt + model grader) and is fully
+# independent, so we fan them out — but cap simultaneous calls to avoid hitting
+# Anthropic rate limits. Tune down if you see 429s.
+MAX_CONCURRENT_GRADES = 3
+
+
 async def run_eval(use_generated: bool = False, builder=build_prompt,
                    version_label: str = PROMPT_VERSION, save_html: bool = True):
     dataset = await load_or_generate_dataset(force=True) if use_generated else TEST_DATASET
@@ -302,10 +309,18 @@ async def run_eval(use_generated: bool = False, builder=build_prompt,
     print(f"  Dataset source: {'generated (Haiku)' if use_generated else 'hardcoded'}")
     print(f"{'='*60}")
 
-    results = []
-    for i, test_case in enumerate(dataset, 1):
-        result = await run_test_case(test_case, i, len(dataset), builder)
-        results.append(result)
+    # Grade all cases concurrently (bounded). asyncio.gather preserves the order
+    # of its arguments, so `results` stays in dataset order regardless of which
+    # case finishes first — keeping report rows and averages deterministic.
+    sem = asyncio.Semaphore(MAX_CONCURRENT_GRADES)
+
+    async def _bounded(index: int, test_case: dict) -> dict:
+        async with sem:
+            return await run_test_case(test_case, index, len(dataset), builder)
+
+    results = list(await asyncio.gather(
+        *(_bounded(i, tc) for i, tc in enumerate(dataset, 1))
+    ))
 
     avg_code     = sum(r["code_score"]     for r in results) / len(results)
     avg_model    = sum(r["model_score"]    for r in results) / len(results)
