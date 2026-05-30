@@ -335,6 +335,11 @@ async def run_test_case(test_case: dict, index: int, total: int) -> dict:
 
 # ── Run Full Eval ─────────────────────────────────────────────────────────────
 
+# Bound concurrency like the course notebook's ThreadPoolExecutor(max_workers=…),
+# capping simultaneous API calls to stay under rate limits. Tune down on 429s.
+MAX_CONCURRENT_GRADES = 3
+
+
 async def run_eval():
     print(f"{'='*60}")
     print(f"  Prompt Eval: Research Synthesis Quality  ({PROMPT_VERSION})")
@@ -342,10 +347,18 @@ async def run_eval():
     print(f"  Grader: Claude (model-based / LLM-as-judge)")
     print(f"{'='*60}")
 
-    results = []
-    for i, test_case in enumerate(TEST_DATASET, 1):
-        result = await run_test_case(test_case, i, len(TEST_DATASET))
-        results.append(result)
+    # Grade all cases concurrently, bounded like the notebook's ThreadPoolExecutor
+    # (max_workers=3), to stay under rate limits. gather preserves order, so
+    # results stay in dataset order and per-dimension averages are deterministic.
+    sem = asyncio.Semaphore(MAX_CONCURRENT_GRADES)
+
+    async def _bounded(index: int, test_case: dict) -> dict:
+        async with sem:
+            return await run_test_case(test_case, index, len(TEST_DATASET))
+
+    results = list(await asyncio.gather(
+        *(_bounded(i, tc) for i, tc in enumerate(TEST_DATASET, 1))
+    ))
 
     # Summary
     avg = sum(r["grade"]["average"] for r in results) / len(results)

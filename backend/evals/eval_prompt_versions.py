@@ -190,27 +190,41 @@ async def grade_quality(task: str, queries: list[str], solution_criteria: str) -
 
 # ── Run One Version ───────────────────────────────────────────────────────────
 
+# Bound concurrency like the course notebook's ThreadPoolExecutor(max_workers=…).
+# Each case is independent (prompt + grader calls), so fan them out while capping
+# simultaneous API calls to stay under rate limits. Tune down if you see 429s.
+MAX_CONCURRENT_GRADES = 3
+
+
 async def run_version(version: dict, dataset: list[dict]) -> dict:
-    """Run all test cases for one prompt version; return aggregated results."""
-    code_scores, model_scores, combined_scores = [], [], []
+    """Run all test cases for one prompt version; return aggregated results.
 
-    for case in dataset:
-        raw = await generate_text(
-            version["build"](case["task"]),
-            temperature=0.2,
-            prefill="```json",
-            stop_sequences=["```"],
-        )
-        code = grade_structure(raw)
-        model_score = 0
-        if code["queries"]:
-            model_score = await grade_quality(
-                case["task"], code["queries"], case["solution_criteria"]
+    Cases are graded concurrently (bounded). asyncio.gather preserves argument
+    order, so the score lists stay in dataset order — but since we only take
+    sums/averages here, order does not affect the result either way.
+    """
+    sem = asyncio.Semaphore(MAX_CONCURRENT_GRADES)
+
+    async def _score_case(case: dict) -> tuple[int, int]:
+        async with sem:
+            raw = await generate_text(
+                version["build"](case["task"]),
+                temperature=0.2,
+                prefill="```json",
+                stop_sequences=["```"],
             )
+            code = grade_structure(raw)
+            model_score = 0
+            if code["queries"]:
+                model_score = await grade_quality(
+                    case["task"], code["queries"], case["solution_criteria"]
+                )
+            return code["score"], model_score
 
-        code_scores.append(code["score"])
-        model_scores.append(model_score)
-        combined_scores.append((code["score"] + model_score) / 2)
+    scored = await asyncio.gather(*(_score_case(case) for case in dataset))
+    code_scores = [c for c, _ in scored]
+    model_scores = [m for _, m in scored]
+    combined_scores = [(c + m) / 2 for c, m in scored]
 
     return {
         "name": version["name"],

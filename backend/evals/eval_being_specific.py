@@ -45,6 +45,10 @@ from services.anthropic_client import generate_text
 from services.research_agent import build_source_summary_prompt
 from evals.report import build_html_report, save_report
 
+# Bound concurrency like the course notebook's ThreadPoolExecutor(max_workers=…),
+# capping simultaneous API calls to stay under rate limits. Tune down on 429s.
+MAX_CONCURRENT_GRADES = 3
+
 # ── Shared Dataset ────────────────────────────────────────────────────────────
 # Realistic AI-policy web-source excerpts. Same cases for every version →
 # scores are directly comparable. solution_criteria describes what a good
@@ -276,25 +280,35 @@ async def grade_quality(source: dict, summary: str) -> dict:
 # ── Run One Version ───────────────────────────────────────────────────────────
 
 async def run_version(version: dict, dataset: list[dict]) -> dict:
-    """Run all cases for one version; return aggregated scores + sample output."""
-    code_scores, model_scores, combined_scores = [], [], []
-    sample_output = ""
-    sample_reasoning = ""
+    """Run all cases for one version; return aggregated scores + sample output.
 
-    for i, source in enumerate(dataset):
-        # temperature=0.3 matches the real summary call in research_agent.py
-        summary = await generate_text(version["build"](source), temperature=0.3)
+    Cases are graded concurrently (bounded by MAX_CONCURRENT_GRADES). gather
+    preserves argument order, so per_case[0] is still the dataset's first case —
+    keeping the HTML sample output deterministic.
+    """
+    sem = asyncio.Semaphore(MAX_CONCURRENT_GRADES)
 
-        code = grade_structure(summary)
-        model = await grade_quality(source, summary)
+    async def _score_case(source: dict) -> dict:
+        async with sem:
+            # temperature=0.3 matches the real summary call in research_agent.py
+            summary = await generate_text(version["build"](source), temperature=0.3)
+            code = grade_structure(summary)
+            model = await grade_quality(source, summary)
+            return {
+                "code": code["score"],
+                "model": model["score"],
+                "combined": (code["score"] + model["score"]) / 2,
+                "summary": summary,
+                "reasoning": model["reasoning"],
+            }
 
-        code_scores.append(code["score"])
-        model_scores.append(model["score"])
-        combined_scores.append((code["score"] + model["score"]) / 2)
-
-        if i == 0:  # keep first case as a sample for the HTML report
-            sample_output = summary
-            sample_reasoning = model["reasoning"]
+    per_case = await asyncio.gather(*(_score_case(s) for s in dataset))
+    code_scores     = [r["code"]     for r in per_case]
+    model_scores    = [r["model"]    for r in per_case]
+    combined_scores = [r["combined"] for r in per_case]
+    # First case (order preserved by gather) is the HTML report sample
+    sample_output    = per_case[0]["summary"]   if per_case else ""
+    sample_reasoning = per_case[0]["reasoning"] if per_case else ""
 
     n = len(dataset)
     return {
