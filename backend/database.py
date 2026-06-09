@@ -35,7 +35,41 @@ def init_db():
     # Import all models so Base knows about them
     from models import document, report, research_session, debate, digest_settings, model_settings  # noqa: F401
     Base.metadata.create_all(bind=engine)
+    encrypt_legacy_secrets()
     print("Database initialized.")
+
+
+def encrypt_legacy_secrets():
+    """Idempotent migration: encrypt any secret columns still stored as plaintext.
+
+    Reads the RAW stored value (bypassing the EncryptedString decrypt) so it can
+    distinguish legacy plaintext from already-encrypted values. encrypt_secret()
+    is a no-op on already-encrypted input, so running this repeatedly is safe.
+    """
+    from sqlalchemy import text
+    from services.secret_crypto import encrypt_secret
+
+    # (table, column) pairs are hard-coded constants — safe to interpolate.
+    secret_cols = [
+        ("model_settings", "anthropic_api_key"),
+        ("model_settings", "openai_api_key"),
+        ("digest_settings", "smtp_password"),
+    ]
+    with engine.begin() as conn:
+        for table, col in secret_cols:
+            try:
+                rows = conn.execute(text(f"SELECT id, {col} FROM {table}")).fetchall()
+            except Exception:
+                continue  # table may not exist yet
+            for row_id, val in rows:
+                if not val:
+                    continue
+                enc = encrypt_secret(val)
+                if enc != val:  # value was plaintext — write it back encrypted
+                    conn.execute(
+                        text(f"UPDATE {table} SET {col} = :v WHERE id = :id"),
+                        {"v": enc, "id": row_id},
+                    )
 
 
 def get_or_init_model_settings(db):
