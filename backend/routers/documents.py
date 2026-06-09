@@ -28,11 +28,26 @@ MAX_REDIRECTS = 4
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
-def _assert_public_url(url: str) -> None:
-    """Raise ValueError if the URL is not http(s) or resolves to a non-public IP.
+def _ip_is_blocked(ip) -> bool:
+    """True for SSRF-sensitive addresses: loopback, private, link-local (incl.
+    the cloud metadata endpoint 169.254.169.254), reserved, multicast, etc."""
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
 
-    Blocks SSRF targets: loopback, private ranges, link-local (incl. the cloud
-    metadata endpoint 169.254.169.254), and other reserved/special addresses.
+
+def _resolve_public_ip(url: str) -> tuple[str, str]:
+    """Validate scheme/host, resolve the hostname, ensure EVERY resolved IP is
+    public, and return (pinned_ip, hostname).
+
+    The connection must then be made to the returned IP (not by re-resolving the
+    hostname) so a DNS-rebinding attacker cannot swap in an internal address
+    between this check and the actual socket connect (TOCTOU).
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
@@ -40,33 +55,50 @@ def _assert_public_url(url: str) -> None:
     host = parsed.hostname
     if not host:
         raise ValueError("URL has no host")
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
 
     try:
-        infos = socket.getaddrinfo(host, None)
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
     except socket.gaierror:
         raise ValueError("Could not resolve host")
 
+    pinned: str | None = None
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_multicast
-            or ip.is_unspecified
-        ):
+        if _ip_is_blocked(ip):
             raise ValueError("URL resolves to a non-public address")
+        if pinned is None:
+            pinned = str(ip)
+    if pinned is None:
+        raise ValueError("Could not resolve host")
+    return pinned, host
+
+
+def _assert_public_url(url: str) -> None:
+    """Raise ValueError if the URL is not http(s) or resolves to a non-public IP."""
+    _resolve_public_ip(url)
 
 
 async def _safe_fetch_bytes(url: str, headers: dict) -> bytes:
-    """Fetch a URL with SSRF protection, manual redirect validation, and a size cap."""
+    """Fetch a URL with SSRF protection, redirect re-validation, and a size cap.
+
+    Each hop is validated and the connection is pinned to the validated IP
+    (Host header + TLS SNI preserved), which closes the DNS-rebinding window.
+    """
     import httpx
 
     async with httpx.AsyncClient(follow_redirects=False, timeout=30) as client:
         for _ in range(MAX_REDIRECTS + 1):
-            _assert_public_url(url)  # re-validate every hop, including redirects
-            async with client.stream("GET", url, headers=headers) as r:
+            pinned_ip, host = _resolve_public_ip(url)  # re-validate every hop
+            req = client.build_request("GET", url, headers=headers)
+            # Connect to the pre-validated IP, but keep the original Host header
+            # and TLS SNI so virtual hosting and cert verification still work.
+            req.url = req.url.copy_with(host=pinned_ip)
+            req.headers["Host"] = host
+            req.extensions["sni_hostname"] = host
+
+            r = await client.send(req, stream=True)
+            try:
                 if r.is_redirect and "location" in r.headers:
                     url = str(httpx.URL(url).join(r.headers["location"]))
                     continue
@@ -79,6 +111,8 @@ async def _safe_fetch_bytes(url: str, headers: dict) -> bytes:
                         raise ValueError("Remote content exceeds size limit")
                     chunks.append(chunk)
                 return b"".join(chunks)
+            finally:
+                await r.aclose()
     raise ValueError("Too many redirects")
 
 def _extract_youtube_id(url: str) -> str | None:
