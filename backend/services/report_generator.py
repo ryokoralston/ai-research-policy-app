@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from models import Report, ReportSection, ResearchSession, Document, DocumentChunk, Debate, DebateArgument
 from schemas import ReportGenerateRequest
-from services.anthropic_client import stream_text, sse_event
+from services.anthropic_client import stream_text, sse_event, UNTRUSTED_CONTENT_GUARD
 from templates import TEMPLATES
 
 
@@ -38,6 +38,8 @@ async def generate_report_stream(
             f"{request.custom_instructions}\n\n---\n\n"
             f"{system_prompt}"
         )
+    # Source material is untrusted (web/docs/debate) — guard against injection.
+    system_prompt = f"{system_prompt}\n\n{UNTRUSTED_CONTENT_GUARD}"
 
     # ── word limit detected → single-pass generation ──────────────────────────
     word_limit = _extract_word_limit(request.custom_instructions)

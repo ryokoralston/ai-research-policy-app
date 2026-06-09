@@ -9,7 +9,7 @@ from models import Document, DocumentChunk
 from rag.chunker import chunk_pdf, chunk_html, chunk_plain_text
 from rag.vector_store import VectorStore
 from services.embedding_service import EmbeddingService
-from services.anthropic_client import stream_text, stream_chat, sse_event
+from services.anthropic_client import stream_text, stream_chat, sse_event, UNTRUSTED_CONTENT_GUARD
 
 
 async def index_document(doc_id: str, db: Session) -> None:
@@ -137,6 +137,9 @@ async def answer_question(
         f"If the documents do not contain enough information to answer, say so explicitly."
         if custom_system else default_system
     )
+    # The retrieved chunks are untrusted document content — guard against any
+    # injected instructions hiding inside them.
+    system = f"{system}\n\n{UNTRUSTED_CONTENT_GUARD}"
 
     # Build full messages array: previous turns + current question with context
     current_prompt = (

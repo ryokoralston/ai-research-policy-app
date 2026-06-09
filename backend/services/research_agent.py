@@ -15,7 +15,12 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from models import ResearchSession, SearchResult
-from services.anthropic_client import generate_text, stream_text, sse_event
+from services.anthropic_client import (
+    generate_text,
+    stream_text,
+    sse_event,
+    UNTRUSTED_CONTENT_GUARD,
+)
 from services.tavily_client import TavilyClient, SearchResult as TavilyResult
 
 
@@ -196,7 +201,10 @@ async def run_research_agent(
         )
         try:
             # temperature=0.3: 事実の要約なので低め（再現性重視）
-            return await generate_text(summary_prompt, temperature=0.3)
+            # System guard: the page body is untrusted — treat it as data only.
+            return await generate_text(
+                summary_prompt, system=UNTRUSTED_CONTENT_GUARD, temperature=0.3
+            )
         except Exception:
             return result.snippet or ""
 
@@ -253,6 +261,7 @@ async def run_research_agent(
         "Write in a clear, precise, and authoritative tone. "
         "Every claim must be supported by the sources provided. "
         "Distinguish clearly between established facts and projections or opinions."
+        "\n\n" + UNTRUSTED_CONTENT_GUARD
     )
     synthesis_prompt = (
         f"Research question: {query}\n\n"

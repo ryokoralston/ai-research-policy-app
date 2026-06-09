@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from models import RiskAnalysis, ResearchSession
 from schemas import AnalysisStartRequest
-from services.anthropic_client import generate_text, stream_text, sse_event
+from services.anthropic_client import generate_text, stream_text, sse_event, UNTRUSTED_CONTENT_GUARD
 from services.research_agent import run_research_agent
 from templates import TEMPLATES
 
@@ -99,7 +99,9 @@ async def run_risk_analysis(
 
         section_content = ""
         # temperature=0.3: リスク分析は論理的・再現性重視のため低め
-        async for token in stream_text(prompt, system=template["system"], temperature=0.3):
+        # System guard: research_material is untrusted — treat it as data only.
+        section_system = template["system"] + "\n\n" + UNTRUSTED_CONTENT_GUARD
+        async for token in stream_text(prompt, system=section_system, temperature=0.3):
             section_content += token
             yield sse_event("token", {"text": token, "section": section_key})
 
