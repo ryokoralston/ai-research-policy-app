@@ -20,3 +20,4 @@ aiosmtplib==3.0.1
 pytz==2024.2
 beautifulsoup4==4.12.3
 youtube-transcript-api==1.2.4
+cryptography==46.0.5

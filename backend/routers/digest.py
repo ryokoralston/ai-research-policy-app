@@ -23,6 +23,15 @@ from services.digest_service import send_digest
 
 router = APIRouter(prefix="/api/digest", tags=["digest"])
 
+# Sentinel returned in place of the real SMTP password. The frontend sends it
+# back unchanged when the field is left untouched, so writes must ignore it.
+MASK = "***"
+
+
+def _mask(value: str) -> str:
+    return MASK if value else ""
+
+
 # In-memory state (resets on restart — intentional lightweight design)
 _last_sent_at: str | None = None
 _scheduler: AsyncIOScheduler | None = None
@@ -71,7 +80,7 @@ async def get_settings_endpoint(db: Session = Depends(get_db)) -> dict[str, Any]
     return {
         "email_to": ds.email_to,
         "email_from": ds.email_from,
-        "smtp_password": ds.smtp_password,
+        "smtp_password": _mask(ds.smtp_password),
         "topics": ds.topics,
         "timezone": ds.timezone,
         "send_hour": ds.send_hour,
@@ -91,7 +100,9 @@ async def save_settings_endpoint(
         ds.email_to = body.email_to
     if body.email_from is not None:
         ds.email_from = body.email_from
-    if body.smtp_password is not None:
+    # Only update the password when a real new value is sent — ignore empty
+    # strings and the masked sentinel echoed back by the frontend.
+    if body.smtp_password and body.smtp_password != MASK:
         ds.smtp_password = body.smtp_password
     if body.topics is not None:
         ds.topics = body.topics
@@ -109,7 +120,7 @@ async def save_settings_endpoint(
     return {
         "email_to": ds.email_to,
         "email_from": ds.email_from,
-        "smtp_password": ds.smtp_password,
+        "smtp_password": _mask(ds.smtp_password),
         "topics": ds.topics,
         "timezone": ds.timezone,
         "send_hour": ds.send_hour,

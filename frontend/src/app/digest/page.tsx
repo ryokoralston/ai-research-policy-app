@@ -79,6 +79,9 @@ export default function DigestPage() {
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Whether a password is already stored on the server. The secret itself is
+  // never sent to the browser — GET returns a masked "***" when one is set.
+  const [passwordSet, setPasswordSet] = useState(false);
 
   const fetchStatus = async () => {
     try {
@@ -95,10 +98,12 @@ export default function DigestPage() {
     try {
       const data = await api.digest.getSettings();
       setSettings(data);
+      // Never pre-fill the secret — leave the field blank; blank means "keep current".
+      setPasswordSet(Boolean(data.smtp_password));
       setForm({
         email_to: data.email_to,
         email_from: data.email_from,
-        smtp_password: data.smtp_password,
+        smtp_password: "",
         topics: data.topics,
         timezone: data.timezone,
         send_hour: data.send_hour,
@@ -135,6 +140,9 @@ export default function DigestPage() {
     try {
       const updated = await api.digest.saveSettings(form);
       setSettings(updated);
+      setPasswordSet(Boolean(updated.smtp_password));
+      // Clear the password field after saving so the secret never lingers in state.
+      setForm((f) => ({ ...f, smtp_password: "" }));
       setSaveSuccess(true);
       await fetchStatus();
       setTimeout(() => setSaveSuccess(false), 3000);
@@ -299,7 +307,8 @@ export default function DigestPage() {
               type="password"
               value={form.smtp_password}
               onChange={(e) => setForm((f) => ({ ...f, smtp_password: e.target.value }))}
-              placeholder="xxxx xxxx xxxx xxxx"
+              placeholder={passwordSet ? "•••• saved — leave blank to keep" : "xxxx xxxx xxxx xxxx"}
+              autoComplete="off"
               className="w-full px-3 py-2 rounded-md bg-slate-800 border border-slate-700 text-slate-100
                          text-sm placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors"
             />

@@ -23,3 +23,8 @@ services:
         sync: false
       - key: CORS_ORIGINS
         sync: false
+      # Optional: urlsafe-base64 Fernet key for encrypting stored secrets at rest.
+      # If unset, a key file is auto-generated on the mounted /data disk.
+      # Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+      - key: SECRET_ENCRYPTION_KEY
+        sync: false
