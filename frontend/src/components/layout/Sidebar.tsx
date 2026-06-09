@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { clsx } from "clsx";
 import {
   Search,
@@ -14,8 +15,10 @@ import {
   Settings,
   PanelLeftClose,
   PanelLeftOpen,
+  LogOut,
 } from "lucide-react";
 import ThemeToggle from "./ThemeToggle";
+import { getToken, clearToken } from "@/lib/api";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -35,6 +38,18 @@ interface SidebarProps {
 
 export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [hasToken, setHasToken] = useState(false);
+
+  // Read the token after mount to avoid a hydration mismatch.
+  useEffect(() => {
+    setHasToken(Boolean(getToken()));
+  }, [pathname]);
+
+  const handleLogout = () => {
+    clearToken();
+    router.replace("/login");
+  };
 
   return (
     <aside
@@ -94,16 +109,37 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
       {/* Footer */}
       <div className="p-2 border-t border-slate-800 space-y-2">
         {collapsed ? (
-          <button
-            onClick={onToggle}
-            className="w-full flex justify-center p-2 text-slate-500 hover:text-slate-100 rounded transition-colors"
-            title="Expand sidebar"
-          >
-            <PanelLeftOpen size={16} />
-          </button>
+          <>
+            {hasToken && (
+              <button
+                onClick={handleLogout}
+                className="w-full flex justify-center p-2 text-slate-500 hover:text-red-400 rounded transition-colors"
+                title="Sign out"
+              >
+                <LogOut size={16} />
+              </button>
+            )}
+            <button
+              onClick={onToggle}
+              className="w-full flex justify-center p-2 text-slate-500 hover:text-slate-100 rounded transition-colors"
+              title="Expand sidebar"
+            >
+              <PanelLeftOpen size={16} />
+            </button>
+          </>
         ) : (
           <>
             <ThemeToggle />
+            {hasToken && (
+              <button
+                onClick={handleLogout}
+                className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium
+                           text-slate-400 hover:text-red-400 hover:bg-slate-800 transition-colors"
+              >
+                <LogOut size={16} className="flex-shrink-0" />
+                Sign out
+              </button>
+            )}
             <p className="text-xs text-slate-500 px-1">Powered by Claude Opus 4</p>
           </>
         )}

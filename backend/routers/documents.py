@@ -2,7 +2,10 @@ import os
 import re
 import uuid
 import asyncio
+import ipaddress
+import socket
 from datetime import datetime
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, BackgroundTasks
 from fastapi.responses import StreamingResponse
@@ -18,8 +21,65 @@ router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".html", ".htm"}
 
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024   # 25 MB cap on uploaded files
+MAX_SCRAPE_BYTES = 10 * 1024 * 1024   # 10 MB cap on remotely fetched pages
+MAX_REDIRECTS = 4
+
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
+def _assert_public_url(url: str) -> None:
+    """Raise ValueError if the URL is not http(s) or resolves to a non-public IP.
+
+    Blocks SSRF targets: loopback, private ranges, link-local (incl. the cloud
+    metadata endpoint 169.254.169.254), and other reserved/special addresses.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError("Only http:// and https:// URLs are allowed")
+    host = parsed.hostname
+    if not host:
+        raise ValueError("URL has no host")
+
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        raise ValueError("Could not resolve host")
+
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            raise ValueError("URL resolves to a non-public address")
+
+
+async def _safe_fetch_bytes(url: str, headers: dict) -> bytes:
+    """Fetch a URL with SSRF protection, manual redirect validation, and a size cap."""
+    import httpx
+
+    async with httpx.AsyncClient(follow_redirects=False, timeout=30) as client:
+        for _ in range(MAX_REDIRECTS + 1):
+            _assert_public_url(url)  # re-validate every hop, including redirects
+            async with client.stream("GET", url, headers=headers) as r:
+                if r.is_redirect and "location" in r.headers:
+                    url = str(httpx.URL(url).join(r.headers["location"]))
+                    continue
+                r.raise_for_status()
+                total = 0
+                chunks: list[bytes] = []
+                async for chunk in r.aiter_bytes():
+                    total += len(chunk)
+                    if total > MAX_SCRAPE_BYTES:
+                        raise ValueError("Remote content exceeds size limit")
+                    chunks.append(chunk)
+                return b"".join(chunks)
+    raise ValueError("Too many redirects")
 
 def _extract_youtube_id(url: str) -> str | None:
     patterns = [
@@ -68,15 +128,13 @@ async def _get_youtube_transcript(video_id: str) -> tuple[str, str]:
 
 
 async def _scrape_url(url: str) -> tuple[str, str]:
-    """Scrape a web page and return (title, plain_text)."""
-    import httpx
+    """Scrape a web page and return (title, plain_text). SSRF-protected."""
     from bs4 import BeautifulSoup
 
     headers = {"User-Agent": "Mozilla/5.0 (compatible; ResearchBot/1.0)"}
-    async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
-        r = await client.get(url, headers=headers)
+    raw = await _safe_fetch_bytes(url, headers)
 
-    soup = BeautifulSoup(r.text, "html.parser")
+    soup = BeautifulSoup(raw, "html.parser")
     for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
         tag.decompose()
 
@@ -105,7 +163,13 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="Only PDF, TXT, and HTML files are supported")
 
     file_path = os.path.join(settings.uploads_dir, f"{doc_id}{ext}")
-    content = await file.read()
+    # Read with a hard cap to avoid loading an unbounded file into memory.
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large (max {MAX_UPLOAD_BYTES // (1024 * 1024)} MB)",
+        )
     with open(file_path, "wb") as f:
         f.write(content)
 

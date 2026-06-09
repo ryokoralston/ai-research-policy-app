@@ -10,6 +10,7 @@ Flow:
 """
 from __future__ import annotations
 
+import html
 import logging
 from datetime import datetime, timezone
 
@@ -67,17 +68,22 @@ def _build_html(articles: list[tuple[SearchResult, str]], date_str: str) -> str:
     """Render the digest as an HTML email body."""
     items_html = ""
     for i, (article, headline) in enumerate(articles, start=1):
+        # Article fields come from external web search — escape before embedding
+        # into the email HTML to prevent markup/attribute injection.
+        safe_title = html.escape(article.title or "")
+        safe_url = html.escape(article.url or "", quote=True)
+        safe_headline = html.escape(headline or "")
         items_html += f"""
         <tr>
           <td style="padding:16px 0; border-bottom:1px solid #e2e8f0;">
             <p style="margin:0 0 4px; font-size:15px; font-weight:600; color:#1e293b;">
-              {i}. {article.title}
+              {i}. {safe_title}
             </p>
             <p style="margin:0 0 6px; font-size:12px; color:#64748b;">
-              <a href="{article.url}" style="color:#3b82f6;">{article.url}</a>
+              <a href="{safe_url}" style="color:#3b82f6;">{safe_url}</a>
             </p>
             <p style="margin:0; font-size:14px; color:#334155; line-height:1.6;">
-              {headline}
+              {safe_headline}
             </p>
           </td>
         </tr>"""
