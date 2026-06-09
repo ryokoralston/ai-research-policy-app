@@ -12,6 +12,12 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     tavily_api_key: str = ""
 
+    # App login. When set, all /api routes require a bearer token obtained from
+    # POST /api/auth/login. When empty, auth is disabled (local-dev convenience)
+    # and a warning is logged at startup.
+    app_password: str = ""
+    session_ttl_hours: int = 12
+
     database_url: str = "sqlite:///./data/research.db"
     chroma_persist_dir: str = "./data/chroma"
     uploads_dir: str = "./data/uploads"

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import AppShell from "@/components/layout/AppShell";
+import AuthGuard from "@/components/layout/AuthGuard";
 import ThemeProvider, { ThemeScript } from "@/components/layout/ThemeProvider";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -19,7 +20,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className={`${inter.className} bg-slate-950 text-slate-100 min-h-screen`}>
         <ThemeProvider>
-          <AppShell>{children}</AppShell>
+          <AuthGuard>
+            <AppShell>{children}</AppShell>
+          </AuthGuard>
         </ThemeProvider>
       </body>
     </html>

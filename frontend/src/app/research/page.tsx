@@ -3,7 +3,7 @@
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Search, ExternalLink, FileText, FolderPlus } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, authFetch } from "@/lib/api";
 import StreamingText from "@/components/ui/StreamingText";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 
@@ -48,7 +48,7 @@ export default function ResearchPage() {
 
     try {
       // Start research session
-      const res = await fetch(api.research.startUrl(), {
+      const res = await authFetch(api.research.startUrl(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ query, max_sources: maxSources }),
@@ -58,7 +58,7 @@ export default function ResearchPage() {
       setSessionId(session_id);
 
       // Stream the SSE results (GET endpoint)
-      const streamRes = await fetch(
+      const streamRes = await authFetch(
         api.research.streamUrl(session_id),
         { signal: abortRef.current.signal }
       );

@@ -1,10 +1,73 @@
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// ── Auth token ──────────────────────────────────────────────────────────────
+const TOKEN_KEY = "auth_token";
+
+export function getToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(TOKEN_KEY);
+}
+export function setToken(token: string): void {
+  if (typeof window !== "undefined") localStorage.setItem(TOKEN_KEY, token);
+}
+export function clearToken(): void {
+  if (typeof window !== "undefined") localStorage.removeItem(TOKEN_KEY);
+}
+export function authHeaders(): Record<string, string> {
+  const t = getToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+}
+
+/** Drop the token and bounce to /login when the server rejects our credentials. */
+function handleUnauthorized(): void {
+  clearToken();
+  if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+    window.location.href = "/login";
+  }
+}
+
+/** fetch() with the bearer token attached and 401 handling. */
+export async function authFetch(url: string, options?: RequestInit): Promise<Response> {
+  const res = await fetch(url, {
+    ...options,
+    headers: { ...authHeaders(), ...options?.headers },
+  });
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error("Unauthorized");
+  }
+  return res;
+}
+
+/** Download a protected file via an authenticated request + object URL. */
+export async function downloadFile(url: string, fallbackName: string): Promise<void> {
+  const res = await authFetch(url);
+  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+  const blob = await res.blob();
+  // Prefer the server-provided filename when it is readable (CORS-exposed).
+  let filename = fallbackName;
+  const cd = res.headers.get("Content-Disposition");
+  const match = cd?.match(/filename="?([^"]+)"?/);
+  if (match) filename = match[1];
+  const objUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = objUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(objUrl);
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...options?.headers },
     ...options,
   });
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error("Unauthorized");
+  }
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`API error ${res.status}: ${text}`);
@@ -38,9 +101,10 @@ export const api = {
     upload: (file: File) => {
       const form = new FormData();
       form.append("file", file);
-      return fetch(`${BASE_URL}/api/documents/upload`, { method: "POST", body: form }).then(
-        (r) => r.json()
-      );
+      return authFetch(`${BASE_URL}/api/documents/upload`, {
+        method: "POST",
+        body: form,
+      }).then((r) => r.json());
     },
     ingestUrl: (url: string) =>
       request<{ document_id: string; status: string; title: string }>(
@@ -123,6 +187,15 @@ export const api = {
       }),
   },
 
+  auth: {
+    status: () => request<{ auth_required: boolean }>("/api/auth/status"),
+    login: (password: string) =>
+      request<{ token: string; auth_required: boolean; expires_in?: number }>(
+        "/api/auth/login",
+        { method: "POST", body: JSON.stringify({ password }) }
+      ),
+  },
+
   digest: {
     sendNow: () =>
       request<{
@@ -187,11 +260,15 @@ export async function postStream(
 ): Promise<void> {
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
     signal,
   });
 
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error("Unauthorized");
+  }
   if (!res.ok || !res.body) {
     throw new Error(`Stream request failed: ${res.status}`);
   }

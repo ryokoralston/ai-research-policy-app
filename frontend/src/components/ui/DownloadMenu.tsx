@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Download, ChevronDown, FileText, File } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, downloadFile } from "@/lib/api";
 
 interface DownloadMenuProps {
   reportId: string;
@@ -22,6 +22,14 @@ export default function DownloadMenu({ reportId, variant = "button" }: DownloadM
   }, []);
 
   const base = api.reports.exportUrl(reportId);
+
+  const handleDownload = (format: "pdf" | "txt") => {
+    setOpen(false);
+    const ext = format === "pdf" ? "pdf" : "txt";
+    downloadFile(`${base}?format=${format}`, `report-${reportId.slice(0, 8)}.${ext}`).catch(
+      (err) => console.error("Export failed:", err)
+    );
+  };
 
   return (
     <div ref={ref} className="relative">
@@ -46,24 +54,20 @@ export default function DownloadMenu({ reportId, variant = "button" }: DownloadM
 
       {open && (
         <div className="absolute right-0 mt-1 w-40 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-20 overflow-hidden">
-          <a
-            href={`${base}?format=pdf`}
-            download
-            onClick={() => setOpen(false)}
-            className="flex items-center gap-2.5 px-3 py-2.5 text-sm text-slate-200 hover:bg-slate-700 transition-colors"
+          <button
+            onClick={() => handleDownload("pdf")}
+            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-slate-200 hover:bg-slate-700 transition-colors"
           >
             <File size={13} className="text-red-400" />
             PDF
-          </a>
-          <a
-            href={`${base}?format=txt`}
-            download
-            onClick={() => setOpen(false)}
-            className="flex items-center gap-2.5 px-3 py-2.5 text-sm text-slate-200 hover:bg-slate-700 transition-colors"
+          </button>
+          <button
+            onClick={() => handleDownload("txt")}
+            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-slate-200 hover:bg-slate-700 transition-colors"
           >
             <FileText size={13} className="text-slate-400" />
             Plain Text
-          </a>
+          </button>
         </div>
       )}
     </div>

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Trash2, File, FileText, Download, ChevronDown } from "lucide-react";
-import { api } from "@/lib/api";
+import { api, downloadFile } from "@/lib/api";
 import type { RiskAnalysis } from "@/lib/types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -38,6 +38,13 @@ function ExportMenu({ analysisId }: { analysisId: string }) {
   const [open, setOpen] = useState(false);
   const base = api.analysis.exportUrl(analysisId);
 
+  const handleDownload = (format: "pdf" | "txt") => {
+    setOpen(false);
+    downloadFile(`${base}?format=${format}`, `analysis-${analysisId.slice(0, 8)}.${format}`).catch(
+      (err) => console.error("Export failed:", err)
+    );
+  };
+
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       const el = document.getElementById("analysis-export-menu");
@@ -59,24 +66,20 @@ function ExportMenu({ analysisId }: { analysisId: string }) {
       </button>
       {open && (
         <div className="absolute right-0 mt-1 w-40 bg-slate-800 border border-slate-700 rounded-lg shadow-xl z-20 overflow-hidden">
-          <a
-            href={`${base}?format=pdf`}
-            download
-            onClick={() => setOpen(false)}
-            className="flex items-center gap-2.5 px-3 py-2.5 text-sm text-slate-200 hover:bg-slate-700 transition-colors"
+          <button
+            onClick={() => handleDownload("pdf")}
+            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-slate-200 hover:bg-slate-700 transition-colors"
           >
             <File size={13} className="text-red-400" />
             PDF
-          </a>
-          <a
-            href={`${base}?format=txt`}
-            download
-            onClick={() => setOpen(false)}
-            className="flex items-center gap-2.5 px-3 py-2.5 text-sm text-slate-200 hover:bg-slate-700 transition-colors"
+          </button>
+          <button
+            onClick={() => handleDownload("txt")}
+            className="flex w-full items-center gap-2.5 px-3 py-2.5 text-sm text-slate-200 hover:bg-slate-700 transition-colors"
           >
             <FileText size={13} className="text-slate-400" />
             Plain Text
-          </a>
+          </button>
         </div>
       )}
     </div>

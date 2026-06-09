@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Users, Download, ChevronDown, ChevronRight, Loader2, FileText } from "lucide-react";
+import { authFetch } from "@/lib/api";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -76,7 +77,7 @@ async function consumeGetSSE(
   onEvent: (event: string, data: unknown) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  const res = await fetch(url, { signal });
+  const res = await authFetch(url, { signal });
   if (!res.ok || !res.body) throw new Error(`Stream failed: ${res.status}`);
 
   const reader = res.body.getReader();
@@ -255,7 +256,7 @@ export default function DebatePage() {
 
   // Load past debates on mount
   useEffect(() => {
-    fetch(`${BASE_URL}/api/debate/`)
+    authFetch(`${BASE_URL}/api/debate/`)
       .then((r) => r.json())
       .then(setPastDebates)
       .catch(() => {});
@@ -292,7 +293,7 @@ export default function DebatePage() {
 
     try {
       // 1. Create debate
-      const startRes = await fetch(`${BASE_URL}/api/debate/start`, {
+      const startRes = await authFetch(`${BASE_URL}/api/debate/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -369,7 +370,7 @@ export default function DebatePage() {
           } else if (event === "complete") {
             setDebate((prev) => ({ ...prev, status: "complete", currentPersona: null }));
             // Refresh past debates list
-            fetch(`${BASE_URL}/api/debate/`)
+            authFetch(`${BASE_URL}/api/debate/`)
               .then((r) => r.json())
               .then(setPastDebates)
               .catch(() => {});
@@ -397,7 +398,7 @@ export default function DebatePage() {
 
   const handleLoadPast = async (id: string) => {
     try {
-      const res = await fetch(`${BASE_URL}/api/debate/${id}`);
+      const res = await authFetch(`${BASE_URL}/api/debate/${id}`);
       const data = await res.json();
       const args: Argument[] = (data.arguments ?? []).map((a: Record<string, unknown>) => ({
         personaKey: a.persona_key as string,
@@ -424,7 +425,7 @@ export default function DebatePage() {
 
   const handleDeletePast = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    await fetch(`${BASE_URL}/api/debate/${id}`, { method: "DELETE" });
+    await authFetch(`${BASE_URL}/api/debate/${id}`, { method: "DELETE" });
     setPastDebates((prev) => prev.filter((d) => d.id !== id));
     if (debate.debateId === id) {
       setDebate({ debateId: null, status: "idle", currentRound: 0, currentPersona: null, arguments: [], synthesis: "", error: null });

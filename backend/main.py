@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
@@ -13,6 +13,8 @@ from database import SessionLocal, init_db, get_or_init_digest_settings
 from routers import research, documents, reports, analysis, debate
 from routers.digest import router as digest_router, record_sent, set_scheduler
 from routers.settings import router as settings_router
+from routers.auth import router as auth_router
+from services.auth import auth_enabled, require_auth
 from services.digest_service import send_digest
 
 logger = logging.getLogger(__name__)
@@ -74,6 +76,12 @@ async def lifespan(app: FastAPI):
         digest_tz,
     )
 
+    if not auth_enabled():
+        logger.warning(
+            "AUTH DISABLED — every /api route is publicly accessible. "
+            "Set APP_PASSWORD to require login before deploying."
+        )
+
     yield
 
     # Shutdown
@@ -94,15 +102,21 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
-app.include_router(research.router)
-app.include_router(documents.router)
-app.include_router(reports.router)
-app.include_router(analysis.router)
-app.include_router(debate.router)
-app.include_router(digest_router)
-app.include_router(settings_router)
+# Auth + health are public; everything else requires a valid bearer token
+# (enforced only when APP_PASSWORD is configured — see services/auth.py).
+app.include_router(auth_router)
+
+_protected = [Depends(require_auth)]
+app.include_router(research.router, dependencies=_protected)
+app.include_router(documents.router, dependencies=_protected)
+app.include_router(reports.router, dependencies=_protected)
+app.include_router(analysis.router, dependencies=_protected)
+app.include_router(debate.router, dependencies=_protected)
+app.include_router(digest_router, dependencies=_protected)
+app.include_router(settings_router, dependencies=_protected)
 
 
 @app.get("/health")
