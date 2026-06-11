@@ -9,7 +9,7 @@ from models import Document, DocumentChunk
 from rag.chunker import chunk_pdf, chunk_html, chunk_plain_text
 from rag.vector_store import VectorStore
 from services.embedding_service import EmbeddingService
-from services.anthropic_client import stream_text, stream_chat, sse_event, UNTRUSTED_CONTENT_GUARD
+from services.anthropic_client import stream_text, stream_chat, stream_chat_with_tools, sse_event, UNTRUSTED_CONTENT_GUARD
 
 
 async def index_document(doc_id: str, db: Session) -> None:
@@ -91,6 +91,30 @@ async def index_document(doc_id: str, db: Session) -> None:
         raise
 
 
+# Tool definition for the document-library Q&A agentic loop.
+# Claude calls this tool to retrieve relevant passages on demand instead of
+# receiving pre-stuffed context.
+SEARCH_DOCUMENTS_TOOL = {
+    "name": "search_documents",
+    "description": (
+        "Search the user's uploaded document library for passages relevant to a query. "
+        "Call this whenever you need source material to answer the question — including "
+        "follow-up questions, where you should write a self-contained query that captures "
+        "what the user is really asking about."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "A self-contained search query in English describing the information needed",
+            }
+        },
+        "required": ["query"],
+    },
+}
+
+
 async def answer_question(
     question: str,
     doc_ids: list[str] | None,
@@ -99,69 +123,94 @@ async def answer_question(
     chat_history: list[dict] | None = None,
     custom_system: str | None = None,
 ) -> AsyncIterator[str]:
-    """Stream an answer using retrieved document chunks.
+    """Stream an answer via a manual Anthropic tool-use loop.
+
+    Instead of retrieving context upfront, Claude calls the search_documents tool
+    when it needs source material. This enables on-demand, query-specific retrieval
+    including for follow-up questions.
+
     chat_history = [{"role": "user"|"assistant", "content": "..."}, ...]
     Previous turns are passed to Claude so it can reference earlier exchanges.
     """
     from rag.retriever import Retriever
 
     retriever = Retriever()
-    chunks = retriever.retrieve(question, top_k=top_k, doc_ids=doc_ids)
+    collected_chunks: list = []  # accumulates all chunks retrieved across tool calls
 
-    if not chunks:
-        yield sse_event("error", {"message": "No relevant content found in the selected documents."})
-        return
+    async def execute_tool(name: str, tool_input: dict) -> str:
+        """Run a tool call requested by Claude and return the result as a string."""
+        if name == "search_documents":
+            query = tool_input.get("query", "")
+            chunks = retriever.retrieve(query, top_k=top_k, doc_ids=doc_ids)
+            if not chunks:
+                return "No relevant content found in the document library for this query."
+            # Collect chunks for citations (deduplicated by chunk_id later)
+            collected_chunks.extend(chunks)
+            # Format exactly like the pre-tool context_parts approach
+            context_parts = []
+            for chunk in chunks:
+                doc = db.query(Document).filter(Document.id == chunk.doc_id).first()
+                doc_title = doc.title or doc.filename if doc else "Unknown"
+                context_parts.append(
+                    f"[{doc_title}, p.{chunk.page_number}, sec: {chunk.section_header}]\n{chunk.content}"
+                )
+            context = "\n\n---\n\n".join(context_parts)
+            return f"<source_documents>\n{context}\n</source_documents>"
+        return f"Unknown tool: {name}"
 
-    # Build context with document title info
-    context_parts = []
-    for chunk in chunks:
-        doc = db.query(Document).filter(Document.id == chunk.doc_id).first()
-        doc_title = doc.title or doc.filename if doc else "Unknown"
-        context_parts.append(
-            f"[{doc_title}, p.{chunk.page_number}, sec: {chunk.section_header}]\n{chunk.content}"
-        )
-    context = "\n\n---\n\n".join(context_parts)
-
-    # Use custom system prompt if provided, otherwise fall back to default
+    # Build system prompt: describe the tool and citation requirements
     default_system = (
         "You are a research assistant for an AI policy institute. "
-        "Answer questions based only on the provided source documents. "
+        "Answer questions based only on material returned by the search_documents tool. "
+        "Before answering any substantive question, call search_documents with a relevant query. "
         "Be concise and direct — aim for 3–5 sentences unless the question requires more detail. "
         "Cite sources using [Doc Title] format. "
-        "If the documents do not contain enough information to answer, say so explicitly. "
+        "If the tool returns no relevant content, say so explicitly. "
         "You have access to the conversation history — use it to answer follow-up questions naturally."
     )
     system = (
-        f"{custom_system}\n\nAdditional constraint: Answer based only on the provided source documents. "
-        f"Cite sources using [Doc Title] format. "
-        f"If the documents do not contain enough information to answer, say so explicitly."
+        f"{custom_system}\n\n"
+        "Additional constraints: Answer based only on material returned by the search_documents tool. "
+        "Call the tool before answering substantive questions. "
+        "Cite sources using [Doc Title] format. "
+        "If the tool returns no relevant content, say so explicitly."
         if custom_system else default_system
     )
     # The retrieved chunks are untrusted document content — guard against any
     # injected instructions hiding inside them.
     system = f"{system}\n\n{UNTRUSTED_CONTENT_GUARD}"
 
-    # Build full messages array: previous turns + current question with context
-    current_prompt = (
-        f"Question: {question}\n\n"
-        # "Structure with XML tags" lesson: retrieved chunks are bounded by a
-        # descriptive tag so Claude never confuses document text for the question.
-        f"<source_documents>\n{context}\n</source_documents>\n\n"
-        f"Answer concisely with citations."
-    )
+    # Build messages: chat history + the bare question (no pre-stuffed context)
     messages = list(chat_history or [])
-    messages.append({"role": "user", "content": current_prompt})
+    messages.append({"role": "user", "content": question})
 
-    yield sse_event("start", {"question": question, "sources_count": len(chunks)})
+    yield sse_event("start", {"question": question})
 
     full_text = ""
     # temperature=0.3: ドキュメントに基づく事実回答なので低め
-    async for token in stream_chat(messages, system=system, temperature=0.3):
-        full_text += token
-        yield sse_event("token", {"text": token})
+    async for event_type, payload in stream_chat_with_tools(
+        messages,
+        system=system,
+        tools=[SEARCH_DOCUMENTS_TOOL],
+        tool_executor=execute_tool,
+        temperature=0.3,
+    ):
+        if event_type == "tool_use":
+            yield sse_event("tool", {"name": payload["name"], "query": payload["input"].get("query", "")})
+        elif event_type == "text":
+            full_text += payload
+            yield sse_event("token", {"text": payload})
+
+    # Deduplicate collected_chunks by chunk_id, preserving encounter order
+    seen_ids: set[str] = set()
+    deduped_chunks = []
+    for chunk in collected_chunks:
+        if chunk.chunk_id not in seen_ids:
+            seen_ids.add(chunk.chunk_id)
+            deduped_chunks.append(chunk)
 
     citations = [
         {"doc_id": c.doc_id, "chunk_id": c.chunk_id, "page": c.page_number}
-        for c in chunks
+        for c in deduped_chunks
     ]
     yield sse_event("complete", {"citations": citations, "word_count": len(full_text.split())})

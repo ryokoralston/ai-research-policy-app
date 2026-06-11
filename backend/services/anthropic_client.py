@@ -244,6 +244,78 @@ async def stream_chat(
             yield text
 
 
+async def stream_chat_with_tools(
+    messages: list[dict],
+    system: str = "",
+    tools: list[dict] | None = None,
+    tool_executor=None,  # async callable (tool_name: str, tool_input: dict) -> str
+    model: str | None = None,
+    max_tokens: int = 8192,
+    temperature: float = 1.0,
+    max_tool_iterations: int = 5,
+) -> AsyncIterator[tuple[str, object]]:
+    """Streaming multi-turn chat with a manual Anthropic tool-use loop.
+
+    Yields structured events:
+      ("text", token_str)  — streamed text delta from Claude
+      ("tool_use", {"name": ..., "input": ...})  — emitted before executing each tool call
+
+    The loop runs until stop_reason is not "tool_use" or max_tool_iterations is reached.
+    Each iteration: stream Claude's response, collect the final message, echo the
+    assistant turn (with tool_use blocks) back as history, run each requested tool via
+    tool_executor, append tool_result blocks, then continue.
+
+    If tools is falsy or the model is OpenAI, falls back to stream_chat and yields
+    ("text", token) for each token. (Tool use is Anthropic-only.)
+
+    temperature: 0.0 = deterministic, 1.0 = default (more varied).
+    max_tool_iterations: cap on tool-use rounds to prevent runaway loops.
+    """
+    ai_settings = _load_ai_settings()
+    model = model or ai_settings["main_model"]
+
+    # Fall back to plain stream_chat for OpenAI models or when tools are not provided
+    if _is_openai(model) or not tools:
+        async for token in stream_chat(messages, system=system, model=model, max_tokens=max_tokens, temperature=temperature):
+            yield ("text", token)
+        return
+
+    client = _get_anthropic_client(ai_settings)
+    msgs = list(messages)  # don't mutate caller's list
+
+    for _ in range(max_tool_iterations):
+        async with client.messages.stream(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=msgs,
+            tools=tools,
+            **({"system": system} if system else {}),
+        ) as stream:
+            async for text in stream.text_stream:
+                yield ("text", text)
+            final = await stream.get_final_message()
+
+        if final.stop_reason != "tool_use":
+            break
+
+        # Echo the full assistant turn (including tool_use blocks) back into history
+        msgs.append({"role": "assistant", "content": final.content})
+
+        tool_results = []
+        for block in final.content:
+            if block.type == "tool_use":
+                yield ("tool_use", {"name": block.name, "input": block.input})
+                result = await tool_executor(block.name, block.input)
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result,
+                })
+
+        msgs.append({"role": "user", "content": tool_results})
+
+
 def sse_event(event: str, data: dict) -> str:
     """Format a Server-Sent Event string."""
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"

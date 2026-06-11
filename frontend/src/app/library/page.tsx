@@ -73,6 +73,7 @@ export default function LibraryPage() {
   const [question, setQuestion] = useState("");
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [qaRunning, setQaRunning] = useState(false);
+  const [toolStatus, setToolStatus] = useState<string | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [systemPrompt, setSystemPrompt] = useState("");
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
@@ -167,6 +168,7 @@ export default function LibraryPage() {
     const currentQuestion = question;
     setQuestion(""); // clear input immediately for chat UX
     setQaRunning(true);
+    setToolStatus(null);
 
     // Build history for the API from completed (non-streaming) messages
     // We send previous Q&A turns so Claude can reference them
@@ -193,7 +195,10 @@ export default function LibraryPage() {
         },
         (event, data) => {
           const d = data as Record<string, unknown>;
-          if (event === "token") {
+          if (event === "tool") {
+            setToolStatus(`Searching documents: ${d.query as string}…`);
+          } else if (event === "token") {
+            setToolStatus(null); // clear search indicator once tokens arrive
             setChatMessages((prev) => {
               const next = [...prev];
               const last = next[next.length - 1];
@@ -203,6 +208,7 @@ export default function LibraryPage() {
               return next;
             });
           } else if (event === "complete" || event === "error") {
+            setToolStatus(null);
             setChatMessages((prev) => {
               const next = [...prev];
               const last = next[next.length - 1];
@@ -216,6 +222,7 @@ export default function LibraryPage() {
         }
       );
     } catch {
+      setToolStatus(null);
       setChatMessages((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
@@ -777,6 +784,14 @@ export default function LibraryPage() {
                   </div>
                 </div>
               ))
+            )}
+            {toolStatus && (
+              <div className="flex justify-start">
+                <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-800/60 rounded-lg px-3 py-1.5">
+                  <LoadingSpinner size="sm" />
+                  {toolStatus}
+                </div>
+              </div>
             )}
             <div ref={chatEndRef} />
           </div>
