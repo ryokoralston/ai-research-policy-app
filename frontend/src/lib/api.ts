@@ -187,6 +187,15 @@ export const api = {
       }),
   },
 
+  reminders: {
+    list: () =>
+      request<{ id: string; content: string; due_at: string; created_at: string }[]>(
+        "/api/reminders/"
+      ),
+    delete: (id: string) =>
+      request<{ deleted: string }>(`/api/reminders/${id}`, { method: "DELETE" }),
+  },
+
   auth: {
     status: () => request<{ auth_required: boolean }>("/api/auth/status"),
     login: (password: string) =>

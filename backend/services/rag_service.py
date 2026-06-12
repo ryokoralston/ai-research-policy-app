@@ -10,6 +10,7 @@ from rag.chunker import chunk_pdf, chunk_html, chunk_plain_text
 from rag.vector_store import VectorStore
 from services.embedding_service import EmbeddingService
 from services.anthropic_client import stream_text, stream_chat, stream_chat_with_tools, sse_event, UNTRUSTED_CONTENT_GUARD
+from services.reminder_tools import REMINDER_TOOLS, execute_reminder_tool
 
 
 async def index_document(doc_id: str, db: Session) -> None:
@@ -139,6 +140,11 @@ async def answer_question(
 
     async def execute_tool(name: str, tool_input: dict) -> str:
         """Run a tool call requested by Claude and return the result as a string."""
+        # Try reminder tools first; returns None if the name doesn't match any of them
+        reminder_result = await execute_reminder_tool(name, tool_input, db)
+        if reminder_result is not None:
+            return reminder_result
+
         if name == "search_documents":
             query = tool_input.get("query", "")
             chunks = retriever.retrieve(query, top_k=top_k, doc_ids=doc_ids)
@@ -166,14 +172,22 @@ async def answer_question(
         "Be concise and direct — aim for 3–5 sentences unless the question requires more detail. "
         "Cite sources using [Doc Title] format. "
         "If the tool returns no relevant content, say so explicitly. "
-        "You have access to the conversation history — use it to answer follow-up questions naturally."
+        "You have access to the conversation history — use it to answer follow-up questions naturally. "
+        "You can also set reminders for the user. "
+        "For any relative date or time expression ('next Thursday', 'in two weeks', 'a week from Friday'), "
+        "you MUST call get_current_datetime first, then add_duration_to_datetime to compute the exact "
+        "target datetime, and finally call set_reminder — never compute dates yourself."
     )
     system = (
         f"{custom_system}\n\n"
         "Additional constraints: Answer based only on material returned by the search_documents tool. "
         "Call the tool before answering substantive questions. "
         "Cite sources using [Doc Title] format. "
-        "If the tool returns no relevant content, say so explicitly."
+        "If the tool returns no relevant content, say so explicitly. "
+        "You can also set reminders for the user. "
+        "For any relative date or time ('next Thursday', 'in two weeks', 'a week from Friday'), "
+        "call get_current_datetime first, then add_duration_to_datetime, then set_reminder — "
+        "never compute dates yourself."
         if custom_system else default_system
     )
     # The retrieved chunks are untrusted document content — guard against any
@@ -191,12 +205,18 @@ async def answer_question(
     async for event_type, payload in stream_chat_with_tools(
         messages,
         system=system,
-        tools=[SEARCH_DOCUMENTS_TOOL],
+        tools=[SEARCH_DOCUMENTS_TOOL, *REMINDER_TOOLS],
         tool_executor=execute_tool,
         temperature=0.3,
     ):
         if event_type == "tool_use":
-            yield sse_event("tool", {"name": payload["name"], "query": payload["input"].get("query", "")})
+            # Keep "query" field for search_documents so existing frontend code doesn't break;
+            # add "input" with the full tool input for all tools (new frontend uses this).
+            yield sse_event("tool", {
+                "name": payload["name"],
+                "query": payload["input"].get("query", ""),
+                "input": payload["input"],
+            })
         elif event_type == "text":
             full_text += payload
             yield sse_event("token", {"text": payload})

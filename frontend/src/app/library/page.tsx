@@ -4,13 +4,20 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import {
   BookOpen, Upload, Trash2, MessageSquare, X, Folder, FolderOpen,
   ExternalLink, Globe, FileText, FileCode, File, Link, Youtube, RefreshCw,
-  FolderPlus, Pencil, Check, Settings2, ChevronDown,
+  FolderPlus, Pencil, Check, Settings2, ChevronDown, Bell,
 } from "lucide-react";
 import { api, postStream } from "@/lib/api";
 import type { Document } from "@/lib/types";
 import Badge from "@/components/ui/Badge";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import StreamingText from "@/components/ui/StreamingText";
+
+interface Reminder {
+  id: string;
+  content: string;
+  due_at: string;
+  created_at: string;
+}
 
 interface ChatMessage {
   role: "user" | "assistant";
@@ -88,6 +95,9 @@ export default function LibraryPage() {
   const [renamingFolderName, setRenamingFolderName] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
 
+  // Reminders
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+
   const loadDocs = useCallback(() => {
     api.documents.list().then((data) => {
       setDocs(data as Document[]);
@@ -95,11 +105,22 @@ export default function LibraryPage() {
     });
   }, []);
 
+  const loadReminders = useCallback(() => {
+    api.reminders
+      .list()
+      .then((data) => setReminders(data as Reminder[]))
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     loadDocs();
     const interval = setInterval(loadDocs, 5000);
     return () => clearInterval(interval);
   }, [loadDocs]);
+
+  useEffect(() => {
+    loadReminders();
+  }, [loadReminders]);
 
   useEffect(() => {
     if (renamingFolderId) renameInputRef.current?.focus();
@@ -196,7 +217,21 @@ export default function LibraryPage() {
         (event, data) => {
           const d = data as Record<string, unknown>;
           if (event === "tool") {
-            setToolStatus(`Searching documents: ${d.query as string}…`);
+            const toolName = d.name as string;
+            const toolInput = d.input as Record<string, unknown> | undefined;
+            let label: string;
+            if (toolName === "search_documents") {
+              label = `Searching documents: ${d.query as string}…`;
+            } else if (toolName === "get_current_datetime") {
+              label = "Checking current date & time…";
+            } else if (toolName === "add_duration_to_datetime") {
+              label = "Calculating date…";
+            } else if (toolName === "set_reminder") {
+              label = `Setting reminder: ${toolInput?.content as string ?? ""}…`;
+            } else {
+              label = `Running ${toolName}…`;
+            }
+            setToolStatus(label);
           } else if (event === "token") {
             setToolStatus(null); // clear search indicator once tokens arrive
             setChatMessages((prev) => {
@@ -218,6 +253,8 @@ export default function LibraryPage() {
               return next;
             });
             setQaRunning(false);
+            // Refresh reminders in case a set_reminder tool call was made
+            loadReminders();
           }
         }
       );
@@ -322,6 +359,11 @@ export default function LibraryPage() {
     await api.documents.renameFolder(renamingFolderId, renamingFolderName.trim());
     setRenamingFolderId(null);
     loadDocs();
+  };
+
+  const handleDeleteReminder = async (id: string) => {
+    await api.reminders.delete(id).catch(() => {});
+    setReminders((prev) => prev.filter((r) => r.id !== id));
   };
 
   const statusVariant = (status: string) => {
@@ -747,6 +789,41 @@ export default function LibraryPage() {
               <p className="text-xs text-blue-400">
                 Searching {selectedDocs.size} selected document{selectedDocs.size > 1 ? "s" : ""}
               </p>
+            </div>
+          )}
+
+          {/* Reminders panel */}
+          {reminders.length > 0 && (
+            <div className="border-b border-slate-800 px-4 py-3 space-y-1.5">
+              <div className="flex items-center gap-1.5 mb-2">
+                <Bell size={12} className="text-amber-400" />
+                <span className="text-xs font-medium text-slate-400">Reminders</span>
+              </div>
+              {reminders.map((r) => (
+                <div
+                  key={r.id}
+                  className="flex items-start gap-2 bg-slate-800/60 rounded-lg px-3 py-2"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-slate-200 truncate">{r.content}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {new Date(r.due_at).toLocaleDateString("en-US", {
+                        weekday: "short",
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => handleDeleteReminder(r.id)}
+                    className="text-slate-500 hover:text-red-400 transition-colors flex-shrink-0 mt-0.5"
+                    title="Delete reminder"
+                  >
+                    <X size={13} />
+                  </button>
+                </div>
+              ))}
             </div>
           )}
 
