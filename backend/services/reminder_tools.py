@@ -28,7 +28,18 @@ GET_CURRENT_DATETIME_TOOL = {
     ),
     "input_schema": {
         "type": "object",
-        "properties": {},
+        "properties": {
+            "date_format": {
+                "type": "string",
+                "description": (
+                    "strftime format string for the returned datetime. "
+                    "Default: '%Y-%m-%d %H:%M:%S' (e.g. '2026-06-12 14:30:00'). "
+                    "The default ISO-like format is best when you plan to pass the result "
+                    "to add_duration_to_datetime, which can parse it directly. "
+                    "Use a custom format only when you need human-readable display."
+                ),
+            },
+        },
     },
 }
 
@@ -111,7 +122,7 @@ async def execute_reminder_tool(name: str, tool_input: dict, db: Session) -> str
         return None
 
     if name == "get_current_datetime":
-        return _get_current_datetime()
+        return _get_current_datetime(tool_input)
 
     if name == "add_duration_to_datetime":
         return _add_duration_to_datetime(tool_input)
@@ -122,12 +133,14 @@ async def execute_reminder_tool(name: str, tool_input: dict, db: Session) -> str
     return None  # unreachable, but satisfies type checker
 
 
-def _get_current_datetime() -> str:
+def _get_current_datetime(tool_input: dict | None = None) -> str:
+    date_format = (tool_input or {}).get("date_format", "%Y-%m-%d %H:%M:%S")
+    if not isinstance(date_format, str) or not date_format:
+        return f"Error: 'date_format' must be a non-empty strftime string. Got: {date_format!r}"
     now = datetime.now()
     weekday = _WEEKDAY_NAMES[now.weekday()]
-    return (
-        f"Current datetime: {now.isoformat(timespec='seconds')}, weekday: {weekday}"
-    )
+    formatted = now.strftime(date_format)
+    return f"Current datetime: {formatted}, weekday: {weekday}"
 
 
 def _add_duration_to_datetime(tool_input: dict) -> str:

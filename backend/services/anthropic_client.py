@@ -270,6 +270,8 @@ async def stream_chat_with_tools(
 
     temperature: 0.0 = deterministic, 1.0 = default (more varied).
     max_tool_iterations: cap on tool-use rounds to prevent runaway loops.
+    Error handling: if tool_executor raises an exception, a tool_result with
+    is_error=True is appended so Claude can read the error and retry with corrected input.
     """
     ai_settings = _load_ai_settings()
     model = model or ai_settings["main_model"]
@@ -306,12 +308,20 @@ async def stream_chat_with_tools(
         for block in final.content:
             if block.type == "tool_use":
                 yield ("tool_use", {"name": block.name, "input": block.input})
-                result = await tool_executor(block.name, block.input)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
+                try:
+                    result = await tool_executor(block.name, block.input)
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result,
+                    })
+                except Exception as exc:
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": f"{type(exc).__name__}: {exc}",
+                        "is_error": True,
+                    })
 
         msgs.append({"role": "user", "content": tool_results})
 
