@@ -4,12 +4,15 @@ Provides both streaming (SSE) and non-streaming text generation.
 Model defaults are loaded from DB (ModelSettings) with a 60-second cache.
 """
 import json
+import logging
 import time
 from typing import AsyncIterator
 
 import anthropic
 
 from config import get_settings
+
+logger = logging.getLogger(__name__)
 
 # Prompt-injection guard. Append to the SYSTEM prompt of any request that embeds
 # external/untrusted content (web pages, uploaded docs, search results, debate
@@ -236,6 +239,10 @@ async def stream_chat(
         "max_tokens": max_tokens,
         "temperature": temperature,
         "messages": messages,  # full history, alternating user/assistant
+        # Cache the conversation prefix so each follow-up turn re-reads the prior
+        # history at ~0.1x instead of full price. No-op until the prefix exceeds
+        # the model's cache minimum; no effect on output.
+        "cache_control": {"type": "ephemeral"},
     }
     if system:
         kwargs["system"] = system
@@ -286,17 +293,33 @@ async def stream_chat_with_tools(
     msgs = list(messages)  # don't mutate caller's list
 
     for _ in range(max_tool_iterations):
+        # Prompt caching: this is the one path in the app with a large, reusable
+        # prefix. Each tool round re-sends the entire prefix (tools + system +
+        # question + the retrieved <source_documents> tool results), and so does
+        # every follow-up turn. Top-level cache_control auto-caches the last
+        # cacheable block, so iteration 2+ and later turns read that prefix at
+        # ~0.1x instead of full price. No effect on output — purely a cost lever.
+        # (Silently a no-op until the prefix exceeds the model's cache minimum.)
         async with client.messages.stream(
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
             messages=msgs,
             tools=tools,
+            cache_control={"type": "ephemeral"},
             **({"system": system} if system else {}),
         ) as stream:
             async for text in stream.text_stream:
                 yield ("text", text)
             final = await stream.get_final_message()
+
+        # Verifiable cache signal (see Anthropic docs: cache_read_input_tokens).
+        u = getattr(final, "usage", None)
+        if u is not None:
+            logger.info(
+                "tool-loop usage: input=%s cache_read=%s cache_write=%s",
+                u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens,
+            )
 
         if final.stop_reason != "tool_use":
             break
