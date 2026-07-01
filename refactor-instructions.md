@@ -216,8 +216,10 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
     最終的な提示順のみ読書順に変更。コメントも実態に一致させた。
   - テスト: `tests/test_retriever_order.py`（リランク経路・フォールバック経路・空入力。
     chromadb / sentence-transformers はスタブ化しており重い依存なしで実行可能）。
-- 関連メモ（未対応・報告のみ）: `CrossEncoder` を `retrieve()` のたびに再ロードしており
-  クエリごとに数百ms〜数秒の無駄がある。`@lru_cache` 等でのキャッシュは安全な改善候補。
+- 関連メモ →【対応済み・2026-07-01】: `CrossEncoder` の毎クエリ再ロードを解消。
+  `embedding_service.py` と同じ `@lru_cache(maxsize=1)` パターンの `_load_reranker()` に集約
+  （ロード失敗は例外のためキャッシュされず、次クエリで再試行される）。
+  テスト: `tests/test_retriever_order.py` にキャッシュ再利用・失敗非キャッシュの2テストを追加。
 
 **B-2. SSE 終端判定が JSON 直列化の空白に依存**
 - 根拠: §3-2 の通り。`sse_event` の `json.dumps(data)` が区切り `": "` を出す前提で `'"event_type": "complete"'` を substring 検索。

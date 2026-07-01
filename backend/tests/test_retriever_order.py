@@ -36,7 +36,7 @@ if "chromadb" not in sys.modules:
 _st_stub = types.ModuleType("sentence_transformers")
 sys.modules["sentence_transformers"] = _st_stub
 
-from rag.retriever import Retriever
+from rag.retriever import Retriever, _load_reranker
 from rag.vector_store import RetrievedChunk
 
 
@@ -80,8 +80,10 @@ def _make_retriever(candidates) -> Retriever:
 class _ScoredCrossEncoder:
     """Scores by content: 'rank=N' in the chunk content → score N."""
 
+    instances = 0  # counts constructions to verify the lru_cache reuse
+
     def __init__(self, model_name):
-        pass
+        _ScoredCrossEncoder.instances += 1
 
     def predict(self, pairs):
         return [float(content.split("rank=")[1]) for _, content in pairs]
@@ -96,6 +98,7 @@ class _BrokenCrossEncoder:
 
 def test_rerank_path_returns_reading_order():
     """Selection = top rerank scores; presentation = (doc_id, chunk_index)."""
+    _load_reranker.cache_clear()
     candidates = [
         _chunk("doc-B", 7, "rank=5", 0.9),
         _chunk("doc-A", 3, "rank=1", 0.8),   # low rerank score → dropped
@@ -115,6 +118,7 @@ def test_rerank_path_returns_reading_order():
 
 def test_fallback_path_returns_reading_order():
     """Cross-encoder failure → first top_k by vector order, in reading order."""
+    _load_reranker.cache_clear()
     candidates = [
         _chunk("doc-B", 9, "x", 0.9),
         _chunk("doc-A", 4, "x", 0.8),
@@ -131,9 +135,41 @@ def test_fallback_path_returns_reading_order():
 
 
 def test_empty_candidates_return_empty():
+    _load_reranker.cache_clear()
     _st_stub.CrossEncoder = _ScoredCrossEncoder
     result = _make_retriever([]).retrieve("q", top_k=3)
     assert result == [], result
+
+
+def test_reranker_is_loaded_once_across_queries():
+    """Repeated retrieve() calls reuse one cached CrossEncoder instance."""
+    _load_reranker.cache_clear()
+    _st_stub.CrossEncoder = _ScoredCrossEncoder
+    _ScoredCrossEncoder.instances = 0
+
+    candidates = [_chunk("doc-A", 1, "rank=1", 0.9), _chunk("doc-A", 2, "rank=2", 0.8)]
+    retriever = _make_retriever(candidates)
+    for _ in range(3):
+        retriever.retrieve("q", top_k=2)
+
+    assert _ScoredCrossEncoder.instances == 1, (
+        f"expected 1 construction, got {_ScoredCrossEncoder.instances}"
+    )
+
+
+def test_failed_reranker_load_is_not_cached():
+    """A broken load falls back, then a later successful load is picked up."""
+    _load_reranker.cache_clear()
+    candidates = [_chunk("doc-A", 1, "rank=1", 0.9), _chunk("doc-A", 2, "rank=2", 0.8)]
+    retriever = _make_retriever(candidates)
+
+    _st_stub.CrossEncoder = _BrokenCrossEncoder
+    result = retriever.retrieve("q", top_k=1)  # fallback: vector order
+    assert [(c.doc_id, c.chunk_index) for c in result] == [("doc-A", 1)], result
+
+    _st_stub.CrossEncoder = _ScoredCrossEncoder  # "model becomes available"
+    result = retriever.retrieve("q", top_k=1)   # rerank: rank=2 wins
+    assert [(c.doc_id, c.chunk_index) for c in result] == [("doc-A", 2)], result
 
 
 # ── Test runner ───────────────────────────────────────────────────────────────
@@ -158,6 +194,8 @@ if __name__ == "__main__":
     _run("rerank path returns reading order", test_rerank_path_returns_reading_order)
     _run("fallback path returns reading order", test_fallback_path_returns_reading_order)
     _run("empty candidates return empty list", test_empty_candidates_return_empty)
+    _run("reranker is loaded once across queries", test_reranker_is_loaded_once_across_queries)
+    _run("failed reranker load is not cached", test_failed_reranker_load_is_not_cached)
 
     total = len(_PASSED) + len(_FAILED)
     print(f"\n{'=' * 50}")

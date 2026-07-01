@@ -1,6 +1,15 @@
 """Two-stage retrieval: vector search + cross-encoder reranking."""
+from functools import lru_cache
+from typing import Any
+
 from rag.vector_store import VectorStore, RetrievedChunk
 from services.embedding_service import EmbeddingService
+
+
+@lru_cache(maxsize=1)
+def _load_reranker() -> Any:
+    from sentence_transformers import CrossEncoder
+    return CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
 
 class Retriever:
@@ -33,10 +42,10 @@ class Retriever:
         if not candidates:
             return []
 
-        # Cross-encoder reranking
+        # Cross-encoder reranking (model is loaded once and cached — a failed
+        # load is not cached, so it is retried on the next query)
         try:
-            from sentence_transformers import CrossEncoder
-            reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+            reranker = _load_reranker()
             pairs = [(question, c.content) for c in candidates]
             scores = reranker.predict(pairs)
             ranked = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
