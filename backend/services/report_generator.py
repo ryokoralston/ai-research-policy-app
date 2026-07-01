@@ -80,7 +80,7 @@ async def generate_report_stream(
             yield sse_event("token", {"text": token, "section": section_key})
 
         # Strip internal metadata lines (e.g. SCORES_JSON) before saving
-        section_content = _strip_metadata(section_content)
+        section_content = _strip_scores_json_lines(section_content)
 
         # Save section to DB
         section_record = ReportSection(
@@ -231,7 +231,7 @@ async def _gather_source_material(request: ReportGenerateRequest, db: Session) -
     return "\n\n---\n\n".join(parts)
 
 
-def _strip_metadata(content: str) -> str:
+def _strip_scores_json_lines(content: str) -> str:
     """Remove internal metadata lines (e.g. SCORES_JSON) from section content."""
     lines = content.splitlines()
     filtered = [line for line in lines if not line.strip().startswith("SCORES_JSON:")]

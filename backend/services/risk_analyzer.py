@@ -19,10 +19,10 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 
-def _strip_metadata(content: str, section_title: str = "") -> str:
+def _strip_duplicate_heading(content: str, section_title: str = "") -> str:
     """Remove duplicate section headers from section content.
-    SCORES_JSON lines are no longer generated — scores are extracted via a
-    separate generate_text() call using prefill + stop sequences."""
+    (Named distinctly from report_generator._strip_scores_json_lines — the two
+    used to share the name _strip_metadata while doing different things.)"""
     lines = content.splitlines()
     filtered = []
     for line in lines:
@@ -130,8 +130,8 @@ async def run_risk_analysis(
                     exc_info=True,
                 )
 
-        # Strip metadata lines and duplicate section headers from content
-        section_content = _strip_metadata(section_content, section_title)
+        # Strip duplicate section headers from content
+        section_content = _strip_duplicate_heading(section_content, section_title)
 
         full_content_parts.append(f"## {section_title}\n\n{section_content}")
 

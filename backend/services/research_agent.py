@@ -4,8 +4,8 @@ Research Agent: orchestrates web search + Claude synthesis.
 Pipeline:
   1. Query decomposition (Claude generates sub-queries)
   2. Parallel Tavily searches
-  3. Per-source summarization (claude-haiku-3-5)
-  4. Final synthesis (claude-opus-4-6, streaming)
+  3. Per-source summarization (fast model — see ModelSettings/config)
+  4. Final synthesis (main model, streaming)
 """
 import asyncio
 import uuid

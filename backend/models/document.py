@@ -12,7 +12,7 @@ class Document(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     filename: Mapped[str] = mapped_column(String, nullable=False)
     title: Mapped[str | None] = mapped_column(String)
-    source_type: Mapped[str] = mapped_column(String, default="upload")  # 'upload' | 'scraped'
+    source_type: Mapped[str] = mapped_column(String, default="upload")  # 'upload'|'url'|'youtube'|'web'
     file_path: Mapped[str | None] = mapped_column(String)
     url: Mapped[str | None] = mapped_column(String)
     page_count: Mapped[int | None] = mapped_column(Integer)
