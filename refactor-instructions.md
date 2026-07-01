@@ -124,8 +124,8 @@ python -m evals.eval_being_specific
 
 以下に該当したら、勝手に決めずに人間へ質問すること：
 
-1. Report の status 値の正準化（`"complete"` と `"completed"` の不整合 — §7 D-1）に着手する場合。
-   保存済みデータに影響するため、事前承認なしに変更しない。
+1. Report status の PATCH 挙動変更（許可リスト外の値を黙って無視 → 400 にする等）。
+   ※ status の正準化自体（`complete`→`completed`）は承認済み・実装済み（§7 B-3 参照）。
 2. `rag/retriever.py` の並べ替え（§7 B-1）を「修正」する場合。検索回答の内容が変わる。
 3. save-to-library のチャンク方式統一（§7 A-3 の第2段階）。インデックス済みデータとの一貫性に影響。
 4. Digest メールの日本語見出し（§7 E-2）を変更しようとする場合 — 仕様かバグか判断できない。
@@ -222,10 +222,18 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 - 検証: ユニットテスト（complete/error/センチネルで終了、それ以外で継続）。
 - 実装可: **可**（A-2 と同時に実施するのが安全）。
 
-**B-3. Report status の語彙が不統一**
-- 根拠: `models/report.py` コメントは `'draft'|'complete'|'archived'`。`report_generator.py` は `"complete"` を保存。`routers/reports.py:update_report` の許可リストは `{"draft","in_review","pre_approval","completed"}`（`complete` を許可しない）。
-- なぜ: 生成直後のレポートは `complete`、UI から更新すると `completed` になり得る。フィルタや表示が両方を扱う必要がある。
-- 実装可否: **提案のみ。§5-1 に従い質問**（正準値の決定と既存行のマイグレーションが必要）。
+**B-3. Report status の語彙が不統一 →【対応済み・2026-07-01】**
+- 根拠: `report_generator.py` が `"complete"` を保存する一方、PATCH 許可リストとフロントエンドは
+  `draft|in_review|pre_approval|completed` を使用していた。
+- 決定: 人間の承認により**案A（`completed` に正準化）**を採用・実装済み。
+  - `services/report_generator.py` の2箇所（セクション方式・単一パス方式）を `"completed"` に変更。
+  - `database.py:normalize_legacy_report_status()` を新設し `init_db()` から呼び出し
+    （起動時冪等マイグレーション: `UPDATE reports SET status='completed' WHERE status='complete'`）。
+  - `models/report.py` のコメントと `frontend/src/lib/types.ts` の型を実態に合わせて修正
+    （幽霊値 `complete`/`archived` を型から削除）。
+  - テスト: `tests/test_report_status.py`（生成2経路 + マイグレーションの書き換え・冪等性）。
+- **残る未決事項（変更禁止・質問対象）**: `routers/reports.py:update_report` は許可リスト外の
+  status を 400 にせず黙って無視する。エラーにすべきかは人間の判断待ち。
 
 **B-4. コメント/ドキュメントのドリフト**
 - 根拠: `models/document.py` の `source_type` コメント `'upload'|'scraped'`（実際は `upload|url|youtube|web`）。`services/research_agent.py:7` の「claude-haiku-3-5」（実際の fast model 既定は `claude-haiku-4-5-20251001` — `config.py:26`）。CLAUDE.md にも同じ記述があるが **CLAUDE.md はユーザー管理ファイルなので変更しない**（報告で指摘のみ）。
@@ -308,7 +316,7 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
    A-6（フロント SSE パーサ共通化）。
 5. **Phase 4 — 責務分離と境界**: A-3 第1段階（`_index_web_source` をサービス層へ移動、挙動不変）、
    A-2 + B-2（SSE ストリームヘルパー抽出と終端判定の頑健化、ワイヤー不変）。
-6. **Phase 5 — 提案のみ（実装しない）**: B-1, B-3, A-3 第2段階, C-3, E-1, E-2, E-3, E-5 を
+6. **Phase 5 — 提案のみ（実装しない）**: B-1, A-3 第2段階, C-3, E-1, E-2, E-3, E-5 を
    最終報告に「承認待ち提案」としてまとめる。承認なしに実装しない。
 
 ---

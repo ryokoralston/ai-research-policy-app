@@ -106,7 +106,7 @@ async def generate_report_stream(
     report = db.query(Report).filter(Report.id == report_id).first()
     if report:
         report.content = full_content
-        report.status = "complete"
+        report.status = "completed"
         report.word_count = word_count
         report.updated_at = datetime.utcnow()
         db.commit()
@@ -161,7 +161,7 @@ async def _generate_single_pass(
     report = db.query(Report).filter(Report.id == report_id).first()
     if report:
         report.content = full_content
-        report.status = "complete"
+        report.status = "completed"
         report.word_count = word_count
         report.updated_at = datetime.utcnow()
         db.commit()
