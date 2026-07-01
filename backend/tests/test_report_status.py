@@ -5,6 +5,8 @@ Covers:
   2. Single-pass (word-limit) generation path sets status='completed'
   3. normalize_legacy_report_status() migrates 'complete' → 'completed'
      idempotently and leaves other statuses untouched
+  4. PATCH /api/reports/{id} rejects statuses outside the allowed vocabulary
+     with 400, without partially applying the other fields in the request
 
 No Claude API / network calls — stream_text is monkeypatched with a fake
 async generator. Run from the backend directory:
@@ -45,7 +47,15 @@ async def _fake_stream_text(prompt, system="", model=None, max_tokens=8192, temp
 
 
 def _make_test_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False})
+    # StaticPool: share the single in-memory DB across threads — TestClient
+    # runs sync endpoints in worker threads, and the default pool would hand
+    # each thread its own (empty) in-memory database.
+    from sqlalchemy.pool import StaticPool
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     return Session()
@@ -173,6 +183,69 @@ def test_migration_is_idempotent():
     assert _status_of(legacy) == "completed", _status_of(legacy)
 
 
+# ── PATCH endpoint validation tests ───────────────────────────────────────────
+
+def _make_test_client(db):
+    """Build a minimal app with only the reports router and a test DB session."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from database import get_db
+    from routers import reports as reports_router
+
+    app = FastAPI()
+    app.include_router(reports_router.router)
+    app.dependency_overrides[get_db] = lambda: db
+    return TestClient(app)
+
+
+def test_patch_rejects_invalid_status():
+    """Unknown status values get a 400 instead of being silently ignored."""
+    db = _make_test_session()
+    report_id, _ = _seed_report_and_session(db)
+    client = _make_test_client(db)
+
+    for bad in ("complete", "archived", "bogus"):
+        resp = client.patch(f"/api/reports/{report_id}", json={"status": bad})
+        assert resp.status_code == 400, f"{bad!r}: expected 400, got {resp.status_code}"
+        assert bad in resp.json()["detail"]
+
+    report = db.query(Report).filter(Report.id == report_id).first()
+    assert report.status == "draft", f"status must be unchanged, got {report.status!r}"
+    db.close()
+
+
+def test_patch_accepts_allowed_statuses():
+    """Every value in the workflow vocabulary is accepted and persisted."""
+    db = _make_test_session()
+    report_id, _ = _seed_report_and_session(db)
+    client = _make_test_client(db)
+
+    for good in ("in_review", "pre_approval", "completed", "draft"):
+        resp = client.patch(f"/api/reports/{report_id}", json={"status": good})
+        assert resp.status_code == 200, f"{good!r}: expected 200, got {resp.status_code}"
+        assert resp.json()["status"] == good
+    db.close()
+
+
+def test_patch_invalid_status_does_not_partially_apply():
+    """A request combining a title change with a bad status applies nothing."""
+    db = _make_test_session()
+    report_id, _ = _seed_report_and_session(db)
+    client = _make_test_client(db)
+
+    resp = client.patch(
+        f"/api/reports/{report_id}",
+        json={"title": "Should Not Stick", "status": "bogus"},
+    )
+    assert resp.status_code == 400, resp.status_code
+
+    report = db.query(Report).filter(Report.id == report_id).first()
+    db.refresh(report)
+    assert report.title == "Test Report", f"title must be unchanged, got {report.title!r}"
+    assert report.status == "draft", f"status must be unchanged, got {report.status!r}"
+    db.close()
+
+
 # ── Test runner ───────────────────────────────────────────────────────────────
 
 _PASSED: list[str] = []
@@ -196,6 +269,9 @@ if __name__ == "__main__":
     _run("single-pass generation sets status='completed'", test_single_pass_generation_sets_completed)
     _run("migration rewrites 'complete' -> 'completed'", test_migration_rewrites_legacy_complete)
     _run("migration is idempotent", test_migration_is_idempotent)
+    _run("PATCH rejects invalid status with 400", test_patch_rejects_invalid_status)
+    _run("PATCH accepts all allowed statuses", test_patch_accepts_allowed_statuses)
+    _run("PATCH with invalid status applies nothing", test_patch_invalid_status_does_not_partially_apply)
 
     total = len(_PASSED) + len(_FAILED)
     print(f"\n{'=' * 50}")

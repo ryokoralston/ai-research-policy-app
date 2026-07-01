@@ -14,6 +14,8 @@ from schemas import (
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
 
+ALLOWED_REPORT_STATUSES = {"draft", "in_review", "pre_approval", "completed"}
+
 
 @router.post("/generate")
 async def generate_report(request: ReportGenerateRequest, db: Session = Depends(get_db)):
@@ -84,15 +86,23 @@ def update_report(report_id: str, request: ReportUpdateRequest, db: Session = De
     report = db.query(Report).filter(Report.id == report_id).first()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
+    # Validate before applying anything so an invalid status doesn't partially
+    # apply the other fields in the same request.
+    if request.status is not None and request.status not in ALLOWED_REPORT_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid status '{request.status}'. "
+                f"Allowed values: {', '.join(sorted(ALLOWED_REPORT_STATUSES))}"
+            ),
+        )
     if request.title is not None:
         report.title = request.title
     if request.content is not None:
         report.content = request.content
         report.word_count = len(request.content.split())
     if request.status is not None:
-        allowed = {"draft", "in_review", "pre_approval", "completed"}
-        if request.status in allowed:
-            report.status = request.status
+        report.status = request.status
     report.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(report)

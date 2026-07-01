@@ -124,14 +124,12 @@ python -m evals.eval_being_specific
 
 以下に該当したら、勝手に決めずに人間へ質問すること：
 
-1. Report status の PATCH 挙動変更（許可リスト外の値を黙って無視 → 400 にする等）。
-   ※ status の正準化自体（`complete`→`completed`）は承認済み・実装済み（§7 B-3 参照）。
-2. `rag/retriever.py` の並べ替え（§7 B-1）を「修正」する場合。検索回答の内容が変わる。
-3. save-to-library のチャンク方式統一（§7 A-3 の第2段階）。インデックス済みデータとの一貫性に影響。
-4. Digest メールの日本語見出し（§7 E-2）を変更しようとする場合 — 仕様かバグか判断できない。
-5. DBスキーマ・保存データ・公開APIレスポンス形状に影響する変更全般。
-6. テストと実装が矛盾していると気づいた場合。
-7. 削除候補コードが本当に不要か確信できない場合。
+1. `rag/retriever.py` の並べ替え（§7 B-1）を「修正」する場合。検索回答の内容が変わる。
+2. save-to-library のチャンク方式統一（§7 A-3 の第2段階）。インデックス済みデータとの一貫性に影響。
+3. Digest メールの日本語見出し（§7 E-2）を変更しようとする場合 — 仕様かバグか判断できない。
+4. DBスキーマ・保存データ・公開APIレスポンス形状に影響する変更全般。
+5. テストと実装が矛盾していると気づいた場合。
+6. 削除候補コードが本当に不要か確信できない場合。
 
 ---
 
@@ -232,8 +230,10 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
   - `models/report.py` のコメントと `frontend/src/lib/types.ts` の型を実態に合わせて修正
     （幽霊値 `complete`/`archived` を型から削除）。
   - テスト: `tests/test_report_status.py`（生成2経路 + マイグレーションの書き換え・冪等性）。
-- **残る未決事項（変更禁止・質問対象）**: `routers/reports.py:update_report` は許可リスト外の
-  status を 400 にせず黙って無視する。エラーにすべきかは人間の判断待ち。
+- **PATCH 挙動も対応済み（2026-07-01・人間の承認あり）**: `routers/reports.py:update_report` は
+  許可リスト外の status を 400 で拒否する（`ALLOWED_REPORT_STATUSES` 定数）。検証は他フィールド
+  適用前に行うため、不正 status を含むリクエストは title/content も含め一切適用されない。
+  テスト: `tests/test_report_status.py` の PATCH 3テスト。
 
 **B-4. コメント/ドキュメントのドリフト**
 - 根拠: `models/document.py` の `source_type` コメント `'upload'|'scraped'`（実際は `upload|url|youtube|web`）。`services/research_agent.py:7` の「claude-haiku-3-5」（実際の fast model 既定は `claude-haiku-4-5-20251001` — `config.py:26`）。CLAUDE.md にも同じ記述があるが **CLAUDE.md はユーザー管理ファイルなので変更しない**（報告で指摘のみ）。
