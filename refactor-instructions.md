@@ -124,12 +124,11 @@ python -m evals.eval_being_specific
 
 以下に該当したら、勝手に決めずに人間へ質問すること：
 
-1. `rag/retriever.py` の並べ替え（§7 B-1）を「修正」する場合。検索回答の内容が変わる。
-2. save-to-library のチャンク方式統一（§7 A-3 の第2段階）。インデックス済みデータとの一貫性に影響。
-3. Digest メールの日本語見出し（§7 E-2）を変更しようとする場合 — 仕様かバグか判断できない。
-4. DBスキーマ・保存データ・公開APIレスポンス形状に影響する変更全般。
-5. テストと実装が矛盾していると気づいた場合。
-6. 削除候補コードが本当に不要か確信できない場合。
+1. save-to-library のチャンク方式統一（§7 A-3 の第2段階）。インデックス済みデータとの一貫性に影響。
+2. Digest メールの日本語見出し（§7 E-2）を変更しようとする場合 — 仕様かバグか判断できない。
+3. DBスキーマ・保存データ・公開APIレスポンス形状に影響する変更全般。
+4. テストと実装が矛盾していると気づいた場合。
+5. 削除候補コードが本当に不要か確信できない場合。
 
 ---
 
@@ -206,13 +205,19 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 
 ### B. 契約・正しさの曖昧さ（質問または慎重に）
 
-**B-1. Retriever の並べ替えがコメントと矛盾（ランダム順になっている）**
-- 根拠: `rag/retriever.py:49-51` — `top.sort(key=lambda c: c.chunk_id)`。コメントは「(doc_id, chroma_id サフィックスの chunk_index) で読書順に戻す」と言うが、`chunk_id` は `uuid4` 文字列（`rag_service.py:52`）なので実際は**ランダム順ソート**であり、クロスエンコーダのランク順も破棄される。
-- なぜ: コメント（意図）とコード（実態）が矛盾。回答生成に渡すコンテキストの順序が毎回無意味に決まる。
-- 影響: ライブラリ Q&A の回答品質。リスク: 「修正」すると回答内容が変わる＝仕様変更。
-- 改善案: 2案 — (a) リランク順を保持（sort 行を削除）、(b) 真の読書順（metadata の `chunk_index` を `RetrievedChunk` に追加し `(doc_id, chunk_index)` でソート）。
-- 実装可否: **提案のみ。§5-2 に従い実装前に質問**。
-- 検証（承認後）: fake VectorStore を使ったユニットテストで順序を検証。
+**B-1. Retriever の並べ替えがコメントと矛盾 →【対応済み・2026-07-01・人間の承認あり】**
+- 根拠: `rag/retriever.py` の最終ソートが `top.sort(key=lambda c: c.chunk_id)` だったが、
+  `chunk_id` は `uuid4` 文字列（`rag_service.py:52`）のため実際は**ランダム順**で、
+  クロスエンコーダのリランク順も破棄していた。
+- 決定: 改善案 (b)（真の読書順）を採用・実装済み。
+  - `rag/vector_store.py`: `RetrievedChunk` に `chunk_index` フィールドを追加
+    （Chroma metadata に既存の値を `query()` で読むだけ。デフォルト 0）。
+  - `rag/retriever.py`: `(doc_id, chunk_index)` でソート。選抜（top_k）はリランク順のまま、
+    最終的な提示順のみ読書順に変更。コメントも実態に一致させた。
+  - テスト: `tests/test_retriever_order.py`（リランク経路・フォールバック経路・空入力。
+    chromadb / sentence-transformers はスタブ化しており重い依存なしで実行可能）。
+- 関連メモ（未対応・報告のみ）: `CrossEncoder` を `retrieve()` のたびに再ロードしており
+  クエリごとに数百ms〜数秒の無駄がある。`@lru_cache` 等でのキャッシュは安全な改善候補。
 
 **B-2. SSE 終端判定が JSON 直列化の空白に依存**
 - 根拠: §3-2 の通り。`sse_event` の `json.dumps(data)` が区切り `": "` を出す前提で `'"event_type": "complete"'` を substring 検索。
@@ -316,7 +321,7 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
    A-6（フロント SSE パーサ共通化）。
 5. **Phase 4 — 責務分離と境界**: A-3 第1段階（`_index_web_source` をサービス層へ移動、挙動不変）、
    A-2 + B-2（SSE ストリームヘルパー抽出と終端判定の頑健化、ワイヤー不変）。
-6. **Phase 5 — 提案のみ（実装しない）**: B-1, A-3 第2段階, C-3, E-1, E-2, E-3, E-5 を
+6. **Phase 5 — 提案のみ（実装しない）**: A-3 第2段階, C-3, E-1, E-2, E-3, E-5 を
    最終報告に「承認待ち提案」としてまとめる。承認なしに実装しない。
 
 ---

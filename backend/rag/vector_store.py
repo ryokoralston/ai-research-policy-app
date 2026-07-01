@@ -14,6 +14,7 @@ class RetrievedChunk:
     page_number: int | None
     section_header: str | None
     score: float
+    chunk_index: int = 0  # position within the document (for reading order)
 
 
 class VectorStore:
@@ -71,6 +72,7 @@ class VectorStore:
                 page_number=meta.get("page_number"),
                 section_header=meta.get("section_header"),
                 score=1.0 - dist,  # cosine: distance → similarity
+                chunk_index=meta.get("chunk_index", 0),
             ))
         return chunks
 

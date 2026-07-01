@@ -45,6 +45,9 @@ class Retriever:
             # Fallback to vector similarity order
             top = candidates[:top_k]
 
-        # Restore reading order: sort by (doc_id, chunk_index from chroma_id suffix)
-        top.sort(key=lambda c: c.chunk_id)
+        # Restore reading order: group the selected chunks by document, in their
+        # original position within each document, so the excerpts read as
+        # coherent passages. (Selection above is by relevance; only the final
+        # presentation order changes here.)
+        top.sort(key=lambda c: (c.doc_id, c.chunk_index))
         return top
