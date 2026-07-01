@@ -153,7 +153,8 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 
 ### A. 重複（実装してよい）
 
-**A-1. Markdown→プレーンテキスト変換と PDF エクスポートの重複**
+**A-1. Markdown→プレーンテキスト変換と PDF エクスポートの重複 →【対応済み・2026-07-01】**
+- 対応: `utils/export.py` に `markdown_to_plain` / `render_pdf` を集約（reports 版に統一。analysis の txt 出力で箇条書きが `- ` 正規化される微小変化あり）。テスト: `tests/test_export.py`。
 - 根拠: `routers/reports.py:135-166` と `routers/analysis.py:52-104` に `_markdown_to_plain` と PDF生成コードがほぼ同一で存在。
 - なぜ: 片方だけ直すと乖離する。既に乖離している（reports 版には箇条書き規則 `^[-*]\s+` があり、analysis 版にはない）。
 - 影響: エクスポート機能のみ。リスク: 低。
@@ -161,7 +162,8 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 - 検証: 新設ユニットテスト（見出し・太字・リンク・箇条書きの変換）+ 手動でエクスポートAPIを叩ければ確認。
 - 実装可: **可**。
 
-**A-2. SSE キュー配管の重複（research / debate ルーター）**
+**A-2. SSE キュー配管の重複（research / debate ルーター） →【対応済み・2026-07-01】**
+- 対応: `utils/sse.py:queue_event_stream`（タイムアウト60/120秒維持）。B-2 と同時実施。テスト: `tests/test_sse.py`。
 - 根拠: `routers/research.py:16-64` と `routers/debate.py:17-84` — `_sse_queues` dict、`event_generator`（タイムアウト60秒 vs 120秒、heartbeat、終端文字列判定）がコピー。
 - なぜ: 終端判定という壊れやすい契約が2箇所に散在。
 - 改善案: `backend/utils/sse.py`（または `services/sse.py`）に `queue_event_stream(queue, timeout_seconds)` ジェネレーターを抽出。タイムアウト値は引数で維持（60/120 を変えない）。終端判定文字列も現状のまま移動。dict 自体は各ルーターに残してよい（グローバル共有にしない）。
@@ -183,25 +185,29 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 - テスト: `tests/test_index_web_content.py`（長文=複数チャンク＋metadata検証、短文フォールバック、
   空コンテンツ、埋め込み失敗→error。chromadb 等はスタブ）。
 
-**A-4. `_mask` の重複とマスク・センチネル処理の非対称**
+**A-4. `_mask` の重複とマスク・センチネル処理の非対称 →【対応済み・2026-07-01】**
+- 対応: `utils/masking.py` に集約、settings PUT に `!= MASK` ガード追加（防御的・挙動互換）。テスト: `tests/test_masking_settings.py`。
 - 根拠: `routers/settings.py:33` と `routers/digest.py:33-38`。digest は PUT で `body.smtp_password != MASK` をチェックするが、settings の PUT にはこのガードがない（現状はフロントエンドが `***` を送らないため実害なし — `frontend/src/app/settings/page.tsx:42-45` 参照）。
 - 改善案: `utils/masking.py` 等に `mask_secret()` と `MASK = "***"` を集約。settings の PUT にも `body.anthropic_api_key != MASK` ガードを追加（防御的・挙動互換：現状のクライアントでは到達しない分岐）。
 - 検証: ユニットテスト（`***` を送ってもキーが上書きされないこと）。
 - 実装可: **可**。
 
-**A-5. 「prefill + フェンス除去 + json.loads」パターンの重複**
+**A-5. 「prefill + フェンス除去 + json.loads」パターンの重複 →【対応済み・2026-07-01】**
+- 対応: `anthropic_client.generate_json` に集約。プロンプト・temperature・フォールバック不変。テスト: `tests/test_generate_json.py` / `tests/test_risk_analyzer.py`。evals は APIキー不在のため未実行（プロンプトビルダーは不変）。
 - 根拠: `services/research_agent.py:139-147`、`services/risk_analyzer.py:120-128`（evals にも同パターンがあるが evals は触らない）。
 - 改善案: `services/anthropic_client.py` に `generate_json(prompt, *, system="", temperature=0.0, model=None)` を追加し、`prefill="```json"` / `stop_sequences=["```"]` / フェンス除去 / `json.loads` をまとめる。**呼び出し側のプロンプト文字列・temperature は一切変えない**。research_agent 側の `except Exception: sub_queries=[query]`、risk_analyzer 側の `except: pass` というフォールバック挙動もそのまま維持する（例外はヘルパーから素通しにする）。
 - 検証: ヘルパーのユニットテスト（`generate_text` をモンキーパッチしてフェンス除去を検証）。
 - 実装可: **可**（サービスファイル編集につき §4 の eval 注記を報告に含める）。
 
-**A-6. フロントエンドの SSE パーサが3重実装**
+**A-6. フロントエンドの SSE パーサが3重実装 →【対応済み・2026-07-01】**
+- 対応: `api.ts:consumeSseStream` に集約。パーサ状態をチャンク境界をまたいで保持する副次修正あり。検証: tsc / eslint / next build（ブラウザでの手動確認は本環境では未実施）。
 - 根拠: `frontend/src/lib/api.ts:264-319` `postStream`、`frontend/src/app/research/page.tsx:60-120` のインライン実装、`frontend/src/app/debate/page.tsx:83-` のインライン実装。3つとも同じ行パースロジック。
 - 改善案: `api.ts` にレスポンスボディを受け取る `consumeSseStream(body, onEvent)` を抽出し、`postStream` と research/debate ページの GET ストリームから共用。**イベントハンドリング（setState 等）はページ側に残す**。
 - 検証: `npx tsc --noEmit` + `npm run build`。可能ならブラウザで research / debate の実行確認（`/verify` 相当の手動確認）。不可能なら報告に「未実行」と明記。
 - 実装可: **可**。
 
-**A-7. `_strip_metadata` の同名別処理**
+**A-7. `_strip_metadata` の同名別処理 →【対応済み・2026-07-01】**
+- 対応: `_strip_scores_json_lines` / `_strip_duplicate_heading` にリネーム（統合せず）。
 - 根拠: `services/report_generator.py:234`（SCORES_JSON 行の除去）と `services/risk_analyzer.py:19`（重複セクション見出しの除去）。同名だが意味が違う。
 - 改善案: 統合しない。それぞれ `_strip_scores_json_lines` / `_strip_duplicate_heading` 等に**リネームのみ**。
 - 実装可: **可**（低優先）。
@@ -224,7 +230,8 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
   （ロード失敗は例外のためキャッシュされず、次クエリで再試行される）。
   テスト: `tests/test_retriever_order.py` にキャッシュ再利用・失敗非キャッシュの2テストを追加。
 
-**B-2. SSE 終端判定が JSON 直列化の空白に依存**
+**B-2. SSE 終端判定が JSON 直列化の空白に依存 →【対応済み・2026-07-01】**
+- 対応: イベント名（complete/error）ベースの判定に変更（ワイヤー不変）。research のエラーイベントに event_type が無くストリームが永久にハートビートし続けるバグも同時に解消。テスト: `tests/test_sse.py`。
 - 根拠: §3-2 の通り。`sse_event` の `json.dumps(data)` が区切り `": "` を出す前提で `'"event_type": "complete"'` を substring 検索。
 - 改善案: ワイヤーフォーマットは変えず、判定を頑健化する。例: A-2 のヘルパー内で `data:` 行を `json.loads` して `event_type` を見る、またはキューに `None` センチネルを積んで終端にする（プロデューサー側 `_run_research`/`run_debate` の `finally` で put）。**イベント名・ペイロードは変更しない**。
 - 検証: ユニットテスト（complete/error/センチネルで終了、それ以外で継続）。
@@ -245,7 +252,8 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
   適用前に行うため、不正 status を含むリクエストは title/content も含め一切適用されない。
   テスト: `tests/test_report_status.py` の PATCH 3テスト。
 
-**B-4. コメント/ドキュメントのドリフト**
+**B-4. コメント/ドキュメントのドリフト →【対応済み・2026-07-01】**
+- 対応: `models/document.py` の source_type コメントと `research_agent.py` docstring を実態に修正（CLAUDE.md は不変更）。
 - 根拠: `models/document.py` の `source_type` コメント `'upload'|'scraped'`（実際は `upload|url|youtube|web`）。`services/research_agent.py:7` の「claude-haiku-3-5」（実際の fast model 既定は `claude-haiku-4-5-20251001` — `config.py:26`）。CLAUDE.md にも同じ記述があるが **CLAUDE.md はユーザー管理ファイルなので変更しない**（報告で指摘のみ）。
 - 改善案: コード内コメント2箇所を実態に合わせて修正。
 - 実装可: **可**（コメントのみ）。
@@ -257,7 +265,8 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
   （B-1 の関連メモと同一の対応。ロード失敗はキャッシュされず次クエリで再試行、
   フォールバック挙動は維持）。テスト: `tests/test_retriever_order.py`。
 
-**C-2. ドキュメントタイトルの N+1 クエリ**
+**C-2. ドキュメントタイトルの N+1 クエリ →【対応済み・2026-07-01】**
+- 対応: `in_` による一括取得＋dict 引き。出力文字列は不変。テスト: `tests/test_rag_answer.py`。
 - 根拠: `services/rag_service.py:157-159` — ツール実行のたびにチャンク毎 `db.query(Document)`。
 - 改善案: chunk の `doc_id` を集めて `in_` で一括取得し dict 引き。出力文字列は不変に保つ。
 - 実装可: **可**。
@@ -274,7 +283,8 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 
 ### D. テスト不足（実装してよい — Phase 2 の中身）
 
-**D-1. オフラインテストの空白地帯**
+**D-1. オフラインテストの空白地帯 →【対応済み・2026-07-01】**
+- 対応: `tests/` は16ファイル・92テストに拡充（chunker / word limits / secret_crypto / auth / sse / export / masking / generate_json / risk_analyzer / rag_answer / folder_ops ほか）。全てオフライン実行可能。
 - 根拠: `backend/tests/` には `test_reminder_tools.py` のみ。evals は API キー必須・課金あり。チャンク、語数制限抽出、暗号化、認証トークン、markdown変換、SSE 形式にテストがない。
 - 改善案: 既存スタイル（素の assert + `__main__` ランナー、in-memory SQLite）で以下を追加：
   - `tests/test_chunker.py` — `chunk_text`（見出し検出、MIN/MAX トークン境界、オーバーラップ）、`chunk_plain_text`
@@ -305,7 +315,8 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 - 根拠: `database.py:init_db` は `create_all` のみ + 手書きの `encrypt_legacy_secrets`。
 - 実装可否: **提案のみ**（Alembic 導入は依存追加かつ本リファクタの範囲外）。
 
-**E-4. 広すぎる例外の握りつぶし**
+**E-4. 広すぎる例外の握りつぶし →【対応済み・2026-07-01】**
+- 対応: 継続挙動は維持しつつ logger.warning を追加（documents 削除・rename_folder・digest 再スケジュール・risk_analyzer スコア抽出）。テスト: `tests/test_folder_ops.py`。
 - 根拠: `routers/documents.py:340-345`（Chroma削除失敗を無視）、`rename_folder` の `except Exception: pass`、`routers/digest.py:reschedule_digest` の `except Exception: pass`、`services/risk_analyzer.py:130` の冗長な `except (json.JSONDecodeError, Exception)`。
 - 改善案: **挙動（握りつぶして続行）は維持**しつつ、`logger.exception(...)` / `logger.warning(...)` を追加。risk_analyzer は `except Exception:` に簡約。
 - 実装可: **可**。
