@@ -195,6 +195,10 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 **A-5. 「prefill + フェンス除去 + json.loads」パターンの重複 →【対応済み・2026-07-01】**
 - 対応: `anthropic_client.generate_json` に集約。プロンプト・temperature・フォールバック不変。テスト: `tests/test_generate_json.py` / `tests/test_risk_analyzer.py`。
 - eval 実行済み（2026-07-01・人間がローカルで実行）: `eval_research_queries` — code 10.0/10、combined 8.2/10、pass 8/8（≥8）。JSONパース失敗ゼロ＝構造化出力パイプラインの回帰なしを確認。
+- `--compare-examples`（本番プロンプト v3 含む A/B）も実行済み: v2 8.2 / v3 8.2（delta +0.0）、
+  v3 も code 10.0/10・パース失敗ゼロ。pass 7/8 の1件は品質採点（モデル採点 5/10）による
+  もので構造要因ではない。例示の有無でスコア差なしという計測結果も記録しておく
+  （プロンプト変更の判断材料。変更する場合は eval 駆動で別途承認を得ること）。
 - 根拠: `services/research_agent.py:139-147`、`services/risk_analyzer.py:120-128`（evals にも同パターンがあるが evals は触らない）。
 - 改善案: `services/anthropic_client.py` に `generate_json(prompt, *, system="", temperature=0.0, model=None)` を追加し、`prefill="```json"` / `stop_sequences=["```"]` / フェンス除去 / `json.loads` をまとめる。**呼び出し側のプロンプト文字列・temperature は一切変えない**。research_agent 側の `except Exception: sub_queries=[query]`、risk_analyzer 側の `except: pass` というフォールバック挙動もそのまま維持する（例外はヘルパーから素通しにする）。
 - 検証: ヘルパーのユニットテスト（`generate_text` をモンキーパッチしてフェンス除去を検証）。
