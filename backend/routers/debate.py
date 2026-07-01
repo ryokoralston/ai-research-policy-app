@@ -11,6 +11,7 @@ from database import get_db
 from models.debate import Debate, DebateArgument
 from schemas.debate import DebateStartRequest, DebateResponse, DebateDetail
 from templates.personas import PERSONAS
+from utils.sse import queue_event_stream
 
 router = APIRouter(prefix="/api/debate", tags=["debate"])
 
@@ -69,14 +70,8 @@ async def stream_debate(debate_id: str, db: Session = Depends(get_db)):
         if not queue:
             yield "event: error\ndata: {\"message\": \"No active stream for this debate\"}\n\n"
             return
-        while True:
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=120.0)
-                yield event
-                if '"event_type": "complete"' in event or '"event_type": "error"' in event:
-                    break
-            except asyncio.TimeoutError:
-                yield "event: heartbeat\ndata: {}\n\n"
+        async for event in queue_event_stream(queue, timeout_seconds=120.0):
+            yield event
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

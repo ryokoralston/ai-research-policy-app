@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import ResearchSession, SearchResult, Document
 from schemas import ResearchStartRequest, ResearchSessionResponse, ResearchSessionDetail
+from utils.sse import queue_event_stream
 
 router = APIRouter(prefix="/api/research", tags=["research"])
 
@@ -51,14 +52,8 @@ async def stream_research(session_id: str, db: Session = Depends(get_db)):
         if not queue:
             yield "event: error\ndata: {\"message\": \"No active stream for this session\"}\n\n"
             return
-        while True:
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=60.0)
-                yield event
-                if '"event_type": "complete"' in event or '"event_type": "error"' in event:
-                    break
-            except asyncio.TimeoutError:
-                yield "event: heartbeat\ndata: {}\n\n"
+        async for event in queue_event_stream(queue, timeout_seconds=60.0):
+            yield event
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
