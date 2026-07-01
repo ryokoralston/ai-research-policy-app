@@ -124,10 +124,9 @@ python -m evals.eval_being_specific
 
 以下に該当したら、勝手に決めずに人間へ質問すること：
 
-1. save-to-library のチャンク方式統一（§7 A-3 の第2段階）。インデックス済みデータとの一貫性に影響。
-2. DBスキーマ・保存データ・公開APIレスポンス形状に影響する変更全般。
-3. テストと実装が矛盾していると気づいた場合。
-4. 削除候補コードが本当に不要か確信できない場合。
+1. DBスキーマ・保存データ・公開APIレスポンス形状に影響する変更全般。
+2. テストと実装が矛盾していると気づいた場合。
+3. 削除候補コードが本当に不要か確信できない場合。
 
 ---
 
@@ -169,15 +168,20 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 - 検証: sse_event 形式と終端判定のユニットテスト。研究/討論ストリームの手動確認ができない環境では、ジェネレーターに fake queue を渡すテストを書く。
 - 実装可: **可**。
 
-**A-3. Web ソースのインデックス処理がルーターに重複実装**
-- 根拠: `routers/research.py:138-208` `_index_web_source` が、`services/rag_service.py:index_document` と同等の「チャンク→埋め込み→Chroma→DB」フローを、独自の800文字段落チャンク（`rag/chunker.py` を使わない）で再実装。
-- なぜ: RAG インデックスの所有者が曖昧。チャンクポリシーが2系統ある。
-- 影響: save-to-library 機能、ライブラリ検索品質。
-- 改善案（2段階）:
-  - 第1段階（**実装可**）: 関数を**挙動そのまま** `services/rag_service.py` へ移動（`index_web_content(doc_id, content, db)`）。ルーターは呼ぶだけにする。チャンクロジックは1行も変えない。
-  - 第2段階（**提案のみ・§5-3**）: チャンク化を `chunk_plain_text` に統一する。チャンクサイズ・境界が変わり、以後の検索結果に影響するため人間の承認が必要。
-- 検証: 第1段階は移動のみ＝import と compileall、可能なら save-to-library の手動実行。
-- 実装可: 第1段階のみ**可**。
+**A-3. Web ソースのインデックス処理がルーターに重複実装 →【両段階とも対応済み・2026-07-01・人間の承認あり】**
+- 根拠: `routers/research.py` の `_index_web_source` が「チャンク→埋め込み→Chroma→DB」フローを
+  独自の800文字段落チャンク（`rag/chunker.py` を使わない）で再実装していた。
+- 決定: 第1段階＋第2段階（`chunk_plain_text` 統一 + 短文フォールバック）を一括採用・実装済み。
+  - `services/rag_service.py:index_web_content(doc_id, content, db)` を新設。標準チャンカーを使用し、
+    チャンカーが0件を返す短文（要約・スニペットのみのソース）は**全文1チャンク**として保存する
+    フォールバック付き。空コンテンツは従来どおり「チャンク0件で indexed」（エラーにしない）。
+  - ルーターの `_index_web_source` は DB セッション管理のみの薄いラッパーに（`documents.py` の
+    `_index_document` と同型）。未使用になった import（`datetime`, `DocumentChunk`）も削除。
+  - Web チャンクにも `page_number=1`・検出済み `section_header`・Chroma metadata の `chunk_index`
+    が付くようになり、引用表示（`p.0, sec:` 空）の不自然さと読書順ソートの前提が改善。
+- 既存データ: 移行なし（新規保存分のみ新方式）。粒度混在が気になるドキュメントは削除→再保存で解消可。
+- テスト: `tests/test_index_web_content.py`（長文=複数チャンク＋metadata検証、短文フォールバック、
+  空コンテンツ、埋め込み失敗→error。chromadb 等はスタブ）。
 
 **A-4. `_mask` の重複とマスク・センチネル処理の非対称**
 - 根拠: `routers/settings.py:33` と `routers/digest.py:33-38`。digest は PUT で `body.smtp_password != MASK` をチェックするが、settings の PUT にはこのガードがない（現状はフロントエンドが `***` を送らないため実害なし — `frontend/src/app/settings/page.tsx:42-45` 参照）。
@@ -325,9 +329,9 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
    C-2（N+1 解消）、A-7（リネーム）、A-4（`_mask` 集約 + settings ガード）。
 4. **Phase 3 — 重複統合**: A-1（export 抽出）、A-5（`generate_json` ヘルパー）、
    A-6（フロント SSE パーサ共通化）。
-5. **Phase 4 — 責務分離と境界**: A-3 第1段階（`_index_web_source` をサービス層へ移動、挙動不変）、
-   A-2 + B-2（SSE ストリームヘルパー抽出と終端判定の頑健化、ワイヤー不変）。
-6. **Phase 5 — 提案のみ（実装しない）**: A-3 第2段階, C-3, E-1, E-3, E-5 を
+5. **Phase 4 — 責務分離と境界**: A-2 + B-2（SSE ストリームヘルパー抽出と終端判定の頑健化、
+   ワイヤー不変）。※ A-3 は両段階とも対応済み（§7 A-3 参照）。
+6. **Phase 5 — 提案のみ（実装しない）**: C-3, E-1, E-3, E-5 を
    最終報告に「承認待ち提案」としてまとめる。承認なしに実装しない。
 
 ---

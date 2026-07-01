@@ -6,7 +6,7 @@ from typing import AsyncIterator
 from sqlalchemy.orm import Session
 
 from models import Document, DocumentChunk
-from rag.chunker import chunk_pdf, chunk_html, chunk_plain_text
+from rag.chunker import chunk_pdf, chunk_html, chunk_plain_text, TextChunk, _approx_tokens
 from rag.vector_store import VectorStore
 from services.embedding_service import EmbeddingService
 from services.anthropic_client import stream_text, stream_chat, stream_chat_with_tools, sse_event, UNTRUSTED_CONTENT_GUARD
@@ -90,6 +90,91 @@ async def index_document(doc_id: str, db: Session) -> None:
         doc.status = "error"
         db.commit()
         raise
+
+
+async def index_web_content(doc_id: str, content: str, db: Session) -> None:
+    """Chunk and index web content (save-to-library) into ChromaDB.
+
+    Uses the standard chunker (chunk_plain_text) so web sources get the same
+    granularity, section awareness, and overlap as uploaded documents.
+
+    Short-content fallback: the chunker drops trailing chunks under its
+    minimum token threshold, but save-to-library sources are sometimes just
+    an AI summary or snippet — those must still be searchable, so content the
+    chunker rejects entirely is indexed as one single chunk.
+
+    Empty content is not an error here (unlike index_document): a source with
+    no usable text is simply marked indexed with zero chunks, matching the
+    behavior of the original router implementation this replaces.
+    """
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        return
+
+    try:
+        chunks, word_count = chunk_plain_text(content)
+
+        if not chunks and content.strip():
+            text = content.strip()
+            chunks = [TextChunk(
+                content=text,
+                page_number=1,
+                section_header="",
+                chunk_index=0,
+                token_count=_approx_tokens(text),
+            )]
+
+        if not chunks:
+            doc.status = "indexed"
+            db.commit()
+            return
+
+        embed_service = EmbeddingService()
+        vs = VectorStore()
+
+        texts = [c.content for c in chunks]
+        embeddings = embed_service.embed_texts(texts)
+
+        chunk_ids = []
+        db_chunks = []
+        for chunk, embedding in zip(chunks, embeddings):
+            chunk_id = str(uuid.uuid4())
+            chunk_ids.append(chunk_id)
+            db_chunks.append(DocumentChunk(
+                id=chunk_id,
+                document_id=doc_id,
+                chunk_index=chunk.chunk_index,
+                content=chunk.content,
+                page_number=chunk.page_number,
+                section_header=chunk.section_header,
+                token_count=chunk.token_count,
+                chroma_id=chunk_id,
+            ))
+
+        vs.add_chunks(
+            chunk_ids=chunk_ids,
+            embeddings=embeddings,
+            documents=texts,
+            metadatas=[
+                {
+                    "doc_id": doc_id,
+                    "page_number": c.page_number,
+                    "section_header": c.section_header or "",
+                    "chunk_index": c.chunk_index,
+                }
+                for c in chunks
+            ],
+        )
+
+        db.bulk_save_objects(db_chunks)
+        doc.status = "indexed"
+        doc.word_count = word_count
+        doc.indexed_at = datetime.utcnow()
+        db.commit()
+    except Exception:
+        # Background task — record the failure on the document instead of raising
+        doc.status = "error"
+        db.commit()
 
 
 # Tool definition for the document-library Q&A agentic loop.
