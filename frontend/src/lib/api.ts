@@ -258,6 +258,55 @@ export const api = {
 };
 
 /**
+ * Consume a fetch Response body as an SSE stream.
+ * onEvent is called for each parsed event; data lines are JSON-parsed when
+ * possible, otherwise passed through as the raw string.
+ *
+ * Shared by postStream and the research/debate GET streams (this parser used
+ * to exist in three copies). Parser state lives outside the read loop so an
+ * event whose "event:" and "data:" lines arrive in different network chunks
+ * is still attributed to the right event name.
+ */
+export async function consumeSseStream(
+  body: ReadableStream<Uint8Array>,
+  onEvent: (event: string, data: unknown) => void
+): Promise<void> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let currentEvent = "message";
+  let currentData = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    // Parse SSE lines
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      if (line.startsWith("event: ")) {
+        currentEvent = line.slice(7).trim();
+      } else if (line.startsWith("data: ")) {
+        currentData = line.slice(6).trim();
+      } else if (line === "") {
+        if (currentData) {
+          try {
+            onEvent(currentEvent, JSON.parse(currentData));
+          } catch {
+            onEvent(currentEvent, currentData);
+          }
+          currentEvent = "message";
+          currentData = "";
+        }
+      }
+    }
+  }
+}
+
+/**
  * Consume an SSE stream from a POST endpoint.
  * onEvent is called for each parsed event.
  */
@@ -282,38 +331,5 @@ export async function postStream(
     throw new Error(`Stream request failed: ${res.status}`);
   }
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    // Parse SSE lines
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-
-    let currentEvent = "message";
-    let currentData = "";
-
-    for (const line of lines) {
-      if (line.startsWith("event: ")) {
-        currentEvent = line.slice(7).trim();
-      } else if (line.startsWith("data: ")) {
-        currentData = line.slice(6).trim();
-      } else if (line === "") {
-        if (currentData) {
-          try {
-            onEvent(currentEvent, JSON.parse(currentData));
-          } catch {
-            onEvent(currentEvent, currentData);
-          }
-          currentEvent = "message";
-          currentData = "";
-        }
-      }
-    }
-  }
+  await consumeSseStream(res.body, onEvent);
 }

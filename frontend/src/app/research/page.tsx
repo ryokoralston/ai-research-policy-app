@@ -3,7 +3,7 @@
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Search, ExternalLink, FileText, FolderPlus } from "lucide-react";
-import { api, authFetch } from "@/lib/api";
+import { api, authFetch, consumeSseStream } from "@/lib/api";
 import StreamingText from "@/components/ui/StreamingText";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 
@@ -65,62 +65,39 @@ export default function ResearchPage() {
       if (!streamRes.ok || !streamRes.body) {
         throw new Error(`Stream request failed: ${streamRes.status}`);
       }
-      const reader = streamRes.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        let currentEvent = "message";
-        let currentData = "";
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            currentEvent = line.slice(7).trim();
-          } else if (line.startsWith("data: ")) {
-            currentData = line.slice(6).trim();
-          } else if (line === "") {
-            if (currentData) {
-              let d: Record<string, unknown> = {};
-              try { d = JSON.parse(currentData); } catch { /* ignore */ }
-              if (currentEvent === "status") {
-                setStatusMsg(d.message as string);
-              } else if (currentEvent === "queries") {
-                setStatusMsg(`Searching with ${(d.queries as string[]).length} queries...`);
-                setPhase("searching");
-              } else if (currentEvent === "sources_found") {
-                setStatusMsg(`Found ${d.count} sources. Summarizing...`);
-                setPhase("summarizing");
-              } else if (currentEvent === "source_processed") {
-                setSources((prev) => [
-                  ...prev,
-                  {
-                    order: d.order as number,
-                    title: (d.title as string) || "Untitled",
-                    url: d.url as string,
-                    snippet: d.snippet as string | undefined,
-                    ai_summary: d.ai_summary as string | undefined,
-                  },
-                ]);
-              } else if (currentEvent === "synthesis_token") {
-                setPhase("synthesizing");
-                setStatusMsg("Synthesizing findings...");
-                setSynthesis((prev) => prev + (d.text as string));
-              } else if (currentEvent === "complete") {
-                setPhase("done");
-                setStatusMsg("Research complete");
-              } else if (currentEvent === "error") {
-                setError(d.message as string);
-                setPhase("error");
-              }
-              currentEvent = "message";
-              currentData = "";
-            }
-          }
+      await consumeSseStream(streamRes.body, (event, raw) => {
+        const d = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+        if (event === "status") {
+          setStatusMsg(d.message as string);
+        } else if (event === "queries") {
+          setStatusMsg(`Searching with ${(d.queries as string[]).length} queries...`);
+          setPhase("searching");
+        } else if (event === "sources_found") {
+          setStatusMsg(`Found ${d.count} sources. Summarizing...`);
+          setPhase("summarizing");
+        } else if (event === "source_processed") {
+          setSources((prev) => [
+            ...prev,
+            {
+              order: d.order as number,
+              title: (d.title as string) || "Untitled",
+              url: d.url as string,
+              snippet: d.snippet as string | undefined,
+              ai_summary: d.ai_summary as string | undefined,
+            },
+          ]);
+        } else if (event === "synthesis_token") {
+          setPhase("synthesizing");
+          setStatusMsg("Synthesizing findings...");
+          setSynthesis((prev) => prev + (d.text as string));
+        } else if (event === "complete") {
+          setPhase("done");
+          setStatusMsg("Research complete");
+        } else if (event === "error") {
+          setError(d.message as string);
+          setPhase("error");
         }
-      }
+      });
     } catch (err: unknown) {
       if (err instanceof Error && err.name !== "AbortError") {
         setError(err.message);

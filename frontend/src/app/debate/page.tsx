@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Users, Download, ChevronDown, ChevronRight, Loader2, FileText } from "lucide-react";
-import { authFetch } from "@/lib/api";
+import { authFetch, consumeSseStream } from "@/lib/api";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -79,36 +79,7 @@ async function consumeGetSSE(
 ): Promise<void> {
   const res = await authFetch(url, { signal });
   if (!res.ok || !res.body) throw new Error(`Stream failed: ${res.status}`);
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() ?? "";
-
-    let currentEvent = "message";
-    let currentData = "";
-
-    for (const line of lines) {
-      if (line.startsWith("event: ")) {
-        currentEvent = line.slice(7).trim();
-      } else if (line.startsWith("data: ")) {
-        currentData = line.slice(6).trim();
-      } else if (line === "") {
-        if (currentData) {
-          try { onEvent(currentEvent, JSON.parse(currentData)); }
-          catch { onEvent(currentEvent, currentData); }
-          currentEvent = "message";
-          currentData = "";
-        }
-      }
-    }
-  }
+  await consumeSseStream(res.body, onEvent);
 }
 
 // ── Export helpers ───────────────────────────────────────────────────────────
