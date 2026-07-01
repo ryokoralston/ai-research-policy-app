@@ -237,11 +237,17 @@ async def answer_question(
                 return "No relevant content found in the document library for this query."
             # Collect chunks for citations (deduplicated by chunk_id later)
             collected_chunks.extend(chunks)
+            # Fetch all referenced documents in one query (was one query per chunk)
+            doc_titles = {
+                d.id: (d.title or d.filename)
+                for d in db.query(Document).filter(
+                    Document.id.in_({c.doc_id for c in chunks})
+                )
+            }
             # Format exactly like the pre-tool context_parts approach
             context_parts = []
             for chunk in chunks:
-                doc = db.query(Document).filter(Document.id == chunk.doc_id).first()
-                doc_title = doc.title or doc.filename if doc else "Unknown"
+                doc_title = doc_titles.get(chunk.doc_id, "Unknown")
                 context_parts.append(
                     f"[{doc_title}, p.{chunk.page_number}, sec: {chunk.section_header}]\n{chunk.content}"
                 )
