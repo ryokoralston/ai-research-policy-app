@@ -252,11 +252,10 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 
 ### C. パフォーマンス・ブロッキング（一部実装可）
 
-**C-1. CrossEncoder をクエリ毎にロード**
-- 根拠: `rag/retriever.py:38-40` — `CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")` を `retrieve()` の呼び出しごとに生成。モデルロードは重い（初回は数百MBのダウンロード、以後も毎回のデシリアライズ）。
-- 改善案: `services/embedding_service.py` の `_load_model` と同じく `functools.lru_cache` でモジュールレベルにキャッシュ。`except Exception` フォールバック（ベクトル順）は維持。
-- 検証: 既存の fallback 挙動を含むユニットテスト or import 確認。挙動は同一（同じモデル・同じ入力）。
-- 実装可: **可**。
+**C-1. CrossEncoder をクエリ毎にロード →【対応済み・2026-07-01】**
+- 対応: `rag/retriever.py` に `@lru_cache(maxsize=1)` の `_load_reranker()` を新設
+  （B-1 の関連メモと同一の対応。ロード失敗はキャッシュされず次クエリで再試行、
+  フォールバック挙動は維持）。テスト: `tests/test_retriever_order.py`。
 
 **C-2. ドキュメントタイトルの N+1 クエリ**
 - 根拠: `services/rag_service.py:157-159` — ツール実行のたびにチャンク毎 `db.query(Document)`。
