@@ -36,7 +36,27 @@ def init_db():
     from models import document, report, research_session, debate, digest_settings, model_settings, reminder  # noqa: F401
     Base.metadata.create_all(bind=engine)
     encrypt_legacy_secrets()
+    normalize_legacy_report_status()
     print("Database initialized.")
+
+
+def normalize_legacy_report_status():
+    """Idempotent migration: rewrite legacy report status 'complete' → 'completed'.
+
+    The report generator historically wrote 'complete' on finish, while the
+    PATCH endpoint and the frontend use the workflow vocabulary
+    draft|in_review|pre_approval|completed. 'completed' is the canonical value;
+    this normalizes rows created before the generator was fixed.
+    """
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        try:
+            conn.execute(
+                text("UPDATE reports SET status = 'completed' WHERE status = 'complete'")
+            )
+        except Exception:
+            pass  # table may not exist yet
 
 
 def encrypt_legacy_secrets():

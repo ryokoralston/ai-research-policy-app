@@ -152,6 +152,33 @@ async def generate_text(
     return prefill + generated
 
 
+async def generate_json(
+    prompt: str,
+    system: str = "",
+    model: str | None = None,
+    max_tokens: int = 4096,
+    temperature: float = 0.0,
+):
+    """Generate structured JSON via the prefill + stop-sequence technique.
+
+    Prefills the assistant turn with '```json' and stops at the closing
+    fence, so Claude emits exactly one JSON value with no surrounding prose,
+    then parses it. Exceptions (API errors, invalid JSON) propagate to the
+    caller — call sites keep their own fallback behavior.
+    """
+    raw = await generate_text(
+        prompt,
+        system=system,
+        model=model,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        prefill="```json",
+        stop_sequences=["```"],
+    )
+    # Strip the markdown fence prefix, then strip surrounding whitespace
+    return json.loads(raw[len("```json"):].strip())
+
+
 async def stream_text(
     prompt: str,
     system: str = "",

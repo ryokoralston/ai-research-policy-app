@@ -4,11 +4,10 @@ Research Agent: orchestrates web search + Claude synthesis.
 Pipeline:
   1. Query decomposition (Claude generates sub-queries)
   2. Parallel Tavily searches
-  3. Per-source summarization (claude-haiku-3-5)
-  4. Final synthesis (claude-opus-4-6, streaming)
+  3. Per-source summarization (fast model — see ModelSettings/config)
+  4. Final synthesis (main model, streaming)
 """
 import asyncio
-import json
 import uuid
 from datetime import datetime
 
@@ -16,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from models import ResearchSession, SearchResult
 from services.anthropic_client import (
+    generate_json,
     generate_text,
     stream_text,
     sse_event,
@@ -132,19 +132,9 @@ async def run_research_agent(
 
     decomp_prompt = build_decomposition_prompt(query)
     try:
-        # Pre-fill forces Claude to start with a JSON array open bracket.
-        # Stop sequence cuts off generation once the array closes,
-        # preventing any trailing explanation text.
-        # Result: '```json\n["query1", "query2", "query3"]\n'
-        decomp_raw = await generate_text(
-            decomp_prompt,
-            temperature=0.2,
-            prefill="```json",
-            stop_sequences=["```"],
-        )
-        # Strip the markdown fence prefix, then strip surrounding whitespace
-        json_str = decomp_raw[len("```json"):].strip()
-        sub_queries: list[str] = json.loads(json_str)
+        # generate_json: prefill forces a JSON array, the stop sequence cuts
+        # off any trailing explanation text (see anthropic_client.generate_json)
+        sub_queries: list[str] = await generate_json(decomp_prompt, temperature=0.2)
     except Exception:
         sub_queries = [query]
 

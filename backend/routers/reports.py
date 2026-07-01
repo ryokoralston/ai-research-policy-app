@@ -11,8 +11,11 @@ from models import Report, ReportSection
 from schemas import (
     ReportGenerateRequest, ReportResponse, ReportDetail, ReportUpdateRequest, ReportDraftRequest
 )
+from utils.export import markdown_to_plain, render_pdf
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
+
+ALLOWED_REPORT_STATUSES = {"draft", "in_review", "pre_approval", "completed"}
 
 
 @router.post("/generate")
@@ -84,15 +87,23 @@ def update_report(report_id: str, request: ReportUpdateRequest, db: Session = De
     report = db.query(Report).filter(Report.id == report_id).first()
     if not report:
         raise HTTPException(status_code=404, detail="Report not found")
+    # Validate before applying anything so an invalid status doesn't partially
+    # apply the other fields in the same request.
+    if request.status is not None and request.status not in ALLOWED_REPORT_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid status '{request.status}'. "
+                f"Allowed values: {', '.join(sorted(ALLOWED_REPORT_STATUSES))}"
+            ),
+        )
     if request.title is not None:
         report.title = request.title
     if request.content is not None:
         report.content = request.content
         report.word_count = len(request.content.split())
     if request.status is not None:
-        allowed = {"draft", "in_review", "pre_approval", "completed"}
-        if request.status in allowed:
-            report.status = request.status
+        report.status = request.status
     report.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(report)
@@ -114,49 +125,19 @@ def export_report(
     safe_title = re.sub(r'[^\w\s-]', '', ascii_title).strip().replace(' ', '_') or report_id[:8]
 
     if format == "txt":
-        plain = _markdown_to_plain(content)
+        plain = markdown_to_plain(content)
         return Response(
             content=plain,
             media_type="text/plain",
             headers={"Content-Disposition": f'attachment; filename="{safe_title}.txt"'},
         )
 
-    pdf_bytes = _generate_pdf(report.title, content)
+    pdf_bytes = render_pdf(report.title, content)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{safe_title}.pdf"'},
     )
-
-
-def _markdown_to_plain(text: str) -> str:
-    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-    text = re.sub(r'\*(.+?)\*', r'\1', text)
-    text = re.sub(r'`{3}.*?`{3}', '', text, flags=re.DOTALL)
-    text = re.sub(r'`(.+?)`', r'\1', text)
-    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
-    text = re.sub(r'^[-*]\s+', '- ', text, flags=re.MULTILINE)
-    return text.strip()
-
-
-def _generate_pdf(title: str, content: str) -> bytes:
-    from utils.pdf_renderer import make_pdf, render_markdown
-
-    pdf, font, left, usable_w = make_pdf()
-
-    pdf.set_font(font, "B", 18)
-    pdf.set_x(left)
-    pdf.multi_cell(usable_w, 10, title)
-    pdf.ln(2)
-    pdf.set_draw_color(100, 120, 200)
-    pdf.line(left, pdf.get_y(), left + usable_w, pdf.get_y())
-    pdf.set_draw_color(0, 0, 0)
-    pdf.ln(5)
-
-    render_markdown(pdf, font, left, usable_w, content)
-
-    return bytes(pdf.output())
 
 
 @router.delete("/{report_id}", response_model=dict)

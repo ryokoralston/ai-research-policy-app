@@ -4,7 +4,7 @@ Daily AI Policy Digest Service.
 Flow:
   1. Search each topic via Tavily (last 24h)
   2. Deduplicate by URL, pick top 5 by score
-  3. Generate a 1-2 sentence Japanese headline per article via Claude Haiku
+  3. Generate a 1-2 sentence English headline per article via Claude Haiku
   4. Build HTML email body
   5. Send via Gmail SMTP (STARTTLS, port 587)
 """
@@ -50,12 +50,13 @@ async def _fetch_top_articles(topics: list[str], max_total: int = 5) -> list[Sea
 
 
 async def _generate_headline(article: SearchResult) -> str:
-    """Ask Claude Haiku to write a 1-2 sentence Japanese headline summary."""
+    """Ask Claude Haiku to write a 1-2 sentence English headline summary."""
     prompt = (
-        f"以下の記事スニペットを読み、AIポリシーの観点から1〜2文の日本語ヘッドラインを生成してください。"
-        f"客観的で簡潔に。\n\n"
-        f"タイトル: {article.title}\n"
-        f"スニペット: {article.snippet[:500]}"
+        "Read the following article snippet and write a 1-2 sentence English "
+        "headline summary from an AI policy perspective. "
+        "Be objective and concise.\n\n"
+        f"Title: {article.title}\n"
+        f"Snippet: {article.snippet[:500]}"
     )
     try:
         return await generate_text(prompt, max_tokens=200)
@@ -89,7 +90,7 @@ def _build_html(articles: list[tuple[SearchResult, str]], date_str: str) -> str:
         </tr>"""
 
     return f"""<!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
 <head><meta charset="UTF-8"></head>
 <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
              background:#f8fafc; margin:0; padding:0;">

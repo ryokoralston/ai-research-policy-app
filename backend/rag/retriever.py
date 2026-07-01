@@ -1,6 +1,15 @@
 """Two-stage retrieval: vector search + cross-encoder reranking."""
+from functools import lru_cache
+from typing import Any
+
 from rag.vector_store import VectorStore, RetrievedChunk
 from services.embedding_service import EmbeddingService
+
+
+@lru_cache(maxsize=1)
+def _load_reranker() -> Any:
+    from sentence_transformers import CrossEncoder
+    return CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
 
 class Retriever:
@@ -33,10 +42,10 @@ class Retriever:
         if not candidates:
             return []
 
-        # Cross-encoder reranking
+        # Cross-encoder reranking (model is loaded once and cached — a failed
+        # load is not cached, so it is retried on the next query)
         try:
-            from sentence_transformers import CrossEncoder
-            reranker = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+            reranker = _load_reranker()
             pairs = [(question, c.content) for c in candidates]
             scores = reranker.predict(pairs)
             ranked = sorted(zip(candidates, scores), key=lambda x: x[1], reverse=True)
@@ -45,6 +54,9 @@ class Retriever:
             # Fallback to vector similarity order
             top = candidates[:top_k]
 
-        # Restore reading order: sort by (doc_id, chunk_index from chroma_id suffix)
-        top.sort(key=lambda c: c.chunk_id)
+        # Restore reading order: group the selected chunks by document, in their
+        # original position within each document, so the excerpts read as
+        # coherent passages. (Selection above is by relevance; only the final
+        # presentation order changes here.)
+        top.sort(key=lambda c: (c.doc_id, c.chunk_index))
         return top

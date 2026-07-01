@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db, get_or_init_model_settings
 from services.anthropic_client import invalidate_ai_settings_cache
+from utils.masking import MASK, mask_secret
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -26,10 +27,6 @@ class ModelSettingsIn(BaseModel):
     openai_api_key: str | None = None
 
 
-def _mask(value: str) -> str:
-    return "***" if value else ""
-
-
 @router.get("/models")
 async def get_model_settings(db: Session = Depends(get_db)) -> dict[str, Any]:
     """Return current model settings; API keys are masked."""
@@ -37,8 +34,8 @@ async def get_model_settings(db: Session = Depends(get_db)) -> dict[str, Any]:
     return {
         "main_model": ms.main_model,
         "fast_model": ms.fast_model,
-        "anthropic_api_key": _mask(ms.anthropic_api_key),
-        "openai_api_key": _mask(ms.openai_api_key),
+        "anthropic_api_key": mask_secret(ms.anthropic_api_key),
+        "openai_api_key": mask_secret(ms.openai_api_key),
         "updated_at": ms.updated_at.isoformat() if ms.updated_at else None,
     }
 
@@ -55,10 +52,11 @@ async def save_model_settings(
         ms.main_model = body.main_model
     if body.fast_model is not None:
         ms.fast_model = body.fast_model
-    # Only update API keys when a non-empty value is sent
-    if body.anthropic_api_key:
+    # Only update API keys when a real new value is sent — ignore empty strings
+    # and the masked sentinel a client may echo back from GET.
+    if body.anthropic_api_key and body.anthropic_api_key != MASK:
         ms.anthropic_api_key = body.anthropic_api_key
-    if body.openai_api_key:
+    if body.openai_api_key and body.openai_api_key != MASK:
         ms.openai_api_key = body.openai_api_key
 
     ms.updated_at = datetime.utcnow()
@@ -70,7 +68,7 @@ async def save_model_settings(
     return {
         "main_model": ms.main_model,
         "fast_model": ms.fast_model,
-        "anthropic_api_key": _mask(ms.anthropic_api_key),
-        "openai_api_key": _mask(ms.openai_api_key),
+        "anthropic_api_key": mask_secret(ms.anthropic_api_key),
+        "openai_api_key": mask_secret(ms.openai_api_key),
         "updated_at": ms.updated_at.isoformat() if ms.updated_at else None,
     }

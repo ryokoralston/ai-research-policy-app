@@ -8,6 +8,7 @@ GET  /api/digest/status     – last sent time, next scheduled time, config summ
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -20,16 +21,11 @@ from sqlalchemy.orm import Session
 
 from database import get_db, get_or_init_digest_settings
 from services.digest_service import send_digest
+from utils.masking import MASK, mask_secret
 
 router = APIRouter(prefix="/api/digest", tags=["digest"])
 
-# Sentinel returned in place of the real SMTP password. The frontend sends it
-# back unchanged when the field is left untouched, so writes must ignore it.
-MASK = "***"
-
-
-def _mask(value: str) -> str:
-    return MASK if value else ""
+logger = logging.getLogger(__name__)
 
 
 # In-memory state (resets on restart — intentional lightweight design)
@@ -61,7 +57,8 @@ def reschedule_digest(hour: int, tz: str) -> None:
                 ),
             )
         except Exception:
-            pass  # job may not exist yet on first run
+            # Job may not exist yet on first run — keep going, but leave a trace.
+            logger.warning("Could not reschedule daily_digest job", exc_info=True)
 
 
 class DigestSettingsIn(BaseModel):
@@ -80,7 +77,7 @@ async def get_settings_endpoint(db: Session = Depends(get_db)) -> dict[str, Any]
     return {
         "email_to": ds.email_to,
         "email_from": ds.email_from,
-        "smtp_password": _mask(ds.smtp_password),
+        "smtp_password": mask_secret(ds.smtp_password),
         "topics": ds.topics,
         "timezone": ds.timezone,
         "send_hour": ds.send_hour,
@@ -120,7 +117,7 @@ async def save_settings_endpoint(
     return {
         "email_to": ds.email_to,
         "email_from": ds.email_from,
-        "smtp_password": _mask(ds.smtp_password),
+        "smtp_password": mask_secret(ds.smtp_password),
         "topics": ds.topics,
         "timezone": ds.timezone,
         "send_hour": ds.send_hour,

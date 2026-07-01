@@ -1,15 +1,15 @@
 import asyncio
 import json
 import uuid
-from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import ResearchSession, SearchResult, Document, DocumentChunk
+from models import ResearchSession, SearchResult, Document
 from schemas import ResearchStartRequest, ResearchSessionResponse, ResearchSessionDetail
+from utils.sse import queue_event_stream
 
 router = APIRouter(prefix="/api/research", tags=["research"])
 
@@ -52,14 +52,8 @@ async def stream_research(session_id: str, db: Session = Depends(get_db)):
         if not queue:
             yield "event: error\ndata: {\"message\": \"No active stream for this session\"}\n\n"
             return
-        while True:
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=60.0)
-                yield event
-                if '"event_type": "complete"' in event or '"event_type": "error"' in event:
-                    break
-            except asyncio.TimeoutError:
-                yield "event: heartbeat\ndata: {}\n\n"
+        async for event in queue_event_stream(queue, timeout_seconds=60.0):
+            yield event
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -136,74 +130,13 @@ def delete_session(session_id: str, db: Session = Depends(get_db)):
 
 
 async def _index_web_source(doc_id: str, content: str):
-    """Background task: chunk and index web content into ChromaDB."""
-    from services.embedding_service import EmbeddingService
-    from rag.vector_store import VectorStore
+    """Background task: index web content via the shared RAG pipeline."""
+    from services.rag_service import index_web_content
     from database import SessionLocal
 
     db = SessionLocal()
     try:
-        doc = db.query(Document).filter(Document.id == doc_id).first()
-        if not doc:
-            return
-
-        # Split content into ~800-char chunks on paragraph boundaries
-        chunks_text: list[str] = []
-        if content.strip():
-            paragraphs = content.split("\n\n")
-            current = ""
-            for para in paragraphs:
-                if len(current) + len(para) > 800 and current:
-                    chunks_text.append(current.strip())
-                    current = para
-                else:
-                    current = (current + "\n\n" + para).strip() if current else para
-            if current:
-                chunks_text.append(current.strip())
-
-        if not chunks_text:
-            doc.status = "indexed"
-            db.commit()
-            return
-
-        embed_service = EmbeddingService()
-        vs = VectorStore()
-        embeddings = embed_service.embed_texts(chunks_text)
-
-        chunk_ids = []
-        db_chunks = []
-        for i, (text, embedding) in enumerate(zip(chunks_text, embeddings)):
-            chunk_id = str(uuid.uuid4())
-            chunk_ids.append(chunk_id)
-            db_chunks.append(DocumentChunk(
-                id=chunk_id,
-                document_id=doc_id,
-                chunk_index=i,
-                content=text,
-                token_count=len(text.split()),
-                chroma_id=chunk_id,
-            ))
-
-        vs.add_chunks(
-            chunk_ids=chunk_ids,
-            embeddings=embeddings,
-            documents=chunks_text,
-            metadatas=[
-                {"doc_id": doc_id, "page_number": 0, "section_header": "", "chunk_index": i}
-                for i in range(len(chunks_text))
-            ],
-        )
-
-        db.bulk_save_objects(db_chunks)
-        doc.status = "indexed"
-        doc.word_count = sum(len(t.split()) for t in chunks_text)
-        doc.indexed_at = datetime.utcnow()
-        db.commit()
-    except Exception:
-        doc = db.query(Document).filter(Document.id == doc_id).first()
-        if doc:
-            doc.status = "error"
-            db.commit()
+        await index_web_content(doc_id, content, db)
     finally:
         db.close()
 

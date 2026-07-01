@@ -12,7 +12,7 @@ class Report(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     title: Mapped[str] = mapped_column(String, nullable=False)
     report_type: Mapped[str] = mapped_column(String, nullable=False)  # 'congressional_brief'|'policy_memo'|'risk_assessment'
-    status: Mapped[str] = mapped_column(String, default="draft")  # 'draft'|'complete'|'archived'
+    status: Mapped[str] = mapped_column(String, default="draft")  # 'draft'|'in_review'|'pre_approval'|'completed'
     content: Mapped[str | None] = mapped_column(Text)  # Full markdown
     session_id: Mapped[str | None] = mapped_column(String, ForeignKey("research_sessions.id", ondelete="SET NULL"))
     word_count: Mapped[int | None] = mapped_column(Integer)
