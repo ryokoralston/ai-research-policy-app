@@ -1,5 +1,6 @@
 """AI Risk Analysis engine with structured scoring."""
 import json
+import logging
 import re
 import uuid
 from datetime import datetime
@@ -9,11 +10,13 @@ from sqlalchemy.orm import Session
 
 from models import RiskAnalysis, ResearchSession
 from schemas import AnalysisStartRequest
-from services.anthropic_client import generate_text, stream_text, sse_event, UNTRUSTED_CONTENT_GUARD
+from services.anthropic_client import generate_json, stream_text, sse_event, UNTRUSTED_CONTENT_GUARD
 from services.research_agent import run_research_agent
 from templates import TEMPLATES
 
 import asyncio
+
+logger = logging.getLogger(__name__)
 
 
 def _strip_metadata(content: str, section_title: str = "") -> str:
@@ -117,18 +120,15 @@ async def run_risk_analysis(
                 f"capability, deployment, governance, geopolitical, misuse, systemic"
             )
             try:
-                scores_raw = await generate_text(
-                    scores_prompt,
-                    temperature=0.0,        # fully deterministic — scores must be consistent
-                    prefill="```json",      # force Claude to open a code fence
-                    stop_sequences=["```"],  # stop when code fence closes
-                )
-                # Strip the markdown fence prefix, then strip surrounding whitespace
-                json_str = scores_raw[len("```json"):].strip()
-                extracted_scores = json.loads(json_str.strip())
+                # temperature=0.0: fully deterministic — scores must be consistent
+                extracted_scores = await generate_json(scores_prompt, temperature=0.0)
                 yield sse_event("scores", {"scores": extracted_scores})
-            except (json.JSONDecodeError, Exception):
-                pass
+            except Exception:
+                logger.warning(
+                    "Risk score extraction failed for %r — continuing without scores",
+                    request.subject,
+                    exc_info=True,
+                )
 
         # Strip metadata lines and duplicate section headers from content
         section_content = _strip_metadata(section_content, section_title)
