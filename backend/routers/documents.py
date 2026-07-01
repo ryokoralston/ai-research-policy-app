@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import uuid
@@ -18,6 +19,8 @@ from schemas import DocumentResponse, DocumentDetail, DocumentAskRequest
 from schemas.document import IngestUrlRequest, DocumentFolderRequest, FolderRenameRequest
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
+
+logger = logging.getLogger(__name__)
 
 ALLOWED_EXTENSIONS = {".pdf", ".txt", ".html", ".htm"}
 
@@ -325,7 +328,10 @@ def rename_folder(body: FolderRenameRequest, db: Session = Depends(get_db)):
                     doc.metadata_json = json.dumps(meta)
                     updated += 1
             except Exception:
-                pass
+                logger.warning(
+                    "Skipping document %s with malformed metadata_json during folder rename",
+                    doc.id, exc_info=True,
+                )
     db.commit()
     return {"updated": updated}
 
@@ -336,13 +342,16 @@ def delete_document(doc_id: str, db: Session = Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    # Remove from ChromaDB
+    # Remove from ChromaDB (best effort — the DB delete proceeds regardless)
     try:
         from rag.vector_store import VectorStore
         vs = VectorStore()
         vs.delete_document(doc_id)
     except Exception:
-        pass
+        logger.warning(
+            "ChromaDB cleanup failed for document %s — continuing with DB delete",
+            doc_id, exc_info=True,
+        )
 
     # Remove file
     if doc.file_path and os.path.exists(doc.file_path):

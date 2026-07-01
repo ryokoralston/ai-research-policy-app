@@ -8,6 +8,7 @@ GET  /api/digest/status     – last sent time, next scheduled time, config summ
 """
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -23,6 +24,8 @@ from services.digest_service import send_digest
 from utils.masking import MASK, mask_secret
 
 router = APIRouter(prefix="/api/digest", tags=["digest"])
+
+logger = logging.getLogger(__name__)
 
 
 # In-memory state (resets on restart — intentional lightweight design)
@@ -54,7 +57,8 @@ def reschedule_digest(hour: int, tz: str) -> None:
                 ),
             )
         except Exception:
-            pass  # job may not exist yet on first run
+            # Job may not exist yet on first run — keep going, but leave a trace.
+            logger.warning("Could not reschedule daily_digest job", exc_info=True)
 
 
 class DigestSettingsIn(BaseModel):
