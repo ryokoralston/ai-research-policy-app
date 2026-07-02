@@ -544,7 +544,23 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 - 検証: `npx tsc --noEmit`（これが本項目の実質的なテスト）+ build。
 - 実装可: **可**。G-1/G-3 より**先**に実施すると分割作業が型に守られる。
 
-**G-3. `debate/page.tsx` のエクスポートヘルパー（約120行）**
+**G-3. `debate/page.tsx` のエクスポートヘルパー（約120行） →【対応済み・2026-07-02】**
+- 対応: `buildMarkdown`/`buildPlainText`/`downloadBlob`/`exportAsPdf` を
+  `frontend/src/lib/exportDebate.ts` へ移動。`Argument` 型もこのファイルへ移動し
+  （エクスポートヘルパーが消費する形の単一の情報源にする）、page.tsx はローカル定義を削除して
+  import する側に変更。`buildPlainText`/`exportAsPdf` は元々ページのモジュールスコープの
+  `PERSONA_MAP` を暗黙参照していたため、純粋関数として切り出すにあたり `personaMap` を
+  明示引数に追加（`PersonaMetaMap` 型を新設）— ページ側の2箇所の呼び出しに `PERSONA_MAP` を
+  渡すよう更新。それ以外のロジックは無変更。`buildMarkdown`/`downloadBlob`（シグネチャ変更なし）
+  は移動前後で関数本体が byte-for-byte 一致することを `diff` で確認済み。
+  DownloadMenu との統合はしていない（指示どおり）。
+- 発見（未修正・対象外）: `exportAsPdf` 内の `win.document.write(html)` は移動元から不変。
+  自動セキュリティレビューフックが `document.write` の一般的なXSS/パフォーマンス上の注意を
+  表示したが、これは本リファクタが持ち込んだものではなく既存ロジックであり、
+  「ロジックは一切変えない」という本項目の制約と矛盾するため今回は変更していない。
+  討論参加者名・本文（LLM生成）や自由入力のトピックが未エスケープでHTML文字列に
+  埋め込まれる点は、別イシューとして人間の判断を仰ぐことを推奨する。
+- 検証: `npx tsc --noEmit` / `npm run lint` / `npm run build` すべてクリーン。
 - 根拠: `frontend/src/app/debate/page.tsx:87-205` — `buildMarkdown`/`buildPlainText`/
   `downloadBlob`/`exportAsPdf` がページ内定義。`components/ui/DownloadMenu.tsx` と役割が近い。
 - 改善案: `lib/exportDebate.ts` へ移動（純関数なのでそのまま切り出せる）。
