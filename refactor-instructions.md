@@ -398,7 +398,19 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 
 ### F. バックエンド（新規）
 
-**F-1. `index_document` と `index_web_content` の残存重複**
+**F-1. `index_document` と `index_web_content` の残存重複 →【対応済み・2026-07-02】**
+- 対応: `_embed_and_store(doc, chunks, db, *, page_count=None, word_count=None)` を新設し
+  （word_count もキーワード引数として追加 — 両呼び出し元とも doc.word_count を設定するため必要。
+  改善案の提案シグネチャに1引数追加した以外は提案どおり）、両関数から共通の「埋め込み→chunk_id
+  採番→DocumentChunk構築→vs.add_chunks（同一metadata dict）→bulk_save_objects→doc.status更新」を
+  そこに集約。例外処理は提案どおりヘルパーの外に残した: `index_document` は
+  空チャンク/例外時に `status="error"` + re-raise、`index_web_content` は空チャンクなら
+  `"indexed"`（0件, エラーにしない）・例外は握りつぶして `status="error"`。ヘルパー自身は
+  例外を一切キャッチしない。
+- テスト: 新設 `tests/test_index_document.py`（4テスト: txt アップロードの通常経路、空チャンクは
+  index_web_content と異なりエラーになること、embedding失敗時に re-raise されること
+  ＝index_web_content との挙動差の固定、doc不在/file_path無しの no-op）。既存
+  `tests/test_index_web_content.py` は無変更のまま green。
 - 根拠: `services/rag_service.py:16-92` と `:95-177`。「埋め込み生成 → chunk_id 採番 →
   `DocumentChunk` 構築 → `vs.add_chunks`（同一 metadata dict）→ `bulk_save_objects` →
   doc.status 更新」の約50行がほぼ同一（A-3 で `index_web_content` を新設した際に生まれた重複）。

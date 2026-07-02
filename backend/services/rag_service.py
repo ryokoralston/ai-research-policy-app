@@ -13,6 +13,75 @@ from services.anthropic_client import stream_text, stream_chat, stream_chat_with
 from services.reminder_tools import REMINDER_TOOLS, execute_reminder_tool
 
 
+def _embed_and_store(
+    doc: Document,
+    chunks: list[TextChunk],
+    db: Session,
+    *,
+    page_count: int | None = None,
+    word_count: int | None = None,
+) -> None:
+    """Embed chunks, write them to ChromaDB + SQLite, and mark the document indexed.
+
+    Shared by index_document and index_web_content (F-1): both did
+    "embed -> chunk_id assignment -> DocumentChunk construction -> vs.add_chunks
+    (identical metadata dict) -> bulk_save_objects -> doc.status update" as
+    near-duplicate ~50-line blocks. The metadata schema written here
+    (doc_id/page_number/section_header/chunk_index) is a contract with
+    rag/vector_store.py's query side — keeping it in one place means the two
+    can no longer drift apart.
+
+    Deliberately does NOT catch exceptions: the two callers have different
+    failure policies (index_document marks status=error and re-raises;
+    index_web_content marks status=error and swallows, since it runs as a
+    background task) so that policy stays in their own try/except blocks.
+    """
+    embed_service = EmbeddingService()
+    vs = VectorStore()
+
+    texts = [c.content for c in chunks]
+    embeddings = embed_service.embed_texts(texts)
+
+    chunk_ids = []
+    db_chunks = []
+    for chunk, embedding in zip(chunks, embeddings):
+        chunk_id = str(uuid.uuid4())
+        chunk_ids.append(chunk_id)
+        db_chunks.append(DocumentChunk(
+            id=chunk_id,
+            document_id=doc.id,
+            chunk_index=chunk.chunk_index,
+            content=chunk.content,
+            page_number=chunk.page_number,
+            section_header=chunk.section_header,
+            token_count=chunk.token_count,
+            chroma_id=chunk_id,
+        ))
+
+    # Batch add to ChromaDB
+    vs.add_chunks(
+        chunk_ids=chunk_ids,
+        embeddings=embeddings,
+        documents=texts,
+        metadatas=[
+            {
+                "doc_id": doc.id,
+                "page_number": c.page_number,
+                "section_header": c.section_header or "",
+                "chunk_index": c.chunk_index,
+            }
+            for c in chunks
+        ],
+    )
+
+    db.bulk_save_objects(db_chunks)
+    doc.status = "indexed"
+    doc.page_count = page_count
+    doc.word_count = word_count
+    doc.indexed_at = datetime.utcnow()
+    db.commit()
+
+
 async def index_document(doc_id: str, db: Session) -> None:
     """Chunk file and index into ChromaDB. Supports PDF, TXT, HTML. Called as a background task."""
     import os as _os
@@ -40,51 +109,7 @@ async def index_document(doc_id: str, db: Session) -> None:
             db.commit()
             return
 
-        embed_service = EmbeddingService()
-        vs = VectorStore()
-
-        texts = [c.content for c in chunks]
-        embeddings = embed_service.embed_texts(texts)
-
-        chunk_ids = []
-        db_chunks = []
-        for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-            chunk_id = str(uuid.uuid4())
-            chunk_ids.append(chunk_id)
-            db_chunk = DocumentChunk(
-                id=chunk_id,
-                document_id=doc_id,
-                chunk_index=chunk.chunk_index,
-                content=chunk.content,
-                page_number=chunk.page_number,
-                section_header=chunk.section_header,
-                token_count=chunk.token_count,
-                chroma_id=chunk_id,
-            )
-            db_chunks.append(db_chunk)
-
-        # Batch add to ChromaDB
-        vs.add_chunks(
-            chunk_ids=chunk_ids,
-            embeddings=embeddings,
-            documents=texts,
-            metadatas=[
-                {
-                    "doc_id": doc_id,
-                    "page_number": c.page_number,
-                    "section_header": c.section_header or "",
-                    "chunk_index": c.chunk_index,
-                }
-                for c in chunks
-            ],
-        )
-
-        db.bulk_save_objects(db_chunks)
-        doc.status = "indexed"
-        doc.page_count = page_count
-        doc.word_count = word_count
-        doc.indexed_at = datetime.utcnow()
-        db.commit()
+        _embed_and_store(doc, chunks, db, page_count=page_count, word_count=word_count)
 
     except Exception as e:
         doc.status = "error"
@@ -129,48 +154,7 @@ async def index_web_content(doc_id: str, content: str, db: Session) -> None:
             db.commit()
             return
 
-        embed_service = EmbeddingService()
-        vs = VectorStore()
-
-        texts = [c.content for c in chunks]
-        embeddings = embed_service.embed_texts(texts)
-
-        chunk_ids = []
-        db_chunks = []
-        for chunk, embedding in zip(chunks, embeddings):
-            chunk_id = str(uuid.uuid4())
-            chunk_ids.append(chunk_id)
-            db_chunks.append(DocumentChunk(
-                id=chunk_id,
-                document_id=doc_id,
-                chunk_index=chunk.chunk_index,
-                content=chunk.content,
-                page_number=chunk.page_number,
-                section_header=chunk.section_header,
-                token_count=chunk.token_count,
-                chroma_id=chunk_id,
-            ))
-
-        vs.add_chunks(
-            chunk_ids=chunk_ids,
-            embeddings=embeddings,
-            documents=texts,
-            metadatas=[
-                {
-                    "doc_id": doc_id,
-                    "page_number": c.page_number,
-                    "section_header": c.section_header or "",
-                    "chunk_index": c.chunk_index,
-                }
-                for c in chunks
-            ],
-        )
-
-        db.bulk_save_objects(db_chunks)
-        doc.status = "indexed"
-        doc.word_count = word_count
-        doc.indexed_at = datetime.utcnow()
-        db.commit()
+        _embed_and_store(doc, chunks, db, word_count=word_count)
     except Exception:
         # Background task — record the failure on the document instead of raising
         doc.status = "error"
