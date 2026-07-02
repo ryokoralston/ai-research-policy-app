@@ -16,11 +16,19 @@ os.environ.setdefault("DATABASE_URL", "sqlite://")
 
 from services.anthropic_client import sse_event
 from utils.sse import HEARTBEAT_EVENT, is_terminal_event, queue_event_stream
+from utils.sse import sse_event as sse_event_direct
 
 
 def test_basic_format():
     event = sse_event("status", {"message": "working"})
     assert event == 'event: status\ndata: {"message": "working"}\n\n', repr(event)
+
+
+def test_anthropic_client_reexport_is_same_function_object():
+    """F-3: sse_event now lives in utils/sse.py; services.anthropic_client
+    re-exports the identical function object so existing call sites and
+    imports keep working unchanged."""
+    assert sse_event is sse_event_direct
 
 
 def test_data_is_json_round_trippable():
@@ -132,6 +140,7 @@ if __name__ == "__main__":
     print("\nRunning SSE format tests...\n")
 
     _run("basic format", test_basic_format)
+    _run("anthropic_client re-export is same function object", test_anthropic_client_reexport_is_same_function_object)
     _run("data is JSON round-trippable", test_data_is_json_round_trippable)
     _run("payload newlines stay on one data line", test_newlines_in_payload_stay_on_one_data_line)
     _run("complete event contains event_type marker", test_complete_event_contains_event_type_marker)

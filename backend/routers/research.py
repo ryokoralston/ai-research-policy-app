@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import ResearchSession, SearchResult, Document
 from schemas import ResearchStartRequest, ResearchSessionResponse, ResearchSessionDetail
-from utils.sse import queue_event_stream
+from utils.sse import queue_event_stream, sse_event
 
 router = APIRouter(prefix="/api/research", tags=["research"])
 
@@ -50,7 +50,7 @@ async def stream_research(session_id: str, db: Session = Depends(get_db)):
     async def event_generator():
         queue = _sse_queues.get(session_id)
         if not queue:
-            yield "event: error\ndata: {\"message\": \"No active stream for this session\"}\n\n"
+            yield sse_event("error", {"message": "No active stream for this session"})
             return
         async for event in queue_event_stream(queue, timeout_seconds=60.0):
             yield event
@@ -163,8 +163,7 @@ async def _run_research(session_id: str, query: str, max_sources: int, queue: as
             db=db,
         )
     except Exception as e:
-        import json
-        await queue.put(f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n")
+        await queue.put(sse_event("error", {"message": str(e)}))
         session = db.query(ResearchSession).filter(ResearchSession.id == session_id).first()
         if session:
             session.status = "error"

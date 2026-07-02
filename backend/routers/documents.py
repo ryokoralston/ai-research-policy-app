@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, BackgroundTasks
 from fastapi.responses import StreamingResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from config import get_settings
@@ -279,11 +280,18 @@ def list_documents(status: str | None = None, db: Session = Depends(get_db)):
     if status:
         q = q.filter(Document.status == status)
     docs = q.order_by(Document.created_at.desc()).all()
+
+    # One aggregate query for all chunk counts instead of one COUNT per document.
+    chunk_counts = dict(
+        db.query(DocumentChunk.document_id, func.count(DocumentChunk.id))
+        .group_by(DocumentChunk.document_id)
+        .all()
+    )
+
     result = []
     for doc in docs:
-        chunk_count = db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).count()
         resp = DocumentResponse.model_validate(doc)
-        resp.chunk_count = chunk_count
+        resp.chunk_count = chunk_counts.get(doc.id, 0)
         result.append(resp)
     return result
 
@@ -306,10 +314,22 @@ def assign_folder(body: DocumentFolderRequest, db: Session = Depends(get_db)):
     for doc_id in body.doc_ids:
         doc = db.query(Document).filter(Document.id == doc_id).first()
         if doc:
-            doc.metadata_json = json.dumps({
-                "collection_id": body.folder_id,
-                "collection_name": body.folder_name,
-            })
+            # Merge into existing metadata instead of overwriting it wholesale,
+            # so any other keys a document may carry survive a folder assignment.
+            meta = {}
+            if doc.metadata_json:
+                try:
+                    parsed = json.loads(doc.metadata_json)
+                    if isinstance(parsed, dict):
+                        meta = parsed
+                except Exception:
+                    logger.warning(
+                        "Overwriting malformed metadata_json for document %s during folder assignment",
+                        doc.id, exc_info=True,
+                    )
+            meta["collection_id"] = body.folder_id
+            meta["collection_name"] = body.folder_name
+            doc.metadata_json = json.dumps(meta)
             updated += 1
     db.commit()
     return {"updated": updated}

@@ -412,14 +412,31 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 - 検証: 既存 `tests/test_index_web_content.py` が green のまま + upload 経路の同型テストを追加。
 - 実装可: **可**。
 
-**F-2. `list_documents` のチャンク数 N+1**
+**F-2. `list_documents` のチャンク数 N+1 →【対応済み・2026-07-02】**
+- 対応: `routers/documents.py:list_documents` を `func.count(DocumentChunk.id)` +
+  `group_by(DocumentChunk.document_id)` の一括クエリ + dict 引きに変更（`sqlalchemy.func` を import）。
+  レスポンス形状・キーは不変（`chunk_count` の既定値も従来どおり 0）。
+- テスト: `tests/test_folder_ops.py::test_list_documents_chunk_counts_batched` — 0件/複数件の
+  chunk_count が正しいこと、かつ `before_cursor_execute` フックでクエリ件数を数え、
+  ドキュメント数に関わらず**常に2クエリ**（documents 1 + 集計1）であることを固定（N+1 の回帰検知）。
 - 根拠: `routers/documents.py:276-288` — ドキュメント毎に `count()` クエリ（100文書=101クエリ）。
 - 改善案: `func.count` + `group_by(DocumentChunk.document_id)` の一括クエリで dict を作り引く。
   レスポンス形状は不変。
 - 検証: レスポンス JSON が変更前後で一致すること（既存テストスタイルで in-memory SQLite）。
 - 実装可: **可**（C-2 と同型の修正）。
 
-**F-3. `sse_event` の置き場所と生文字列エラーイベント**
+**F-3. `sse_event` の置き場所と生文字列エラーイベント →【対応済み・2026-07-02】**
+- 対応: `sse_event` を `utils/sse.py` に移動。`services/anthropic_client.py` は
+  `from utils.sse import sse_event`（re-export、既存の `from services.anthropic_client import
+  sse_event` 呼び出し元 — `rag_service.py`/`report_generator.py`/`risk_analyzer.py`/
+  `research_agent.py`/`debate_service.py`/`tests/test_sse.py` — は無変更で動作継続）。
+  手組みの生文字列エラーイベント4箇所（`routers/research.py:53,167`、`routers/debate.py:71,117`、
+  `services/debate_service.py:168`）を `sse_event("error", {...})` 呼び出しに置換。ペイロードの
+  キー・順序は完全維持（`debate.py:117` の `{"message":…, "event_type":"error"}` の2キー順序も含む）
+  — 置換前後で生成される文字列が byte-for-byte 一致することを手動 diff で確認済み。
+- テスト: `tests/test_sse.py` に `test_anthropic_client_reexport_is_same_function_object`
+  （`services.anthropic_client.sse_event is utils.sse.sse_event` を固定）を追加。既存の
+  フォーマット・終端判定テストは無変更のまま green。
 - 根拠: `sse_event` が `services/anthropic_client.py:379-381` にある（SSE 整形は Anthropic と無関係）。
   さらに `routers/research.py:53,167`・`routers/debate.py:71,117`・`services/debate_service.py:168` は
   `f"event: error\ndata: {json.dumps(...)}"` を手組みしており、ペイロードのばらつき
@@ -439,7 +456,13 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
   1文字でも変わるなら実装せず「提案のみ」として報告（§3-3 のプロンプト凍結が優先）。
 - 実装可: **条件付き可**（バイト同一を diff で証明できた場合のみ）。
 
-**F-5. `assign_folder` が `metadata_json` を全上書き**
+**F-5. `assign_folder` が `metadata_json` を全上書き →【対応済み・2026-07-02】**
+- 対応: 既存 `metadata_json` を `json.loads` して dict であればマージ（`collection_id`/
+  `collection_name` のみ上書き、他キーは保持）。パース失敗時・非dict時は空dictから開始し
+  従来どおり2キーのみで上書き（挙動不変）＋ `logger.warning` を追加（E-4 と同じ「握りつぶして
+  続行」パターン）。
+- テスト: `tests/test_folder_ops.py::test_assign_folder_merges_existing_metadata`（他キー保持）、
+  `::test_assign_folder_overwrites_malformed_metadata`（不正JSONは従来どおり2キーで上書き）。
 - 根拠: `routers/documents.py:302-315` — 既存 metadata を読まずに collection キーのみで書き潰す。
   現状 metadata に他のキーは存在しないため実害なし（防御的修正）。
 - 改善案: 既存 JSON を `json.loads` してマージ（パース失敗時は現行どおり上書き）。
