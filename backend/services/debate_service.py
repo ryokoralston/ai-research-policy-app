@@ -164,8 +164,7 @@ async def run_debate(
         await queue.put(sse_event("complete", {"debate_id": debate_id, "event_type": "complete"}))
 
     except Exception as e:
-        import json
-        await queue.put(f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n")
+        await queue.put(sse_event("error", {"message": str(e)}))
         debate = db.query(Debate).filter(Debate.id == debate_id).first()
         if debate:
             debate.status = "error"

@@ -11,6 +11,7 @@ from typing import AsyncIterator
 import anthropic
 
 from config import get_settings
+from utils.sse import sse_event  # noqa: F401 — re-exported; moved to utils/sse.py (F-3)
 
 logger = logging.getLogger(__name__)
 
@@ -374,8 +375,3 @@ async def stream_chat_with_tools(
                     })
 
         msgs.append({"role": "user", "content": tool_results})
-
-
-def sse_event(event: str, data: dict) -> str:
-    """Format a Server-Sent Event string."""
-    return f"event: {event}\ndata: {json.dumps(data)}\n\n"

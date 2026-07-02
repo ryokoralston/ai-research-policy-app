@@ -58,7 +58,7 @@ export default function AnalysisPage() {
 
   useEffect(() => {
     api.analysis.list().then((data) => {
-      setAnalyses(data as RiskAnalysis[]);
+      setAnalyses(data);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
@@ -87,7 +87,7 @@ export default function AnalysisPage() {
             setGenerating(false);
             setCurrentSection("");
             setCompletedAnalysisId(d.analysis_id as string);
-            api.analysis.list().then((data) => setAnalyses(data as RiskAnalysis[]));
+            api.analysis.list().then((data) => setAnalyses(data));
           } else if (event === "error") {
             setError(d.message as string);
             setGenerating(false);

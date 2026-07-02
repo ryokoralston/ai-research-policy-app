@@ -398,7 +398,19 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 
 ### F. バックエンド（新規）
 
-**F-1. `index_document` と `index_web_content` の残存重複**
+**F-1. `index_document` と `index_web_content` の残存重複 →【対応済み・2026-07-02】**
+- 対応: `_embed_and_store(doc, chunks, db, *, page_count=None, word_count=None)` を新設し
+  （word_count もキーワード引数として追加 — 両呼び出し元とも doc.word_count を設定するため必要。
+  改善案の提案シグネチャに1引数追加した以外は提案どおり）、両関数から共通の「埋め込み→chunk_id
+  採番→DocumentChunk構築→vs.add_chunks（同一metadata dict）→bulk_save_objects→doc.status更新」を
+  そこに集約。例外処理は提案どおりヘルパーの外に残した: `index_document` は
+  空チャンク/例外時に `status="error"` + re-raise、`index_web_content` は空チャンクなら
+  `"indexed"`（0件, エラーにしない）・例外は握りつぶして `status="error"`。ヘルパー自身は
+  例外を一切キャッチしない。
+- テスト: 新設 `tests/test_index_document.py`（4テスト: txt アップロードの通常経路、空チャンクは
+  index_web_content と異なりエラーになること、embedding失敗時に re-raise されること
+  ＝index_web_content との挙動差の固定、doc不在/file_path無しの no-op）。既存
+  `tests/test_index_web_content.py` は無変更のまま green。
 - 根拠: `services/rag_service.py:16-92` と `:95-177`。「埋め込み生成 → chunk_id 採番 →
   `DocumentChunk` 構築 → `vs.add_chunks`（同一 metadata dict）→ `bulk_save_objects` →
   doc.status 更新」の約50行がほぼ同一（A-3 で `index_web_content` を新設した際に生まれた重複）。
@@ -412,14 +424,31 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 - 検証: 既存 `tests/test_index_web_content.py` が green のまま + upload 経路の同型テストを追加。
 - 実装可: **可**。
 
-**F-2. `list_documents` のチャンク数 N+1**
+**F-2. `list_documents` のチャンク数 N+1 →【対応済み・2026-07-02】**
+- 対応: `routers/documents.py:list_documents` を `func.count(DocumentChunk.id)` +
+  `group_by(DocumentChunk.document_id)` の一括クエリ + dict 引きに変更（`sqlalchemy.func` を import）。
+  レスポンス形状・キーは不変（`chunk_count` の既定値も従来どおり 0）。
+- テスト: `tests/test_folder_ops.py::test_list_documents_chunk_counts_batched` — 0件/複数件の
+  chunk_count が正しいこと、かつ `before_cursor_execute` フックでクエリ件数を数え、
+  ドキュメント数に関わらず**常に2クエリ**（documents 1 + 集計1）であることを固定（N+1 の回帰検知）。
 - 根拠: `routers/documents.py:276-288` — ドキュメント毎に `count()` クエリ（100文書=101クエリ）。
 - 改善案: `func.count` + `group_by(DocumentChunk.document_id)` の一括クエリで dict を作り引く。
   レスポンス形状は不変。
 - 検証: レスポンス JSON が変更前後で一致すること（既存テストスタイルで in-memory SQLite）。
 - 実装可: **可**（C-2 と同型の修正）。
 
-**F-3. `sse_event` の置き場所と生文字列エラーイベント**
+**F-3. `sse_event` の置き場所と生文字列エラーイベント →【対応済み・2026-07-02】**
+- 対応: `sse_event` を `utils/sse.py` に移動。`services/anthropic_client.py` は
+  `from utils.sse import sse_event`（re-export、既存の `from services.anthropic_client import
+  sse_event` 呼び出し元 — `rag_service.py`/`report_generator.py`/`risk_analyzer.py`/
+  `research_agent.py`/`debate_service.py`/`tests/test_sse.py` — は無変更で動作継続）。
+  手組みの生文字列エラーイベント4箇所（`routers/research.py:53,167`、`routers/debate.py:71,117`、
+  `services/debate_service.py:168`）を `sse_event("error", {...})` 呼び出しに置換。ペイロードの
+  キー・順序は完全維持（`debate.py:117` の `{"message":…, "event_type":"error"}` の2キー順序も含む）
+  — 置換前後で生成される文字列が byte-for-byte 一致することを手動 diff で確認済み。
+- テスト: `tests/test_sse.py` に `test_anthropic_client_reexport_is_same_function_object`
+  （`services.anthropic_client.sse_event is utils.sse.sse_event` を固定）を追加。既存の
+  フォーマット・終端判定テストは無変更のまま green。
 - 根拠: `sse_event` が `services/anthropic_client.py:379-381` にある（SSE 整形は Anthropic と無関係）。
   さらに `routers/research.py:53,167`・`routers/debate.py:71,117`・`services/debate_service.py:168` は
   `f"event: error\ndata: {json.dumps(...)}"` を手組みしており、ペイロードのばらつき
@@ -439,14 +468,39 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
   1文字でも変わるなら実装せず「提案のみ」として報告（§3-3 のプロンプト凍結が優先）。
 - 実装可: **条件付き可**（バイト同一を diff で証明できた場合のみ）。
 
-**F-5. `assign_folder` が `metadata_json` を全上書き**
+**F-5. `assign_folder` が `metadata_json` を全上書き →【対応済み・2026-07-02】**
+- 対応: 既存 `metadata_json` を `json.loads` して dict であればマージ（`collection_id`/
+  `collection_name` のみ上書き、他キーは保持）。パース失敗時・非dict時は空dictから開始し
+  従来どおり2キーのみで上書き（挙動不変）＋ `logger.warning` を追加（E-4 と同じ「握りつぶして
+  続行」パターン）。
+- テスト: `tests/test_folder_ops.py::test_assign_folder_merges_existing_metadata`（他キー保持）、
+  `::test_assign_folder_overwrites_malformed_metadata`（不正JSONは従来どおり2キーで上書き）。
 - 根拠: `routers/documents.py:302-315` — 既存 metadata を読まずに collection キーのみで書き潰す。
   現状 metadata に他のキーは存在しないため実害なし（防御的修正）。
 - 改善案: 既存 JSON を `json.loads` してマージ（パース失敗時は現行どおり上書き）。
 - 検証: 既存 `tests/test_folder_ops.py` に「他キー保持」テストを追加。
 - 実装可: **可**（低優先）。
 
-**F-6. ルーターに埋まった取込ヘルパー群（責務分離）**
+**F-6. ルーターに埋まった取込ヘルパー群（責務分離） →【対応済み・2026-07-02】**
+- 対応: `_ip_is_blocked`/`_resolve_public_ip`/`_assert_public_url`/`_safe_fetch_bytes`/
+  `_extract_youtube_id`/`_get_youtube_transcript`/`_scrape_url`（+`MAX_SCRAPE_BYTES`/
+  `MAX_REDIRECTS`）を `services/ingestion.py` へ移動。関数本体は移動前後で **byte-for-byte
+  一致**することを `diff` コマンドで確認済み（末尾に余分な空行が入っただけの抽出ミスを検出して
+  修正した上での確認 — 手順は最終報告に記載）。`routers/documents.py` は
+  `_extract_youtube_id`/`_get_youtube_transcript`/`_scrape_url` を import するだけになり、
+  移動に伴い使われなくなった import（`re`/`ipaddress`/`socket`/`urllib.parse.urlparse`/`asyncio`）
+  を削除（`_assert_public_url`/`_ip_is_blocked`/`_resolve_public_ip`/`MAX_SCRAPE_BYTES`/
+  `MAX_REDIRECTS` はルーター側では未使用になったため import せず、ingestion.py 内部でのみ使用）。
+- 発見（未修正）: `_assert_public_url` はどこからも呼ばれていない（`_resolve_public_ip` を
+  直接呼ぶ経路のみが使われている）。削除候補になり得るが§5の停止条件（削除の要不要が不明）に
+  該当するため、移動のみ行い削除はしていない — 人間の判断待ち。同様に `routers/documents.py` の
+  `from datetime import datetime` も本ファイルでは未使用（F-6以前からの既存の状態、今回の変更が
+  作ったものではないため触れていない）。
+- テスト: 新設 `tests/test_ingestion.py`（18テスト）— `_extract_youtube_id` の4URL形式+2否定ケース、
+  `_ip_is_blocked` のloopback/private/link-local(クラウドmetadata含む)/reserved/multicast/
+  unspecified/IPv6/公開IP、`_resolve_public_ip` のスキーム拒否・ホスト無し拒否・
+  loopbackホスト名拒否・metadata IPリテラル拒否。すべてオフライン（DNS解決を伴う
+  `localhost` テスト以外はネットワーク不要）。
 - 根拠: `routers/documents.py:34-183` — SSRF 防御付きフェッチ（`_resolve_public_ip`/`_safe_fetch_bytes`）、
   YouTube 抽出、スクレイピングの約150行がルーターに同居。セキュリティ境界のコードが
   エンドポイント定義と混在し、単体テストもない。
@@ -458,7 +512,40 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 
 ### G. フロントエンド（新規）
 
-**G-1. `library/page.tsx` の肥大化（902行・useState 約20個）**
+**G-1. `library/page.tsx` の肥大化（902行・useState 約20個） →【対応済み・2026-07-02】**
+- 対応: 提案どおり4コンポーネントに分割。
+  - `components/library/UploadPanel.tsx` — URL/YouTube取込 + ファイルドラッグ&ドロップ。
+    props: `onUploaded`（成功後に親の `loadDocs` を呼ぶ）。state はすべてローカル
+    （urlInput/ingesting/ingestError/dragging/uploading）。
+  - `components/library/FolderSection.tsx` — ローディング/空状態/Select Allバー/
+    フォルダ一覧（インライン名称変更含む）/スタンドアロン文書/Add-to-Folderモーダル。
+    props: `docs`/`setDocs`/`loading`/`selectedDocs`/`setSelectedDocs`/`loadDocs`。
+    `DocIcon`/`parseMeta`/`CollectionMeta`/`Collection`/collections計算/`statusVariant`は
+    このファイルに移動。
+  - `components/library/ChatPanel.tsx` — Q&Aチャット + システムプロンプト設定 +
+    ツール実行インジケータ + 入力欄。props: `selectedDocs`/`reminders`/
+    `onDeleteReminder`/`loadReminders`/`onClose`。`ChatMessage` 型・`handleAsk` は
+    このファイルへ。内部で `<RemindersPanel/>` を描画。
+  - `components/library/RemindersPanel.tsx` — リマインダー一覧。props: `reminders`/
+    `onDelete`。0件時は何も描画しない（元の `{reminders.length > 0 && (...)}` を
+    早期return化——描画結果は同一）。`Reminder` 型もここへ移動し親からimport。
+  - 親 `page.tsx` に残したのは指示どおり共有state（`docs`/`selectedDocs`）+
+    `loading`/`qaOpen`/`reminders`（リマインダーはページマウント時に読み込む既存タイミングを
+    保つため — チャットパネルにだけ持たせると初回オープン時まで読み込まれず挙動が変わってしまう）。
+  - 検証手順: 各コンポーネントのJSXを元ファイルの対応行と `diff`（インデント差・
+    `handleDeleteReminder`→`onDelete` 等の意図的な rename・外側の条件レンダリング除去を
+    のぞき完全一致）で確認。ロジック関数（toggle系・handleAssignFolder・startRename・
+    commitRename・statusVariant等）も同様に比較し一致を確認。
+  - 修正した実装ミス: 初稿で `handleDelete`/`handleDeleteCollection` を `loadDocs()`
+    （サーバー再取得）呼び出しに書き換えてしまっていたが、元実装は `setDocs` による
+    楽観的ローカル更新だった（挙動差 — 体感速度が変わる）。`setDocs` を `FolderSection` に
+    props として追加し、元のロジックに戻して修正した。
+  - 手動ブラウザ確認: 本サンドボックス環境では Chrome 拡張が未接続のため
+    クリック操作によるE2E確認は**未実行**。代わりに: バックエンド(`uvicorn`, ポート8123)+
+    フロントエンド(`next dev`, ポート3123)を一時起動し、`curl` で `/api/documents/`・
+    `/api/reminders/` が実データ（既存の本番相当DB）を返すこと、`/library` が200を返し
+    サーバーログ・レンダリングHTMLにエラーが無いことを確認。`AuthGuard` によるSSR時の
+    ローディング表示は本リファクタ以前からの既存挙動。
 - 根拠: `frontend/src/app/library/page.tsx` — アップロード / URL取込 / フォルダ管理 /
   Q&Aチャット / リマインダーの5責務が1コンポーネントに同居。
 - 改善案: 見た目・挙動を一切変えずにコンポーネント分割:
@@ -470,7 +557,19 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
   アップロード→チャット→リマインダーの手動確認（不可能なら未実行と報告）。
 - 実装可: **可**（機械的な抽出に徹する。JSX の構造・className を変えない）。
 
-**G-2. `api.ts` の `unknown` 戻り型**
+**G-2. `api.ts` の `unknown` 戻り型 →【対応済み・2026-07-02】**
+- 対応: `api.ts` に `lib/types.ts` の既存型（`ResearchSession`/`Document`/`Report`/`RiskAnalysis`）を
+  import し、`research`/`documents`/`reports`/`analysis` の `list`/`get`（+`reports.update`）の
+  `request<unknown[]>`/`request<unknown>` を該当の具体型に置換。呼び出し側
+  (`analysis/page.tsx`, `analysis/[analysisId]/page.tsx`, `library/page.tsx`, `reports/page.tsx`,
+  `reports/[reportId]/page.tsx`) の冗長になった `as RiskAnalysis[]`/`as Document[]`/`as Report[]`/
+  `as Report` キャストを削除（元々どれも `lib/types.ts` の正しい型にキャストしており、重複ローカル
+  interface は見つからなかった — 削除の必要なし）。`reports.update` の3呼び出し箇所は戻り値を
+  破棄しているため無変更。ランタイム挙動は不変（型のみ）。
+- 検証: `npx tsc --noEmit` / `npm run lint` / `npm run build` すべてクリーン。
+- 発見（未修正・対象外）: `reports/new/page.tsx` は `api.research.list()` を使わず生 `fetch` で
+  ローカルの縮小版 `ResearchSession` interface（`topic`/`summary`/`completed_at`/`results` を持たない）
+  を独自定義している。G-2 の対象は `api.ts` の戻り型のみのため今回は触れていない。
 - 根拠: `frontend/src/lib/api.ts:87-88,115-116,143-144,157-158` — `list`/`get` が
   `unknown[]`/`unknown` を返し、各ページが独自インターフェースでキャストしている。
 - 改善案: `lib/types.ts` の既存型（なければページ内定義をここへ昇格）を `request<T>` に指定。
@@ -478,7 +577,23 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 - 検証: `npx tsc --noEmit`（これが本項目の実質的なテスト）+ build。
 - 実装可: **可**。G-1/G-3 より**先**に実施すると分割作業が型に守られる。
 
-**G-3. `debate/page.tsx` のエクスポートヘルパー（約120行）**
+**G-3. `debate/page.tsx` のエクスポートヘルパー（約120行） →【対応済み・2026-07-02】**
+- 対応: `buildMarkdown`/`buildPlainText`/`downloadBlob`/`exportAsPdf` を
+  `frontend/src/lib/exportDebate.ts` へ移動。`Argument` 型もこのファイルへ移動し
+  （エクスポートヘルパーが消費する形の単一の情報源にする）、page.tsx はローカル定義を削除して
+  import する側に変更。`buildPlainText`/`exportAsPdf` は元々ページのモジュールスコープの
+  `PERSONA_MAP` を暗黙参照していたため、純粋関数として切り出すにあたり `personaMap` を
+  明示引数に追加（`PersonaMetaMap` 型を新設）— ページ側の2箇所の呼び出しに `PERSONA_MAP` を
+  渡すよう更新。それ以外のロジックは無変更。`buildMarkdown`/`downloadBlob`（シグネチャ変更なし）
+  は移動前後で関数本体が byte-for-byte 一致することを `diff` で確認済み。
+  DownloadMenu との統合はしていない（指示どおり）。
+- 発見（未修正・対象外）: `exportAsPdf` 内の `win.document.write(html)` は移動元から不変。
+  自動セキュリティレビューフックが `document.write` の一般的なXSS/パフォーマンス上の注意を
+  表示したが、これは本リファクタが持ち込んだものではなく既存ロジックであり、
+  「ロジックは一切変えない」という本項目の制約と矛盾するため今回は変更していない。
+  討論参加者名・本文（LLM生成）や自由入力のトピックが未エスケープでHTML文字列に
+  埋め込まれる点は、別イシューとして人間の判断を仰ぐことを推奨する。
+- 検証: `npx tsc --noEmit` / `npm run lint` / `npm run build` すべてクリーン。
 - 根拠: `frontend/src/app/debate/page.tsx:87-205` — `buildMarkdown`/`buildPlainText`/
   `downloadBlob`/`exportAsPdf` がページ内定義。`components/ui/DownloadMenu.tsx` と役割が近い。
 - 改善案: `lib/exportDebate.ts` へ移動（純関数なのでそのまま切り出せる）。
