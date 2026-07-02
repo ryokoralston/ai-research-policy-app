@@ -387,3 +387,112 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 - evals の変更・実行基盤の変更
 - CLAUDE.md / README.md の書き換え（ドリフトは報告のみ）
 - Fable 5 等への モデルID変更（現行 `claude-opus-4-6` / `claude-haiku-4-5-20251001` は有効なIDであり変更不要）
+
+---
+
+## 12. V2 Debt Map（2026-07-02 追加分析）
+
+第1ラウンド（§7、全実装可項目対応済み）のマージ後に行った再分析で見つかった追加項目。
+§3〜§5 の保護対象・制約・停止条件はすべて本セクションにも適用される。
+特に **プロンプト文言のバイト単位不変**（§3-3）と **SSE ワイヤーフォーマット不変**（§3-1）。
+
+### F. バックエンド（新規）
+
+**F-1. `index_document` と `index_web_content` の残存重複**
+- 根拠: `services/rag_service.py:16-92` と `:95-177`。「埋め込み生成 → chunk_id 採番 →
+  `DocumentChunk` 構築 → `vs.add_chunks`（同一 metadata dict）→ `bulk_save_objects` →
+  doc.status 更新」の約50行がほぼ同一（A-3 で `index_web_content` を新設した際に生まれた重複）。
+- なぜ: metadata スキーマ（`doc_id`/`page_number`/`section_header`/`chunk_index`）という
+  Chroma との契約が2箇所に散在。片方だけ直すと検索側（`vector_store.query`）と乖離する。
+- 影響: インデックス処理のみ。リスク: 低〜中。
+- 改善案: `_embed_and_store(doc, chunks, db, *, page_count=None)` を抽出して両者から呼ぶ。
+  **例外時の挙動差は維持する**: `index_document` は `status="error"` にして re-raise、
+  `index_web_content` は握りつぶして `status="error"`（バックグラウンドタスクのため）。
+  この差はヘルパーの外側（呼び出し側の try/except）に残すこと。
+- 検証: 既存 `tests/test_index_web_content.py` が green のまま + upload 経路の同型テストを追加。
+- 実装可: **可**。
+
+**F-2. `list_documents` のチャンク数 N+1**
+- 根拠: `routers/documents.py:276-288` — ドキュメント毎に `count()` クエリ（100文書=101クエリ）。
+- 改善案: `func.count` + `group_by(DocumentChunk.document_id)` の一括クエリで dict を作り引く。
+  レスポンス形状は不変。
+- 検証: レスポンス JSON が変更前後で一致すること（既存テストスタイルで in-memory SQLite）。
+- 実装可: **可**（C-2 と同型の修正）。
+
+**F-3. `sse_event` の置き場所と生文字列エラーイベント**
+- 根拠: `sse_event` が `services/anthropic_client.py:379-381` にある（SSE 整形は Anthropic と無関係）。
+  さらに `routers/research.py:53,167`・`routers/debate.py:71,117`・`services/debate_service.py:168` は
+  `f"event: error\ndata: {json.dumps(...)}"` を手組みしており、ペイロードのばらつき
+  （`event_type` 有無）もある。
+- なぜ: B-2 でイベント名ベースの終端判定に統一済みなので、整形も1箇所に寄せるのが自然。
+- 改善案: `sse_event` を `utils/sse.py` へ移動（`anthropic_client` からは re-export して
+  既存 import を壊さない、または全 import を書き換え）。手組み箇所を `sse_event("error", {...})` に
+  置換。**ペイロードのキーは現状のまま変えない**（`event_type` を勝手に足したり消したりしない）。
+- 検証: `tests/test_sse.py` に整形の同値テスト追加。終端判定（イベント名ベース）が引き続き機能すること。
+- 実装可: **可**。
+
+**F-4. `answer_question` の system プロンプト制約文の二重管理**
+- 根拠: `services/rag_service.py:258-286` — `default_system` と `custom_system` 分岐が
+  ほぼ同文の制約（search_documents 必須・引用形式・リマインダー手順）を別々に持つ。
+- なぜ: 片方だけ直すと挙動が分岐する（実際すでに微妙に文言が違う）。
+- 改善案: **結合後の文字列がバイト単位で不変になる場合のみ**共有定数へ抽出。
+  1文字でも変わるなら実装せず「提案のみ」として報告（§3-3 のプロンプト凍結が優先）。
+- 実装可: **条件付き可**（バイト同一を diff で証明できた場合のみ）。
+
+**F-5. `assign_folder` が `metadata_json` を全上書き**
+- 根拠: `routers/documents.py:302-315` — 既存 metadata を読まずに collection キーのみで書き潰す。
+  現状 metadata に他のキーは存在しないため実害なし（防御的修正）。
+- 改善案: 既存 JSON を `json.loads` してマージ（パース失敗時は現行どおり上書き）。
+- 検証: 既存 `tests/test_folder_ops.py` に「他キー保持」テストを追加。
+- 実装可: **可**（低優先）。
+
+**F-6. ルーターに埋まった取込ヘルパー群（責務分離）**
+- 根拠: `routers/documents.py:34-183` — SSRF 防御付きフェッチ（`_resolve_public_ip`/`_safe_fetch_bytes`）、
+  YouTube 抽出、スクレイピングの約150行がルーターに同居。セキュリティ境界のコードが
+  エンドポイント定義と混在し、単体テストもない。
+- 改善案: `services/ingestion.py`（または `utils/safe_fetch.py`）へ移動。**ロジックは一切変えない**
+  （SSRF 対策は監査済みコード — 挙動変更禁止）。移動後、純粋関数である
+  `_extract_youtube_id` と `_ip_is_blocked` にオフラインテストを追加。
+- 検証: 移動前後で関数本体の diff が空であること + 新規テスト green。
+- 実装可: **可**（移動とテスト追加のみ。文言・ロジック変更は不可）。
+
+### G. フロントエンド（新規）
+
+**G-1. `library/page.tsx` の肥大化（902行・useState 約20個）**
+- 根拠: `frontend/src/app/library/page.tsx` — アップロード / URL取込 / フォルダ管理 /
+  Q&Aチャット / リマインダーの5責務が1コンポーネントに同居。
+- 改善案: 見た目・挙動を一切変えずにコンポーネント分割:
+  `components/library/UploadPanel.tsx`（upload+ingest+drag）、`FolderSection.tsx`
+  （folders+rename modal）、`ChatPanel.tsx`（Q&A+system prompt+tool indicator）、
+  `RemindersPanel.tsx`。state は各パネルへ移せるものだけ移し、共有が必要な
+  `docs`/`selectedDocs` は親に残して props で渡す。
+- 検証: `npx tsc --noEmit && npm run lint && npm run build` + ブラウザで
+  アップロード→チャット→リマインダーの手動確認（不可能なら未実行と報告）。
+- 実装可: **可**（機械的な抽出に徹する。JSX の構造・className を変えない）。
+
+**G-2. `api.ts` の `unknown` 戻り型**
+- 根拠: `frontend/src/lib/api.ts:87-88,115-116,143-144,157-158` — `list`/`get` が
+  `unknown[]`/`unknown` を返し、各ページが独自インターフェースでキャストしている。
+- 改善案: `lib/types.ts` の既存型（なければページ内定義をここへ昇格）を `request<T>` に指定。
+  ページ側の重複ローカル型定義を削除して import に置換。**ランタイム挙動は不変**（型のみ）。
+- 検証: `npx tsc --noEmit`（これが本項目の実質的なテスト）+ build。
+- 実装可: **可**。G-1/G-3 より**先**に実施すると分割作業が型に守られる。
+
+**G-3. `debate/page.tsx` のエクスポートヘルパー（約120行）**
+- 根拠: `frontend/src/app/debate/page.tsx:87-205` — `buildMarkdown`/`buildPlainText`/
+  `downloadBlob`/`exportAsPdf` がページ内定義。`components/ui/DownloadMenu.tsx` と役割が近い。
+- 改善案: `lib/exportDebate.ts` へ移動（純関数なのでそのまま切り出せる）。
+  DownloadMenu との統合は**しない**（挙動差の検証コストに見合わない — 移動のみ）。
+- 実装可: **可**（低優先）。
+
+### V2 実施順序
+
+1. **G-2**（型付け — 以後の作業の安全網、変更はコンパイル時のみ）
+2. **F-2, F-3, F-5**（小さく安全なバックエンド整理）
+3. **F-1**（インデックス統合 — テスト既存）
+4. **F-6**（取込ヘルパーの移動 + 新規テスト）
+5. **G-1, G-3**（フロント分割 — 最後に。手動確認が必要なため）
+6. **F-4** はバイト同一を証明できた場合のみ、任意のタイミングで。
+
+各ステップ後に §9 の検証を実行してからコミットすること。
+Phase 5（承認待ち提案 C-3/C-4/E-1/E-3/E-5）の扱いは第1ラウンドから変更なし。
