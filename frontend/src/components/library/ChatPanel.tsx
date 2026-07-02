@@ -1,0 +1,275 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { X, Settings2, ChevronDown } from "lucide-react";
+import { api, postStream } from "@/lib/api";
+import LoadingSpinner from "@/components/ui/LoadingSpinner";
+import StreamingText from "@/components/ui/StreamingText";
+import RemindersPanel, { type Reminder } from "./RemindersPanel";
+
+interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+  streaming?: boolean;
+}
+
+interface ChatPanelProps {
+  /** Shared with the folder/document list (parent state) — scopes the Q&A to selected docs. */
+  selectedDocs: Set<string>;
+  reminders: Reminder[];
+  onDeleteReminder: (id: string) => void;
+  /** Refresh the reminders list — called after a set_reminder tool call completes. */
+  loadReminders: () => void;
+  onClose: () => void;
+}
+
+/**
+ * G-1: extracted from app/library/page.tsx — the "Ask Documents" chat
+ * sidebar (Q&A + system prompt configurator + tool-call indicator +
+ * reminders). JSX/className are unchanged from the original.
+ */
+export default function ChatPanel({
+  selectedDocs,
+  reminders,
+  onDeleteReminder,
+  loadReminders,
+  onClose,
+}: ChatPanelProps) {
+  const [question, setQuestion] = useState("");
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [qaRunning, setQaRunning] = useState(false);
+  const [toolStatus, setToolStatus] = useState<string | null>(null);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [showSystemPrompt, setShowSystemPrompt] = useState(false);
+
+  // Auto-scroll chat to bottom when new messages arrive
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages]);
+
+  const handleAsk = async () => {
+    if (!question.trim() || qaRunning) return;
+
+    const currentQuestion = question;
+    setQuestion(""); // clear input immediately for chat UX
+    setQaRunning(true);
+    setToolStatus(null);
+
+    // Build history for the API from completed (non-streaming) messages
+    // We send previous Q&A turns so Claude can reference them
+    const apiHistory = chatMessages
+      .filter((m) => !m.streaming)
+      .map((m) => ({ role: m.role, content: m.content }));
+
+    // Show user message immediately, then add empty assistant placeholder
+    setChatMessages((prev) => [
+      ...prev,
+      { role: "user", content: currentQuestion },
+      { role: "assistant", content: "", streaming: true },
+    ]);
+
+    try {
+      await postStream(
+        api.documents.askUrl(),
+        {
+          question: currentQuestion,
+          doc_ids: selectedDocs.size > 0 ? Array.from(selectedDocs) : null,
+          top_k: 5,
+          chat_history: apiHistory,
+          custom_system: systemPrompt.trim() || null,
+        },
+        (event, data) => {
+          const d = data as Record<string, unknown>;
+          if (event === "tool") {
+            const toolName = d.name as string;
+            const toolInput = d.input as Record<string, unknown> | undefined;
+            let label: string;
+            if (toolName === "search_documents") {
+              label = `Searching documents: ${d.query as string}…`;
+            } else if (toolName === "get_current_datetime") {
+              label = "Checking current date & time…";
+            } else if (toolName === "add_duration_to_datetime") {
+              label = "Calculating date…";
+            } else if (toolName === "set_reminder") {
+              label = `Setting reminder: ${toolInput?.content as string ?? ""}…`;
+            } else {
+              label = `Running ${toolName}…`;
+            }
+            setToolStatus(label);
+          } else if (event === "token") {
+            setToolStatus(null); // clear search indicator once tokens arrive
+            setChatMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.role === "assistant") {
+                next[next.length - 1] = { ...last, content: last.content + (d.text as string) };
+              }
+              return next;
+            });
+          } else if (event === "complete" || event === "error") {
+            setToolStatus(null);
+            setChatMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.role === "assistant") {
+                next[next.length - 1] = { ...last, streaming: false };
+              }
+              return next;
+            });
+            setQaRunning(false);
+            // Refresh reminders in case a set_reminder tool call was made
+            loadReminders();
+          }
+        }
+      );
+    } catch {
+      setToolStatus(null);
+      setChatMessages((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.role === "assistant") {
+          next[next.length - 1] = { ...last, content: last.content || "Error getting response.", streaming: false };
+        }
+        return next;
+      });
+      setQaRunning(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-y-0 right-0 w-[480px] bg-slate-900 border-l border-slate-800 flex flex-col z-50">
+      {/* Header */}
+      <div className="flex items-center justify-between p-4 border-b border-slate-800">
+        <h3 className="text-slate-100 font-semibold text-sm">Ask Documents</h3>
+        <div className="flex items-center gap-2">
+          {chatMessages.length > 0 && (
+            <button
+              onClick={() => setChatMessages([])}
+              className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1 rounded transition-colors"
+              title="Clear conversation"
+            >
+              Clear
+            </button>
+          )}
+          <button onClick={onClose} className="text-slate-500 hover:text-white">
+            <X size={18} />
+          </button>
+        </div>
+      </div>
+
+      {/* System prompt configurator */}
+      <div className="border-b border-slate-800">
+        <button
+          onClick={() => setShowSystemPrompt((v) => !v)}
+          className="w-full flex items-center gap-2 px-4 py-2 text-xs text-slate-500 hover:text-slate-300 transition-colors"
+        >
+          <Settings2 size={12} />
+          <span>System Prompt</span>
+          {systemPrompt && <span className="ml-auto text-blue-400">Custom</span>}
+          <ChevronDown size={12} className={`ml-auto transition-transform ${showSystemPrompt ? "rotate-180" : ""} ${systemPrompt ? "ml-0" : ""}`} />
+        </button>
+        {showSystemPrompt && (
+          <div className="px-4 pb-3">
+            <textarea
+              value={systemPrompt}
+              onChange={(e) => setSystemPrompt(e.target.value)}
+              placeholder={`Default: "You are a research assistant for an AI policy institute..."\n\nOverride with your own instructions, e.g.:\n"Explain everything as if I'm a non-expert."`}
+              rows={4}
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-blue-500 resize-none"
+            />
+            {systemPrompt && (
+              <button
+                onClick={() => setSystemPrompt("")}
+                className="mt-1 text-xs text-slate-500 hover:text-red-400 transition-colors"
+              >
+                Reset to default
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Scope indicator */}
+      {selectedDocs.size > 0 && (
+        <div className="px-4 py-2 bg-blue-900/20 border-b border-slate-800">
+          <p className="text-xs text-blue-400">
+            Searching {selectedDocs.size} selected document{selectedDocs.size > 1 ? "s" : ""}
+          </p>
+        </div>
+      )}
+
+      {/* Reminders panel */}
+      <RemindersPanel reminders={reminders} onDelete={onDeleteReminder} />
+
+      {/* Chat messages */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {chatMessages.length === 0 ? (
+          <p className="text-slate-500 text-sm">
+            Ask a question about your documents. You can ask follow-up questions too.
+          </p>
+        ) : (
+          chatMessages.map((msg, i) => (
+            <div
+              key={i}
+              className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
+                  msg.role === "user"
+                    ? "bg-blue-600 text-white rounded-br-sm"
+                    : "bg-slate-800 text-slate-100 rounded-bl-sm"
+                }`}
+              >
+                {msg.role === "assistant" ? (
+                  <>
+                    <StreamingText text={msg.content} />
+                    {msg.streaming && (
+                      <span className="inline-flex items-center gap-1 mt-1 text-slate-400">
+                        <LoadingSpinner size="sm" />
+                      </span>
+                    )}
+                  </>
+                ) : (
+                  <p>{msg.content}</p>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+        {toolStatus && (
+          <div className="flex justify-start">
+            <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-800/60 rounded-lg px-3 py-1.5">
+              <LoadingSpinner size="sm" />
+              {toolStatus}
+            </div>
+          </div>
+        )}
+        <div ref={chatEndRef} />
+      </div>
+
+      {/* Input */}
+      <div className="p-4 border-t border-slate-800">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={question}
+            onChange={(e) => setQuestion(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !qaRunning && handleAsk()}
+            placeholder={chatMessages.length > 0 ? "Ask a follow-up question..." : "Ask a question..."}
+            className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+            disabled={qaRunning}
+            autoFocus
+          />
+          <button
+            onClick={handleAsk}
+            disabled={qaRunning || !question.trim()}
+            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm transition-colors"
+          >
+            {qaRunning ? <LoadingSpinner size="sm" /> : "Ask"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

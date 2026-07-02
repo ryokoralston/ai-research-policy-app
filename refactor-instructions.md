@@ -512,7 +512,40 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 
 ### G. フロントエンド（新規）
 
-**G-1. `library/page.tsx` の肥大化（902行・useState 約20個）**
+**G-1. `library/page.tsx` の肥大化（902行・useState 約20個） →【対応済み・2026-07-02】**
+- 対応: 提案どおり4コンポーネントに分割。
+  - `components/library/UploadPanel.tsx` — URL/YouTube取込 + ファイルドラッグ&ドロップ。
+    props: `onUploaded`（成功後に親の `loadDocs` を呼ぶ）。state はすべてローカル
+    （urlInput/ingesting/ingestError/dragging/uploading）。
+  - `components/library/FolderSection.tsx` — ローディング/空状態/Select Allバー/
+    フォルダ一覧（インライン名称変更含む）/スタンドアロン文書/Add-to-Folderモーダル。
+    props: `docs`/`setDocs`/`loading`/`selectedDocs`/`setSelectedDocs`/`loadDocs`。
+    `DocIcon`/`parseMeta`/`CollectionMeta`/`Collection`/collections計算/`statusVariant`は
+    このファイルに移動。
+  - `components/library/ChatPanel.tsx` — Q&Aチャット + システムプロンプト設定 +
+    ツール実行インジケータ + 入力欄。props: `selectedDocs`/`reminders`/
+    `onDeleteReminder`/`loadReminders`/`onClose`。`ChatMessage` 型・`handleAsk` は
+    このファイルへ。内部で `<RemindersPanel/>` を描画。
+  - `components/library/RemindersPanel.tsx` — リマインダー一覧。props: `reminders`/
+    `onDelete`。0件時は何も描画しない（元の `{reminders.length > 0 && (...)}` を
+    早期return化——描画結果は同一）。`Reminder` 型もここへ移動し親からimport。
+  - 親 `page.tsx` に残したのは指示どおり共有state（`docs`/`selectedDocs`）+
+    `loading`/`qaOpen`/`reminders`（リマインダーはページマウント時に読み込む既存タイミングを
+    保つため — チャットパネルにだけ持たせると初回オープン時まで読み込まれず挙動が変わってしまう）。
+  - 検証手順: 各コンポーネントのJSXを元ファイルの対応行と `diff`（インデント差・
+    `handleDeleteReminder`→`onDelete` 等の意図的な rename・外側の条件レンダリング除去を
+    のぞき完全一致）で確認。ロジック関数（toggle系・handleAssignFolder・startRename・
+    commitRename・statusVariant等）も同様に比較し一致を確認。
+  - 修正した実装ミス: 初稿で `handleDelete`/`handleDeleteCollection` を `loadDocs()`
+    （サーバー再取得）呼び出しに書き換えてしまっていたが、元実装は `setDocs` による
+    楽観的ローカル更新だった（挙動差 — 体感速度が変わる）。`setDocs` を `FolderSection` に
+    props として追加し、元のロジックに戻して修正した。
+  - 手動ブラウザ確認: 本サンドボックス環境では Chrome 拡張が未接続のため
+    クリック操作によるE2E確認は**未実行**。代わりに: バックエンド(`uvicorn`, ポート8123)+
+    フロントエンド(`next dev`, ポート3123)を一時起動し、`curl` で `/api/documents/`・
+    `/api/reminders/` が実データ（既存の本番相当DB）を返すこと、`/library` が200を返し
+    サーバーログ・レンダリングHTMLにエラーが無いことを確認。`AuthGuard` によるSSR時の
+    ローディング表示は本リファクタ以前からの既存挙動。
 - 根拠: `frontend/src/app/library/page.tsx` — アップロード / URL取込 / フォルダ管理 /
   Q&Aチャット / リマインダーの5責務が1コンポーネントに同居。
 - 改善案: 見た目・挙動を一切変えずにコンポーネント分割:
