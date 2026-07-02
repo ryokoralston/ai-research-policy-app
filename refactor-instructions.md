@@ -481,7 +481,26 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
 - 検証: 既存 `tests/test_folder_ops.py` に「他キー保持」テストを追加。
 - 実装可: **可**（低優先）。
 
-**F-6. ルーターに埋まった取込ヘルパー群（責務分離）**
+**F-6. ルーターに埋まった取込ヘルパー群（責務分離） →【対応済み・2026-07-02】**
+- 対応: `_ip_is_blocked`/`_resolve_public_ip`/`_assert_public_url`/`_safe_fetch_bytes`/
+  `_extract_youtube_id`/`_get_youtube_transcript`/`_scrape_url`（+`MAX_SCRAPE_BYTES`/
+  `MAX_REDIRECTS`）を `services/ingestion.py` へ移動。関数本体は移動前後で **byte-for-byte
+  一致**することを `diff` コマンドで確認済み（末尾に余分な空行が入っただけの抽出ミスを検出して
+  修正した上での確認 — 手順は最終報告に記載）。`routers/documents.py` は
+  `_extract_youtube_id`/`_get_youtube_transcript`/`_scrape_url` を import するだけになり、
+  移動に伴い使われなくなった import（`re`/`ipaddress`/`socket`/`urllib.parse.urlparse`/`asyncio`）
+  を削除（`_assert_public_url`/`_ip_is_blocked`/`_resolve_public_ip`/`MAX_SCRAPE_BYTES`/
+  `MAX_REDIRECTS` はルーター側では未使用になったため import せず、ingestion.py 内部でのみ使用）。
+- 発見（未修正）: `_assert_public_url` はどこからも呼ばれていない（`_resolve_public_ip` を
+  直接呼ぶ経路のみが使われている）。削除候補になり得るが§5の停止条件（削除の要不要が不明）に
+  該当するため、移動のみ行い削除はしていない — 人間の判断待ち。同様に `routers/documents.py` の
+  `from datetime import datetime` も本ファイルでは未使用（F-6以前からの既存の状態、今回の変更が
+  作ったものではないため触れていない）。
+- テスト: 新設 `tests/test_ingestion.py`（18テスト）— `_extract_youtube_id` の4URL形式+2否定ケース、
+  `_ip_is_blocked` のloopback/private/link-local(クラウドmetadata含む)/reserved/multicast/
+  unspecified/IPv6/公開IP、`_resolve_public_ip` のスキーム拒否・ホスト無し拒否・
+  loopbackホスト名拒否・metadata IPリテラル拒否。すべてオフライン（DNS解決を伴う
+  `localhost` テスト以外はネットワーク不要）。
 - 根拠: `routers/documents.py:34-183` — SSRF 防御付きフェッチ（`_resolve_public_ip`/`_safe_fetch_bytes`）、
   YouTube 抽出、スクレイピングの約150行がルーターに同居。セキュリティ境界のコードが
   エンドポイント定義と混在し、単体テストもない。
