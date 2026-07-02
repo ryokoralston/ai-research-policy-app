@@ -1,3 +1,5 @@
+import type { ResearchSession, Document, Report, RiskAnalysis } from "./types";
+
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // ── Auth token ──────────────────────────────────────────────────────────────
@@ -84,8 +86,8 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ query, max_sources: maxSources }),
       }),
-    list: () => request<unknown[]>("/api/research/"),
-    get: (id: string) => request<unknown>(`/api/research/${id}`),
+    list: () => request<ResearchSession[]>("/api/research/"),
+    get: (id: string) => request<ResearchSession>(`/api/research/${id}`),
     delete: (id: string) =>
       request<{ deleted: string }>(`/api/research/${id}`, { method: "DELETE" }),
     startUrl: () => `${BASE_URL}/api/research/start`,
@@ -112,8 +114,8 @@ export const api = {
         { method: "POST", body: JSON.stringify({ url }) }
       ),
     list: (status?: string) =>
-      request<unknown[]>(`/api/documents/${status ? `?status=${status}` : ""}`),
-    get: (id: string) => request<unknown>(`/api/documents/${id}`),
+      request<Document[]>(`/api/documents/${status ? `?status=${status}` : ""}`),
+    get: (id: string) => request<Document>(`/api/documents/${id}`),
     delete: (id: string) =>
       request<{ deleted: string }>(`/api/documents/${id}`, { method: "DELETE" }),
     assignFolder: (doc_ids: string[], folder_id: string, folder_name: string) =>
@@ -140,10 +142,10 @@ export const api = {
         method: "POST",
         body: JSON.stringify(body),
       }),
-    list: () => request<unknown[]>("/api/reports/"),
-    get: (id: string) => request<unknown>(`/api/reports/${id}`),
+    list: () => request<Report[]>("/api/reports/"),
+    get: (id: string) => request<Report>(`/api/reports/${id}`),
     update: (id: string, patch: { title?: string; content?: string; status?: string }) =>
-      request<unknown>(`/api/reports/${id}`, {
+      request<Report>(`/api/reports/${id}`, {
         method: "PATCH",
         body: JSON.stringify(patch),
       }),
@@ -154,8 +156,8 @@ export const api = {
 
   analysis: {
     start: () => `${BASE_URL}/api/analysis/start`, // SSE URL
-    list: () => request<unknown[]>("/api/analysis/"),
-    get: (id: string) => request<unknown>(`/api/analysis/${id}`),
+    list: () => request<RiskAnalysis[]>("/api/analysis/"),
+    get: (id: string) => request<RiskAnalysis>(`/api/analysis/${id}`),
     exportUrl: (id: string) => `${BASE_URL}/api/analysis/${id}/export`,
     delete: (id: string) => request<{ deleted: string }>(`/api/analysis/${id}`, { method: "DELETE" }),
   },

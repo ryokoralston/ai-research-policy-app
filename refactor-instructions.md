@@ -470,7 +470,19 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
   アップロード→チャット→リマインダーの手動確認（不可能なら未実行と報告）。
 - 実装可: **可**（機械的な抽出に徹する。JSX の構造・className を変えない）。
 
-**G-2. `api.ts` の `unknown` 戻り型**
+**G-2. `api.ts` の `unknown` 戻り型 →【対応済み・2026-07-02】**
+- 対応: `api.ts` に `lib/types.ts` の既存型（`ResearchSession`/`Document`/`Report`/`RiskAnalysis`）を
+  import し、`research`/`documents`/`reports`/`analysis` の `list`/`get`（+`reports.update`）の
+  `request<unknown[]>`/`request<unknown>` を該当の具体型に置換。呼び出し側
+  (`analysis/page.tsx`, `analysis/[analysisId]/page.tsx`, `library/page.tsx`, `reports/page.tsx`,
+  `reports/[reportId]/page.tsx`) の冗長になった `as RiskAnalysis[]`/`as Document[]`/`as Report[]`/
+  `as Report` キャストを削除（元々どれも `lib/types.ts` の正しい型にキャストしており、重複ローカル
+  interface は見つからなかった — 削除の必要なし）。`reports.update` の3呼び出し箇所は戻り値を
+  破棄しているため無変更。ランタイム挙動は不変（型のみ）。
+- 検証: `npx tsc --noEmit` / `npm run lint` / `npm run build` すべてクリーン。
+- 発見（未修正・対象外）: `reports/new/page.tsx` は `api.research.list()` を使わず生 `fetch` で
+  ローカルの縮小版 `ResearchSession` interface（`topic`/`summary`/`completed_at`/`results` を持たない）
+  を独自定義している。G-2 の対象は `api.ts` の戻り型のみのため今回は触れていない。
 - 根拠: `frontend/src/lib/api.ts:87-88,115-116,143-144,157-158` — `list`/`get` が
   `unknown[]`/`unknown` を返し、各ページが独自インターフェースでキャストしている。
 - 改善案: `lib/types.ts` の既存型（なければページ内定義をここへ昇格）を `request<T>` に指定。

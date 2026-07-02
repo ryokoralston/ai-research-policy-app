@@ -100,7 +100,7 @@ export default function LibraryPage() {
 
   const loadDocs = useCallback(() => {
     api.documents.list().then((data) => {
-      setDocs(data as Document[]);
+      setDocs(data);
       setLoading(false);
     });
   }, []);
