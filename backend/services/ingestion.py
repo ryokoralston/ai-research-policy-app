@@ -63,11 +63,6 @@ def _resolve_public_ip(url: str) -> tuple[str, str]:
     return pinned, host
 
 
-def _assert_public_url(url: str) -> None:
-    """Raise ValueError if the URL is not http(s) or resolves to a non-public IP."""
-    _resolve_public_ip(url)
-
-
 async def _safe_fetch_bytes(url: str, headers: dict) -> bytes:
     """Fetch a URL with SSRF protection, redirect re-validation, and a size cap.
 
