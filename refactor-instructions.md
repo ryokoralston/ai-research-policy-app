@@ -496,6 +496,8 @@ cd ../frontend && npm install && npx tsc --noEmit && npm run lint && npm run bui
   該当するため、移動のみ行い削除はしていない — 人間の判断待ち。同様に `routers/documents.py` の
   `from datetime import datetime` も本ファイルでは未使用（F-6以前からの既存の状態、今回の変更が
   作ったものではないため触れていない）。
+  →【2026-07-07 対応済み】人間が削除を決定。grep で呼び出し元ゼロを再確認の上、
+  `_assert_public_url` を `services/ingestion.py` から削除（コミット de634e9）。
 - テスト: 新設 `tests/test_ingestion.py`（18テスト）— `_extract_youtube_id` の4URL形式+2否定ケース、
   `_ip_is_blocked` のloopback/private/link-local(クラウドmetadata含む)/reserved/multicast/
   unspecified/IPv6/公開IP、`_resolve_public_ip` のスキーム拒否・ホスト無し拒否・

@@ -134,10 +134,15 @@ E2E確認は未実行。代替として、バックエンド(uvicorn, port 8123)
   未実行 — 人間による実機確認を推奨。
 - `_assert_public_url`（`services/ingestion.py`）はどこからも呼ばれていない
   （F-6 で移動のみ、削除せず）。削除の要否は人間の判断を仰ぐ。
+  →【2026-07-07 対応済み】削除（コミット de634e9）。バックエンド全テスト
+  （18ファイル）と compileall で確認。
 - `exportAsPdf`（`lib/exportDebate.ts`）の `win.document.write(html)` は
   LLM生成テキスト・自由入力トピックを未エスケープでHTML文字列に埋め込む既存の
   パターン。今回のリファクタでは変更していないが、別途セキュリティ観点での
   レビューを推奨。
+  →【2026-07-07 対応済み】`escapeHtml()` ヘルパーを追加し、`exportAsPdf` 内の
+  全動的値（topic/roundName/personaName/title/initials/content/synthesis）に
+  適用（コミット aabe9d0）。tsc/lint/build 確認済み。
 - `routers/documents.py` の `from datetime import datetime` は F-6 以前から未使用
   （本セッションが作った状態ではない）。
 - PR はレビュー・マージ待ち。マージ後、次回作業はこのブランチを `main` から作り直すこと。
