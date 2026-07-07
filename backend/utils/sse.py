@@ -1,4 +1,5 @@
-"""Shared SSE queue-to-stream plumbing for the research and debate endpoints.
+"""Shared SSE formatting and queue-to-stream plumbing for the research and
+debate endpoints.
 
 Producers (background tasks) push fully-formatted SSE strings onto an
 asyncio.Queue; this generator relays them to the client, emitting heartbeats
@@ -11,9 +12,21 @@ an event_type field (those streams used to heartbeat forever).
 The wire format is unchanged.
 """
 import asyncio
+import json
 from typing import AsyncIterator
 
 HEARTBEAT_EVENT = "event: heartbeat\ndata: {}\n\n"
+
+
+def sse_event(event: str, data: dict) -> str:
+    """Format a Server-Sent Event string.
+
+    Moved here from services/anthropic_client.py (F-3): SSE wire formatting
+    has nothing to do with the Anthropic API client. Re-exported from
+    anthropic_client for existing `from services.anthropic_client import
+    sse_event` call sites — the wire format itself is unchanged.
+    """
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 _TERMINAL_EVENT_NAMES = {"complete", "error"}
 

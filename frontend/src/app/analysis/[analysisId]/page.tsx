@@ -94,7 +94,7 @@ export default function AnalysisDetailPage() {
 
   useEffect(() => {
     api.analysis.get(analysisId).then((data) => {
-      setAnalysis(data as RiskAnalysis);
+      setAnalysis(data);
       setLoading(false);
     });
   }, [analysisId]);

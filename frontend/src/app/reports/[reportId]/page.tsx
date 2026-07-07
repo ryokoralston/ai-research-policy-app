@@ -87,7 +87,7 @@ export default function ReportViewPage() {
 
   useEffect(() => {
     api.reports.get(reportId).then((data) => {
-      setReport(data as Report);
+      setReport(data);
       setLoading(false);
     });
   }, [reportId]);

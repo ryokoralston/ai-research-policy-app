@@ -28,7 +28,7 @@ export default function ReportsPage() {
 
   useEffect(() => {
     api.reports.list().then((data) => {
-      setReports(data as Report[]);
+      setReports(data);
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);

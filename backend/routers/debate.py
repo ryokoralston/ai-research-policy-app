@@ -11,7 +11,7 @@ from database import get_db
 from models.debate import Debate, DebateArgument
 from schemas.debate import DebateStartRequest, DebateResponse, DebateDetail
 from templates.personas import PERSONAS
-from utils.sse import queue_event_stream
+from utils.sse import queue_event_stream, sse_event
 
 router = APIRouter(prefix="/api/debate", tags=["debate"])
 
@@ -68,7 +68,7 @@ async def stream_debate(debate_id: str, db: Session = Depends(get_db)):
     async def event_generator():
         queue = _sse_queues.get(debate_id)
         if not queue:
-            yield "event: error\ndata: {\"message\": \"No active stream for this debate\"}\n\n"
+            yield sse_event("error", {"message": "No active stream for this debate"})
             return
         async for event in queue_event_stream(queue, timeout_seconds=120.0):
             yield event
@@ -113,7 +113,6 @@ async def _run_debate_task(debate_id: str, topic: str, persona_keys: list[str], 
     try:
         await run_debate(debate_id, topic, persona_keys, queue)
     except Exception as e:
-        import json as _json
-        await queue.put(f"event: error\ndata: {_json.dumps({'message': str(e), 'event_type': 'error'})}\n\n")
+        await queue.put(sse_event("error", {"message": str(e), "event_type": "error"}))
     finally:
         _sse_queues.pop(debate_id, None)
