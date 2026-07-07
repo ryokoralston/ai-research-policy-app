@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from models import RiskAnalysis, ResearchSession
 from schemas import AnalysisStartRequest
 from services.anthropic_client import generate_json, stream_text, sse_event, UNTRUSTED_CONTENT_GUARD
+from services.citation_verifier import verify_grounding
 from services.research_agent import run_research_agent
 from templates import TEMPLATES
 
@@ -140,15 +141,41 @@ async def run_risk_analysis(
     # Save completed analysis
     full_content = f"# Risk Assessment: {request.subject}\n\n" + "\n\n---\n\n".join(full_content_parts)
 
+    # Citation/grounding verification: one extra LLM-as-judge call checking whether
+    # full_content is actually supported by source_material. Skipped entirely if
+    # there's no source material to verify against; a failure degrades gracefully
+    # (logged, continue without it) rather than blocking the save/complete flow —
+    # same style as the scores-extraction failure handling above.
+    citation_confidence: dict | None = None
+    if source_material:
+        try:
+            citation_confidence = await verify_grounding(full_content, source_material)
+        except Exception:
+            logger.warning(
+                "Citation verification failed for %r — continuing without it",
+                request.subject,
+                exc_info=True,
+            )
+
     analysis = db.query(RiskAnalysis).filter(RiskAnalysis.id == analysis_id).first()
     if analysis:
         analysis.content = full_content
         analysis.risk_scores_json = json.dumps(extracted_scores) if extracted_scores else None
+        analysis.citation_confidence_json = (
+            json.dumps(citation_confidence) if citation_confidence else None
+        )
         db.commit()
+
+    if citation_confidence:
+        yield sse_event("verification", {
+            "confidence_score": citation_confidence.get("confidence_score"),
+            "unsupported_claims": citation_confidence.get("unsupported_claims", []),
+        })
 
     yield sse_event("complete", {
         "analysis_id": analysis_id,
         "scores": extracted_scores,
+        "citation_confidence": citation_confidence,
         "word_count": len(full_content.split()),
         "event_type": "complete",
     })

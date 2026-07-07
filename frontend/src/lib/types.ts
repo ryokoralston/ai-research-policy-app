@@ -47,6 +47,9 @@ export interface Report {
   updated_at: string;
   content?: string | null;
   sections?: ReportSection[];
+  // May contain a "citation_confidence" key (see backend services/citation_verifier.py)
+  // alongside any other keys already stored in this JSON blob.
+  metadata_json?: string | null;
 }
 
 export interface ReportSection {
@@ -64,6 +67,7 @@ export interface RiskAnalysis {
   analysis_type: string;
   content: string | null;
   risk_scores_json: string | null;
+  citation_confidence_json: string | null;
   sources_json: string | null;
   session_id: string | null;
   created_at: string;
@@ -72,4 +76,11 @@ export interface RiskAnalysis {
 export interface SSEEvent {
   event: string;
   data: Record<string, unknown>;
+}
+
+// Result of backend services/citation_verifier.py's verify_grounding() call.
+export interface CitationConfidence {
+  confidence_score?: number;
+  unsupported_claims?: string[];
+  notes?: string;
 }

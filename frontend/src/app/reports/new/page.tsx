@@ -4,9 +4,11 @@ import { useState, useRef, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronRight, Search, Users, FileQuestion, CheckCircle } from "lucide-react";
 import { api, postStream } from "@/lib/api";
+import type { CitationConfidence } from "@/lib/types";
 import { countWords, parseWordRange, wordCountColor } from "@/lib/wordCount";
 import StreamingText from "@/components/ui/StreamingText";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
+import CitationConfidenceCard from "@/components/ui/CitationConfidenceCard";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -90,6 +92,7 @@ function NewReportForm() {
   const [currentSection, setCurrentSection] = useState("");
   const [outputText, setOutputText]     = useState("");
   const [reportId, setReportId]         = useState<string | null>(null);
+  const [citationConfidence, setCitationConfidence] = useState<CitationConfidence | null>(null);
   const [error, setError]               = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -178,6 +181,7 @@ function NewReportForm() {
     setStep(3);
     setGenerating(true);
     setOutputText("");
+    setCitationConfidence(null);
     setError(null);
     abortRef.current = new AbortController();
 
@@ -200,6 +204,11 @@ function NewReportForm() {
             setCurrentSection(d.title as string);
           } else if (event === "token") {
             setOutputText((prev) => prev + (d.text as string));
+          } else if (event === "verification") {
+            setCitationConfidence({
+              confidence_score: d.confidence_score as number | undefined,
+              unsupported_claims: d.unsupported_claims as string[] | undefined,
+            });
           } else if (event === "complete") {
             setReportId(d.report_id as string);
             setGenerating(false);
@@ -598,6 +607,8 @@ function NewReportForm() {
                   </div>
                 )}
               </div>
+
+              {citationConfidence && <CitationConfidenceCard confidence={citationConfidence} />}
 
               {!generating && reportId && (
                 <div className="flex items-center gap-3">

@@ -37,6 +37,7 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     encrypt_legacy_secrets()
     normalize_legacy_report_status()
+    add_citation_confidence_columns()
     print("Database initialized.")
 
 
@@ -57,6 +58,27 @@ def normalize_legacy_report_status():
             )
         except Exception:
             pass  # table may not exist yet
+
+
+def add_citation_confidence_columns():
+    """Idempotent migration: add the citation_confidence column to risk_analyses.
+
+    Backs the citation/grounding-verification feature — stores the JSON result
+    of services.citation_verifier.verify_grounding() (confidence_score,
+    unsupported_claims, notes) alongside the existing risk_scores column.
+    Report.metadata_json already exists and needs no schema change; the
+    verification result for reports is merged into that existing JSON blob
+    instead (see report_generator.py's _merge_metadata_json helper).
+    """
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        try:
+            conn.execute(
+                text("ALTER TABLE risk_analyses ADD COLUMN citation_confidence TEXT")
+            )
+        except Exception:
+            pass  # column already exists, or table doesn't exist yet
 
 
 def encrypt_legacy_secrets():

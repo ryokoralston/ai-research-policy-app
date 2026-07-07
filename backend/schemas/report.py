@@ -39,6 +39,9 @@ class ReportResponse(BaseModel):
 class ReportDetail(ReportResponse):
     content: str | None
     sections: list[ReportSectionResponse] = []
+    # May contain a "citation_confidence" key (see services/citation_verifier.py)
+    # alongside any other keys already stored in this JSON blob.
+    metadata_json: str | None = None
 
 
 class ReportUpdateRequest(BaseModel):

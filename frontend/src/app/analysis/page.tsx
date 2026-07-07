@@ -4,10 +4,11 @@ import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Shield, Plus } from "lucide-react";
 import { api, postStream } from "@/lib/api";
-import type { RiskAnalysis } from "@/lib/types";
+import type { RiskAnalysis, CitationConfidence } from "@/lib/types";
 import Badge from "@/components/ui/Badge";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import StreamingText from "@/components/ui/StreamingText";
+import CitationConfidenceCard from "@/components/ui/CitationConfidenceCard";
 
 const ANALYSIS_TYPES = [
   { id: "technology", label: "Technology" },
@@ -52,6 +53,7 @@ export default function AnalysisPage() {
   const [currentSection, setCurrentSection] = useState("");
   const [outputText, setOutputText] = useState("");
   const [scores, setScores] = useState<Record<string, number> | null>(null);
+  const [citationConfidence, setCitationConfidence] = useState<CitationConfidence | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [completedAnalysisId, setCompletedAnalysisId] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -68,6 +70,7 @@ export default function AnalysisPage() {
     setGenerating(true);
     setOutputText("");
     setScores(null);
+    setCitationConfidence(null);
     setError(null);
     abortRef.current = new AbortController();
 
@@ -83,6 +86,11 @@ export default function AnalysisPage() {
             setOutputText((prev) => prev + (d.text as string));
           } else if (event === "scores") {
             setScores(d.scores as Record<string, number>);
+          } else if (event === "verification") {
+            setCitationConfidence({
+              confidence_score: d.confidence_score as number | undefined,
+              unsupported_claims: d.unsupported_claims as string[] | undefined,
+            });
           } else if (event === "complete") {
             setGenerating(false);
             setCurrentSection("");
@@ -196,6 +204,11 @@ export default function AnalysisPage() {
               <StreamingText text={outputText} />
             </div>
           </div>
+          {citationConfidence && (
+            <div className="mt-6">
+              <CitationConfidenceCard confidence={citationConfidence} />
+            </div>
+          )}
           {!generating && completedAnalysisId && (
             <div className="mt-4 flex items-center gap-3">
               <button

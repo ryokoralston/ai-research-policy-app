@@ -15,6 +15,7 @@ class RiskAnalysisResponse(BaseModel):
     analysis_type: str
     content: str | None
     risk_scores_json: str | None
+    citation_confidence_json: str | None
     sources_json: str | None
     session_id: str | None
     created_at: datetime

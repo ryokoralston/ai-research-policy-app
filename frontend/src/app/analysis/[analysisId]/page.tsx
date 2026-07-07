@@ -4,11 +4,12 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Trash2, File, FileText, Download, ChevronDown } from "lucide-react";
 import { api, downloadFile } from "@/lib/api";
-import type { RiskAnalysis } from "@/lib/types";
+import type { RiskAnalysis, CitationConfidence } from "@/lib/types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import Badge from "@/components/ui/Badge";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
+import CitationConfidenceCard from "@/components/ui/CitationConfidenceCard";
 
 const SCORE_LABELS: Record<string, string> = {
   capability: "Capability",
@@ -111,6 +112,9 @@ export default function AnalysisDetailPage() {
   const scores = analysis.risk_scores_json
     ? (JSON.parse(analysis.risk_scores_json) as Record<string, number>)
     : null;
+  const citationConfidence = analysis.citation_confidence_json
+    ? (JSON.parse(analysis.citation_confidence_json) as CitationConfidence)
+    : null;
 
   const TYPE_LABELS: Record<string, string> = {
     technology: "Technology",
@@ -164,6 +168,9 @@ export default function AnalysisDetailPage() {
           </div>
         </div>
       )}
+
+      {/* Citation confidence */}
+      <CitationConfidenceCard confidence={citationConfidence} />
 
       {/* Content */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-8">

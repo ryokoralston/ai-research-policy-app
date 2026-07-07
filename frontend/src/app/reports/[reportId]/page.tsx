@@ -4,13 +4,14 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Trash2, ArrowLeft, Pencil, X, Save, CheckCircle } from "lucide-react";
 import { api } from "@/lib/api";
-import type { Report } from "@/lib/types";
+import type { Report, CitationConfidence } from "@/lib/types";
 import { countWords, parseWordRange, wordCountColor } from "@/lib/wordCount";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import Badge from "@/components/ui/Badge";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import DownloadMenu from "@/components/ui/DownloadMenu";
+import CitationConfidenceCard from "@/components/ui/CitationConfidenceCard";
 
 const TYPE_LABELS: Record<string, string> = {
   congressional_brief: "Congressional Brief",
@@ -177,6 +178,16 @@ export default function ReportViewPage() {
 
   if (loading) return <div className="flex justify-center p-16"><LoadingSpinner /></div>;
   if (!report) return <div className="p-8 text-slate-400">Report not found.</div>;
+
+  let citationConfidence: CitationConfidence | null = null;
+  if (report.metadata_json) {
+    try {
+      const meta = JSON.parse(report.metadata_json) as { citation_confidence?: CitationConfidence };
+      citationConfidence = meta.citation_confidence ?? null;
+    } catch {
+      citationConfidence = null;
+    }
+  }
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
@@ -353,20 +364,23 @@ export default function ReportViewPage() {
         )
       ) : (
         /* View mode — rendered Markdown */
-        <div className="bg-slate-900 border border-slate-800 rounded-xl p-8">
-          {report.content ? (
-            <div className="prose prose-invert prose-sm max-w-none prose-a:text-blue-400 prose-hr:border-slate-700">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.content}</ReactMarkdown>
-            </div>
-          ) : (
-            <p className="text-slate-500 text-sm">
-              No content yet.{" "}
-              <button onClick={handleEditStart} className="text-blue-400 hover:underline">
-                Start editing →
-              </button>
-            </p>
-          )}
-        </div>
+        <>
+          <CitationConfidenceCard confidence={citationConfidence} />
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-8">
+            {report.content ? (
+              <div className="prose prose-invert prose-sm max-w-none prose-a:text-blue-400 prose-hr:border-slate-700">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.content}</ReactMarkdown>
+              </div>
+            ) : (
+              <p className="text-slate-500 text-sm">
+                No content yet.{" "}
+                <button onClick={handleEditStart} className="text-blue-400 hover:underline">
+                  Start editing →
+                </button>
+              </p>
+            )}
+          </div>
+        </>
       )}
     </div>
   );

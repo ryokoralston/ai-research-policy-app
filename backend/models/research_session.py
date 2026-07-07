@@ -55,6 +55,7 @@ class RiskAnalysis(Base):
     analysis_type: Mapped[str] = mapped_column(String, nullable=False)  # 'technology'|'policy'|'actor'
     content: Mapped[str | None] = mapped_column(Text)
     risk_scores_json: Mapped[str | None] = mapped_column("risk_scores", Text)  # JSON
+    citation_confidence_json: Mapped[str | None] = mapped_column("citation_confidence", Text)  # JSON
     sources_json: Mapped[str | None] = mapped_column("sources", Text)  # JSON array of URLs
     session_id: Mapped[str | None] = mapped_column(String, ForeignKey("research_sessions.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

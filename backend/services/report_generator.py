@@ -1,5 +1,6 @@
 """Section-by-section report generation with SSE streaming."""
 import json
+import logging
 import re
 import uuid
 from datetime import datetime
@@ -10,7 +11,10 @@ from sqlalchemy.orm import Session
 from models import Report, ReportSection, ResearchSession, Document, DocumentChunk, Debate, DebateArgument
 from schemas import ReportGenerateRequest
 from services.anthropic_client import stream_text, sse_event, UNTRUSTED_CONTENT_GUARD
+from services.citation_verifier import verify_grounding
 from templates import TEMPLATES
+
+logger = logging.getLogger(__name__)
 
 
 async def generate_report_stream(
@@ -103,18 +107,44 @@ async def generate_report_stream(
     full_content = f"# {request.title}\n\n" + "\n\n---\n\n".join(full_content_parts)
     word_count = len(full_content.split())
 
+    # Citation/grounding verification: one extra LLM-as-judge call checking whether
+    # full_content is actually supported by source_material. Skipped if there's no
+    # source material; a failure degrades gracefully (logged, continue without it)
+    # rather than blocking the save/complete flow.
+    citation_confidence: dict | None = None
+    if source_material:
+        try:
+            citation_confidence = await verify_grounding(full_content, source_material)
+        except Exception:
+            logger.warning(
+                "Citation verification failed for report %r — continuing without it",
+                report_id,
+                exc_info=True,
+            )
+
     report = db.query(Report).filter(Report.id == report_id).first()
     if report:
         report.content = full_content
         report.status = "completed"
         report.word_count = word_count
         report.updated_at = datetime.utcnow()
+        if citation_confidence:
+            report.metadata_json = _merge_metadata_json(
+                report.metadata_json, {"citation_confidence": citation_confidence}
+            )
         db.commit()
+
+    if citation_confidence:
+        yield sse_event("verification", {
+            "confidence_score": citation_confidence.get("confidence_score"),
+            "unsupported_claims": citation_confidence.get("unsupported_claims", []),
+        })
 
     yield sse_event("complete", {
         "report_id": report_id,
         "word_count": word_count,
         "sections": len(all_sections),
+        "citation_confidence": citation_confidence,
         "event_type": "complete",
     })
 
@@ -158,18 +188,43 @@ async def _generate_single_pass(
     full_content = f"# {request.title}\n\n{full_content_raw}"
     word_count = len(full_content.split())
 
+    # Citation/grounding verification — same integration point as the section-by-
+    # section path above (this function duplicates that path's save/complete
+    # logic already; not deduplicating further here per scope).
+    citation_confidence: dict | None = None
+    if source_material:
+        try:
+            citation_confidence = await verify_grounding(full_content, source_material)
+        except Exception:
+            logger.warning(
+                "Citation verification failed for report %r — continuing without it",
+                report_id,
+                exc_info=True,
+            )
+
     report = db.query(Report).filter(Report.id == report_id).first()
     if report:
         report.content = full_content
         report.status = "completed"
         report.word_count = word_count
         report.updated_at = datetime.utcnow()
+        if citation_confidence:
+            report.metadata_json = _merge_metadata_json(
+                report.metadata_json, {"citation_confidence": citation_confidence}
+            )
         db.commit()
+
+    if citation_confidence:
+        yield sse_event("verification", {
+            "confidence_score": citation_confidence.get("confidence_score"),
+            "unsupported_claims": citation_confidence.get("unsupported_claims", []),
+        })
 
     yield sse_event("complete", {
         "report_id": report_id,
         "word_count": word_count,
         "sections": 1,
+        "citation_confidence": citation_confidence,
         "event_type": "complete",
     })
 
@@ -229,6 +284,31 @@ async def _gather_source_material(request: ReportGenerateRequest, db: Session) -
                 parts.append(f"## Document: {doc.title or doc.filename}\n{doc_content[:3000]}")
 
     return "\n\n---\n\n".join(parts)
+
+
+def _merge_metadata_json(existing_json: str | None, updates: dict) -> str:
+    """Merge `updates` into the existing Report.metadata_json blob without clobbering
+    other keys that may already be stored there.
+
+    Mirrors the merge-not-overwrite pattern already established in this codebase for
+    Document.metadata_json in routers/documents.py's assign_folder (F-5): parse the
+    existing blob, merge in the new keys, re-serialize. If the existing value is
+    malformed JSON, fall back to overwriting the whole blob with just `updates`,
+    logged as a warning — same fallback precedent as F-5.
+    """
+    meta: dict = {}
+    if existing_json:
+        try:
+            parsed = json.loads(existing_json)
+            if isinstance(parsed, dict):
+                meta = parsed
+        except Exception:
+            logger.warning(
+                "Overwriting malformed Report.metadata_json while saving citation_confidence",
+                exc_info=True,
+            )
+    meta.update(updates)
+    return json.dumps(meta)
 
 
 def _strip_scores_json_lines(content: str) -> str:
