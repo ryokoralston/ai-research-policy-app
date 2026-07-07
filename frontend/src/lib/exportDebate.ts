@@ -77,6 +77,21 @@ export function buildPlainText(
   return lines.join("\n");
 }
 
+/**
+ * Escapes HTML-significant characters. exportAsPdf interpolates
+ * LLM-generated and persona/topic strings directly into an HTML document
+ * (via document.write), so every dynamic value must be escaped to avoid
+ * markup injection / broken structure from stray `<`, `>`, `&`, or `"`.
+ */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export function downloadBlob(content: string, filename: string, mimeType: string) {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
@@ -97,17 +112,17 @@ export function exportAsPdf(
   const ROUND_COLORS: Record<number, string> = { 1: "#4f46e5", 2: "#0891b2", 3: "#b45309", 4: "#15803d" };
 
   let bodyHtml = `<h1 style="font-size:1.4em;color:#1e293b;margin-bottom:0.2em">AI Policy Debate</h1>
-<p style="color:#64748b;font-size:0.95em;margin-top:0">${topic}</p>${sep}`;
+<p style="color:#64748b;font-size:0.95em;margin-top:0">${escapeHtml(topic)}</p>${sep}`;
 
   let lastRound = 0;
   for (const arg of args) {
     const meta = personaMap[arg.personaKey];
     if (arg.roundNumber !== lastRound) {
       const color = ROUND_COLORS[arg.roundNumber] ?? "#374151";
-      bodyHtml += `<h2 style="font-size:1em;color:${color};text-transform:uppercase;letter-spacing:0.05em;margin:1.5em 0 0.75em">Round ${arg.roundNumber}: ${arg.roundName}</h2>`;
+      bodyHtml += `<h2 style="font-size:1em;color:${color};text-transform:uppercase;letter-spacing:0.05em;margin:1.5em 0 0.75em">Round ${arg.roundNumber}: ${escapeHtml(arg.roundName)}</h2>`;
       lastRound = arg.roundNumber;
     }
-    const initials = meta?.initials ?? "??";
+    const initials = escapeHtml(meta?.initials ?? "??");
     const color = meta?.color?.replace("bg-", "") ?? "slate-600";
     const HEX: Record<string, string> = {
       "violet-600": "#7c3aed", "blue-600": "#2563eb", "slate-600": "#475569",
@@ -121,11 +136,11 @@ export function exportAsPdf(
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:0.5em">
     <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;background:${bgHex};color:#fff;font-size:11px;font-weight:700;flex-shrink:0">${initials}</span>
     <div>
-      <strong style="font-size:0.9em;color:#1e293b">${arg.personaName}</strong>
-      <span style="color:#94a3b8;font-size:0.8em;margin-left:6px">${meta?.title ?? ""}</span>
+      <strong style="font-size:0.9em;color:#1e293b">${escapeHtml(arg.personaName)}</strong>
+      <span style="color:#94a3b8;font-size:0.8em;margin-left:6px">${escapeHtml(meta?.title ?? "")}</span>
     </div>
   </div>
-  <p style="margin:0;font-size:0.88em;color:#334155;line-height:1.65;white-space:pre-wrap">${arg.content}</p>
+  <p style="margin:0;font-size:0.88em;color:#334155;line-height:1.65;white-space:pre-wrap">${escapeHtml(arg.content)}</p>
 </div>`;
   }
 
@@ -137,12 +152,12 @@ export function exportAsPdf(
     <span style="display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;background:#059669;color:#fff;font-size:11px;font-weight:700">M</span>
     <strong style="font-size:0.9em;color:#1e293b">Moderator</strong>
   </div>
-  <p style="margin:0;font-size:0.88em;color:#334155;line-height:1.65;white-space:pre-wrap">${synthesis}</p>
+  <p style="margin:0;font-size:0.88em;color:#334155;line-height:1.65;white-space:pre-wrap">${escapeHtml(synthesis)}</p>
 </div>`;
   }
 
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8">
-<title>Debate: ${topic}</title>
+<title>Debate: ${escapeHtml(topic)}</title>
 <style>
   body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:760px;margin:2em auto;padding:0 1.5em;color:#1e293b;font-size:14px}
   @media print{body{margin:0;padding:1cm}}
