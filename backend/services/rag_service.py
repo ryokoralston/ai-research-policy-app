@@ -205,7 +205,12 @@ async def answer_question(
     from rag.retriever import Retriever
 
     retriever = Retriever()
-    collected_chunks: list = []  # accumulates all chunks retrieved across tool calls
+    # Sentence-level numbered citations: chunk_id -> 1-based index, assigned in
+    # first-seen order across (possibly multiple) tool calls in this turn.
+    # ordered_citations is built incrementally and is therefore already
+    # deduplicated by construction — no separate dedup pass needed at the end.
+    citation_index: dict[str, int] = {}
+    ordered_citations: list[dict] = []
 
     async def execute_tool(name: str, tool_input: dict) -> str:
         """Run a tool call requested by Claude and return the result as a string."""
@@ -219,8 +224,6 @@ async def answer_question(
             chunks = retriever.retrieve(query, top_k=top_k, doc_ids=doc_ids)
             if not chunks:
                 return "No relevant content found in the document library for this query."
-            # Collect chunks for citations (deduplicated by chunk_id later)
-            collected_chunks.extend(chunks)
             # Fetch all referenced documents in one query (was one query per chunk)
             doc_titles = {
                 d.id: (d.title or d.filename)
@@ -228,12 +231,24 @@ async def answer_question(
                     Document.id.in_({c.doc_id for c in chunks})
                 )
             }
-            # Format exactly like the pre-tool context_parts approach
+            # Format exactly like the pre-tool context_parts approach, prefixed
+            # with the citation number Claude should cite inline as [N].
             context_parts = []
             for chunk in chunks:
                 doc_title = doc_titles.get(chunk.doc_id, "Unknown")
+                if chunk.chunk_id not in citation_index:
+                    citation_index[chunk.chunk_id] = len(citation_index) + 1
+                    ordered_citations.append({
+                        "index": citation_index[chunk.chunk_id],
+                        "doc_id": chunk.doc_id,
+                        "chunk_id": chunk.chunk_id,
+                        "page": chunk.page_number,
+                        "title": doc_title,
+                        "snippet": chunk.content[:200],
+                    })
                 context_parts.append(
-                    f"[{doc_title}, p.{chunk.page_number}, sec: {chunk.section_header}]\n{chunk.content}"
+                    f"[{citation_index[chunk.chunk_id]}] [{doc_title}, p.{chunk.page_number}, "
+                    f"sec: {chunk.section_header}]\n{chunk.content}"
                 )
             context = "\n\n---\n\n".join(context_parts)
             return f"<source_documents>\n{context}\n</source_documents>"
@@ -245,7 +260,10 @@ async def answer_question(
         "Answer questions based only on material returned by the search_documents tool. "
         "Before answering any substantive question, call search_documents with a relevant query. "
         "Be concise and direct — aim for 3–5 sentences unless the question requires more detail. "
-        "Cite sources using [Doc Title] format. "
+        "Cite sources using the bracketed number shown before each source in the search results "
+        "(e.g. [1]). Place the citation number immediately after the specific sentence or claim it "
+        "supports — do not just cite once at the end. If a claim draws on multiple sources, cite "
+        "each one, e.g. [1][3]. "
         "If the tool returns no relevant content, say so explicitly. "
         "You have access to the conversation history — use it to answer follow-up questions naturally. "
         "You can also set reminders for the user. "
@@ -257,7 +275,10 @@ async def answer_question(
         f"{custom_system}\n\n"
         "Additional constraints: Answer based only on material returned by the search_documents tool. "
         "Call the tool before answering substantive questions. "
-        "Cite sources using [Doc Title] format. "
+        "Cite sources using the bracketed number shown before each source in the search results "
+        "(e.g. [1]). Place the citation number immediately after the specific sentence or claim it "
+        "supports — do not just cite once at the end. If a claim draws on multiple sources, cite "
+        "each one, e.g. [1][3]. "
         "If the tool returns no relevant content, say so explicitly. "
         "You can also set reminders for the user. "
         "For any relative date or time ('next Thursday', 'in two weeks', 'a week from Friday'), "
@@ -296,16 +317,6 @@ async def answer_question(
             full_text += payload
             yield sse_event("token", {"text": payload})
 
-    # Deduplicate collected_chunks by chunk_id, preserving encounter order
-    seen_ids: set[str] = set()
-    deduped_chunks = []
-    for chunk in collected_chunks:
-        if chunk.chunk_id not in seen_ids:
-            seen_ids.add(chunk.chunk_id)
-            deduped_chunks.append(chunk)
-
-    citations = [
-        {"doc_id": c.doc_id, "chunk_id": c.chunk_id, "page": c.page_number}
-        for c in deduped_chunks
-    ]
-    yield sse_event("complete", {"citations": citations, "word_count": len(full_text.split())})
+    # ordered_citations is already deduplicated by chunk_id and in first-seen
+    # (index) order — built incrementally inside execute_tool above.
+    yield sse_event("complete", {"citations": ordered_citations, "word_count": len(full_text.split())})

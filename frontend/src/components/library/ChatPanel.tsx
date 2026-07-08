@@ -6,11 +6,13 @@ import { api, postStream } from "@/lib/api";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import StreamingText from "@/components/ui/StreamingText";
 import RemindersPanel, { type Reminder } from "./RemindersPanel";
+import type { Citation } from "@/lib/types";
 
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   streaming?: boolean;
+  citations?: Citation[];
 }
 
 interface ChatPanelProps {
@@ -113,7 +115,11 @@ export default function ChatPanel({
               const next = [...prev];
               const last = next[next.length - 1];
               if (last?.role === "assistant") {
-                next[next.length - 1] = { ...last, streaming: false };
+                next[next.length - 1] = {
+                  ...last,
+                  streaming: false,
+                  citations: (d.citations as Citation[] | undefined) ?? last.citations,
+                };
               }
               return next;
             });
@@ -223,7 +229,7 @@ export default function ChatPanel({
               >
                 {msg.role === "assistant" ? (
                   <>
-                    <StreamingText text={msg.content} />
+                    <StreamingText text={msg.content} citations={msg.citations} />
                     {msg.streaming && (
                       <span className="inline-flex items-center gap-1 mt-1 text-slate-400">
                         <LoadingSpinner size="sm" />

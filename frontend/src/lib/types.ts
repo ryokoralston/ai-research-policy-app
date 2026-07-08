@@ -84,3 +84,15 @@ export interface CitationConfidence {
   unsupported_claims?: string[];
   notes?: string;
 }
+
+// Sentence-level numbered citation emitted by the Ask Documents RAG chat
+// (backend services/rag_service.py answer_question's "complete" SSE event).
+// `index` is the 1-based number Claude cites inline as [N] in the answer text.
+export interface Citation {
+  index: number;
+  doc_id: string;
+  chunk_id: string;
+  page: number;
+  title: string;
+  snippet: string;
+}

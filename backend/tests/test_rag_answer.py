@@ -42,8 +42,11 @@ def _chunk(chunk_id, doc_id, content, page=3, section="Findings"):
     )
 
 
-def _run_answer(chunks):
-    """Run answer_question with fakes; return (events, captured tool result)."""
+def _run_answer_multi(chunk_batches: list[list]):
+    """Run answer_question with fakes, calling tool_executor once per batch in
+    chunk_batches (simulates a follow-up search within the same turn).
+    Return (events, list of captured tool results, in call order).
+    """
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
@@ -56,16 +59,22 @@ def _run_answer(chunks):
     db.commit()
 
     class FakeRetriever:
-        def retrieve(self, query, top_k=5, doc_ids=None):
-            return chunks
+        def __init__(self):
+            self._calls = 0
 
-    captured: dict = {}
+        def retrieve(self, query, top_k=5, doc_ids=None):
+            batch = chunk_batches[self._calls]
+            self._calls += 1
+            return batch
+
+    captured: dict = {"tool_results": []}
 
     async def fake_stream_chat_with_tools(messages, system="", tools=None,
                                           tool_executor=None, **kwargs):
-        result = await tool_executor("search_documents", {"query": "test"})
-        captured["tool_result"] = result
-        yield ("tool_use", {"name": "search_documents", "input": {"query": "test"}})
+        for _ in chunk_batches:
+            result = await tool_executor("search_documents", {"query": "test"})
+            captured["tool_results"].append(result)
+            yield ("tool_use", {"name": "search_documents", "input": {"query": "test"}})
         yield ("text", "The answer.")
 
     orig_retriever = retriever_module.Retriever
@@ -81,7 +90,13 @@ def _run_answer(chunks):
         rag_service.stream_chat_with_tools = orig_stream
         db.close()
 
-    return events, captured.get("tool_result", "")
+    return events, captured["tool_results"]
+
+
+def _run_answer(chunks):
+    """Single-batch convenience wrapper around _run_answer_multi."""
+    events, tool_results = _run_answer_multi([chunks])
+    return events, tool_results[0] if tool_results else ""
 
 
 def test_context_format_with_batched_titles():
@@ -93,10 +108,11 @@ def test_context_format_with_batched_titles():
     events, tool_result = _run_answer(chunks)
 
     assert "<source_documents>" in tool_result
-    # Title, filename fallback, and Unknown fallback — exact legacy format
-    assert "[EU AI Act Analysis, p.3, sec: Findings]\nFirst passage." in tool_result
-    assert "[notes.txt, p.1, sec: Intro]\nSecond passage." in tool_result
-    assert "[Unknown, p.3, sec: Findings]\nOrphan passage." in tool_result
+    # Numbered (1-based, first-seen order), then title, filename fallback,
+    # and Unknown fallback — exact new format
+    assert "[1] [EU AI Act Analysis, p.3, sec: Findings]\nFirst passage." in tool_result
+    assert "[2] [notes.txt, p.1, sec: Intro]\nSecond passage." in tool_result
+    assert "[3] [Unknown, p.3, sec: Findings]\nOrphan passage." in tool_result
 
 
 def test_citations_deduped_by_chunk_id():
@@ -111,6 +127,39 @@ def test_citations_deduped_by_chunk_id():
     payload = json.loads(complete.split("data: ", 1)[1].strip())
     cited_ids = [c["chunk_id"] for c in payload["citations"]]
     assert cited_ids == ["c1", "c2"], cited_ids
+    assert payload["citations"][0]["index"] == 1
+    assert payload["citations"][1]["index"] == 2
+
+
+def test_citation_index_stable_across_followup_search():
+    """A follow-up search within the same turn that re-retrieves an overlapping
+    chunk_id must reuse its original index (no renumbering) and must not
+    duplicate the citations list entry."""
+    batch1 = [
+        _chunk("c1", "doc-titled", "P1"),
+        _chunk("c2", "doc-untitled", "P2", page=1, section="Intro"),
+    ]
+    batch2 = [
+        _chunk("c2", "doc-untitled", "P2", page=1, section="Intro"),  # already seen -> index 2
+        _chunk("c3", "doc-titled", "P3"),  # new -> index 3
+    ]
+    events, tool_results = _run_answer_multi([batch1, batch2])
+
+    # First call assigns c1->1, c2->2
+    assert "[1] [EU AI Act Analysis, p.3, sec: Findings]\nP1" in tool_results[0]
+    assert "[2] [notes.txt, p.1, sec: Intro]\nP2" in tool_results[0]
+
+    # Second call: c2 keeps index 2 (not renumbered to 3), c3 gets the next free index 3
+    assert "[2] [notes.txt, p.1, sec: Intro]\nP2" in tool_results[1]
+    assert "[3] [EU AI Act Analysis, p.3, sec: Findings]\nP3" in tool_results[1]
+
+    complete = [e for e in events if e.startswith("event: complete")][0]
+    payload = json.loads(complete.split("data: ", 1)[1].strip())
+    citations = payload["citations"]
+    # Exactly 3 unique citations, not 4 — c2 must not be duplicated
+    assert len(citations) == 3, citations
+    by_id = {c["chunk_id"]: c["index"] for c in citations}
+    assert by_id == {"c1": 1, "c2": 2, "c3": 3}, by_id
 
 
 def test_no_results_message():
@@ -139,6 +188,7 @@ if __name__ == "__main__":
 
     _run("context format with batched titles", test_context_format_with_batched_titles)
     _run("citations deduped by chunk_id", test_citations_deduped_by_chunk_id)
+    _run("citation index stable across follow-up search", test_citation_index_stable_across_followup_search)
     _run("no-results message", test_no_results_message)
 
     total = len(_PASSED) + len(_FAILED)
