@@ -342,7 +342,10 @@ async def stream_chat_with_tools(
     Each iteration: stream Claude's response, collect the final message, echo the
     assistant turn (with tool_use blocks) back as history, run each requested tool via
     tool_executor (parallel tool_use blocks within a round are executed concurrently),
-    append tool_result blocks, then continue.
+    append tool_result blocks, then continue. If max_tool_iterations is reached while
+    Claude still wants to call a tool, one final request is made with
+    tool_choice={"type": "none"} to force a text answer from the tool results gathered
+    so far, so the turn always ends with an answer instead of silently stopping.
 
     If tools is falsy or the model is OpenAI, falls back to stream_chat and yields
     ("text", token) for each token, followed by a single-message ("turn_messages", ...)
@@ -440,16 +443,46 @@ async def stream_chat_with_tools(
         msgs.append(tool_results_msg)
         turn_messages.append(tool_results_msg)
 
-    # Append the final text answer as a block-level message — but only if the loop
-    # ended normally (stop_reason != "tool_use"). If iterations were exhausted while
-    # stop_reason is still "tool_use", `final` ends with unanswered tool_use blocks
-    # that must NOT be replayed without matching tool_results; in that case
-    # turn_messages already ends safely on the last tool_result message appended above.
-    if final.stop_reason != "tool_use":
-        final_blocks = serialize_content_blocks(final.content)
-        # Guard against empty content (e.g. whitespace-only answer) — the API
-        # rejects assistant messages with an empty content list on replay.
-        if final_blocks:
-            turn_messages.append({"role": "assistant", "content": final_blocks})
+    # If max_tool_iterations was exhausted while Claude still wants to call a tool,
+    # the loop above `break`s only on a non-"tool_use" stop_reason, so `final` can
+    # still be a tool_use response here. `msgs` ends with the last round's
+    # tool_results user message, so make one more request with tool_choice="none" —
+    # Claude cannot emit tool_use in that mode and must answer from the tool results
+    # already gathered — so the turn never ends without a text answer for the user.
+    if final.stop_reason == "tool_use":
+        # Tell Claude why no more tools are coming — without this it tends to narrate
+        # its next intended tool call ("Now I'll look up…") instead of answering.
+        # The nudge is passed only to this request, not stored in msgs/turn_messages,
+        # so replayed history stays clean.
+        forced_msgs = msgs + [{
+            "role": "user",
+            "content": (
+                "You have reached the tool-call limit for this turn. Do not request "
+                "more tools. Give your best final answer now using only the "
+                "information already gathered, and note anything you could not verify."
+            ),
+        }]
+        async with client.messages.stream(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=forced_msgs,
+            tools=tools,
+            tool_choice={"type": "none"},
+            cache_control={"type": "ephemeral"},
+            **({"system": system} if system else {}),
+        ) as stream:
+            async for text in stream.text_stream:
+                yield ("text", text)
+            final = await stream.get_final_message()
+
+    # Append the final text answer as a block-level message. After the loop (and the
+    # forced tool_choice="none" request above, if it ran), stop_reason can no longer
+    # be "tool_use", so `final` never carries unanswered tool_use blocks here.
+    final_blocks = serialize_content_blocks(final.content)
+    # Guard against empty content (e.g. whitespace-only answer) — the API
+    # rejects assistant messages with an empty content list on replay.
+    if final_blocks:
+        turn_messages.append({"role": "assistant", "content": final_blocks})
 
     yield ("turn_messages", turn_messages)
