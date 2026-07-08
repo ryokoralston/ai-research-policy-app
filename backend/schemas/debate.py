@@ -26,6 +26,7 @@ class DebateResponse(BaseModel):
     status: str
     personas: str | None
     synthesis: str | None
+    consensus_json: str | None
     created_at: datetime
     completed_at: datetime | None
 

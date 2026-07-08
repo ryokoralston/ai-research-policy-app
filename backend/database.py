@@ -38,6 +38,7 @@ def init_db():
     encrypt_legacy_secrets()
     normalize_legacy_report_status()
     add_citation_confidence_columns()
+    add_debate_consensus_column()
     print("Database initialized.")
 
 
@@ -76,6 +77,25 @@ def add_citation_confidence_columns():
         try:
             conn.execute(
                 text("ALTER TABLE risk_analyses ADD COLUMN citation_confidence TEXT")
+            )
+        except Exception:
+            pass  # column already exists, or table doesn't exist yet
+
+
+def add_debate_consensus_column():
+    """Idempotent migration: add the consensus column to debates.
+
+    Backs the Consensus Meter feature — stores the JSON result of
+    services.consensus_meter.extract_consensus() (3-5 debated claims, each
+    with every persona's agree/disagree/mixed stance) alongside the existing
+    synthesis column.
+    """
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        try:
+            conn.execute(
+                text("ALTER TABLE debates ADD COLUMN consensus TEXT")
             )
         except Exception:
             pass  # column already exists, or table doesn't exist yet

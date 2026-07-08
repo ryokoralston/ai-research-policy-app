@@ -14,6 +14,9 @@ class Debate(Base):
     status: Mapped[str] = mapped_column(String, default="pending")  # 'pending'|'running'|'complete'|'error'
     personas: Mapped[str | None] = mapped_column(Text)  # JSON array of persona keys
     synthesis: Mapped[str | None] = mapped_column(Text)
+    # JSON result of services.consensus_meter.extract_consensus(): 3-5 claims
+    # actually debated, each with every persona's agree/disagree/mixed stance.
+    consensus_json: Mapped[str | None] = mapped_column("consensus", Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
 

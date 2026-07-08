@@ -96,3 +96,25 @@ export interface Citation {
   title: string;
   snippet: string;
 }
+
+export interface Debate {
+  id: string;
+  topic: string;
+  status: "pending" | "running" | "complete" | "error";
+  personas: string | null;
+  synthesis: string | null;
+  // JSON-encoded { claims: ConsensusClaim[] } result of backend
+  // services/consensus_meter.py's extract_consensus() call (see below).
+  consensus_json: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+// One claim in the Multi-Persona Debate's "Consensus Meter" — see backend
+// services/consensus_meter.py's extract_consensus(). `stances` is keyed by
+// persona_key (see backend templates/personas.py), one entry per persona
+// who participated in the debate.
+export interface ConsensusClaim {
+  claim: string;
+  stances: Record<string, "agree" | "disagree" | "mixed">;
+}

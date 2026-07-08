@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { Users, Download, ChevronDown, ChevronRight, Loader2, FileText } from "lucide-react";
 import { authFetch, consumeSseStream } from "@/lib/api";
 import { type Argument, buildMarkdown, buildPlainText, downloadBlob, exportAsPdf } from "@/lib/exportDebate";
+import type { ConsensusClaim } from "@/lib/types";
+import ConsensusMeter from "@/components/debate/ConsensusMeter";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -52,6 +54,7 @@ interface DebateState {
   currentPersona: string | null;
   arguments: Argument[];
   synthesis: string;
+  consensus: ConsensusClaim[];
   error: string | null;
 }
 
@@ -98,6 +101,7 @@ export default function DebatePage() {
     currentPersona: null,
     arguments: [],
     synthesis: "",
+    consensus: [],
     error: null,
   });
   const [pastDebates, setPastDebates] = useState<PastDebate[]>([]);
@@ -138,6 +142,7 @@ export default function DebatePage() {
       currentPersona: null,
       arguments: [],
       synthesis: "",
+      consensus: [],
       error: null,
     });
 
@@ -219,6 +224,9 @@ export default function DebatePage() {
             });
           } else if (event === "synthesis_start") {
             setDebate((prev) => ({ ...prev, currentPersona: "moderator" }));
+          } else if (event === "consensus") {
+            const claims = (d.claims as ConsensusClaim[]) ?? [];
+            setDebate((prev) => ({ ...prev, consensus: claims }));
           } else if (event === "complete") {
             setDebate((prev) => ({ ...prev, status: "complete", currentPersona: null }));
             // Refresh past debates list
@@ -261,6 +269,14 @@ export default function DebatePage() {
         streaming: false,
       }));
       setTopic(data.topic as string);
+      let consensus: ConsensusClaim[] = [];
+      if (data.consensus_json) {
+        try {
+          consensus = (JSON.parse(data.consensus_json as string).claims as ConsensusClaim[]) ?? [];
+        } catch {
+          consensus = [];
+        }
+      }
       setDebate({
         debateId: id,
         status: "complete",
@@ -268,6 +284,7 @@ export default function DebatePage() {
         currentPersona: null,
         arguments: args,
         synthesis: (data.synthesis as string) ?? "",
+        consensus,
         error: null,
       });
     } catch {
@@ -280,7 +297,7 @@ export default function DebatePage() {
     await authFetch(`${BASE_URL}/api/debate/${id}`, { method: "DELETE" });
     setPastDebates((prev) => prev.filter((d) => d.id !== id));
     if (debate.debateId === id) {
-      setDebate({ debateId: null, status: "idle", currentRound: 0, currentPersona: null, arguments: [], synthesis: "", error: null });
+      setDebate({ debateId: null, status: "idle", currentRound: 0, currentPersona: null, arguments: [], synthesis: "", consensus: [], error: null });
     }
   };
 
@@ -543,6 +560,11 @@ export default function DebatePage() {
                     </div>
                   </div>
                 </section>
+              )}
+
+              {/* Consensus Meter */}
+              {debate.status === "complete" && debate.consensus.length > 0 && (
+                <ConsensusMeter claims={debate.consensus} personaMap={PERSONA_MAP} />
               )}
 
               {/* Action buttons */}

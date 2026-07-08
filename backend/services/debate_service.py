@@ -3,11 +3,15 @@ Debate orchestration service.
 Runs a 4-round structured debate among AI policy personas, streaming SSE events.
 """
 import asyncio
+import json
+import logging
 import uuid
 from datetime import datetime
 
 from services.anthropic_client import stream_text, sse_event
 from templates.personas import PERSONAS, MODERATOR_SYSTEM, ROUNDS
+
+logger = logging.getLogger(__name__)
 
 
 def _format_history(history: list[dict]) -> str:
@@ -153,15 +157,40 @@ async def run_debate(
                 "round": 0,
             }))
 
-        # Save synthesis and mark complete
+        # Consensus Meter: one extra cheap LLM-as-judge call that identifies the
+        # 3-5 claims actually contested in the debate and classifies each
+        # persona's real stance (agree/disagree/mixed) on each. A failure
+        # degrades gracefully (logged, continue without it) rather than
+        # blocking the debate from completing — same style as
+        # risk_analyzer.py's citation-verification failure handling.
+        consensus: dict | None = None
+        try:
+            from services.consensus_meter import extract_consensus
+            consensus = await extract_consensus(history, synthesis, persona_keys)
+        except Exception:
+            logger.warning(
+                "Consensus extraction failed for debate %r — continuing without it",
+                debate_id,
+                exc_info=True,
+            )
+
+        # Save synthesis, consensus, and mark complete
         debate = db.query(Debate).filter(Debate.id == debate_id).first()
         if debate:
             debate.synthesis = synthesis
+            debate.consensus_json = json.dumps(consensus) if consensus else None
             debate.status = "complete"
             debate.completed_at = datetime.utcnow()
             db.commit()
 
-        await queue.put(sse_event("complete", {"debate_id": debate_id, "event_type": "complete"}))
+        if consensus:
+            await queue.put(sse_event("consensus", {"claims": consensus.get("claims", [])}))
+
+        await queue.put(sse_event("complete", {
+            "debate_id": debate_id,
+            "event_type": "complete",
+            "consensus": consensus,
+        }))
 
     except Exception as e:
         await queue.put(sse_event("error", {"message": str(e)}))
