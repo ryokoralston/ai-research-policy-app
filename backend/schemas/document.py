@@ -36,7 +36,10 @@ class FolderRenameRequest(BaseModel):
 
 class ChatMessage(BaseModel):
     role: str   # "user" or "assistant"
-    content: str
+    # Plain text for simple turns, or block-level content (text/tool_use/tool_result
+    # dicts) replayed from a previous turn's "complete" event — see
+    # services/anthropic_client.py's serialize_content_blocks.
+    content: str | list[dict]
 
 
 class DocumentAskRequest(BaseModel):
@@ -45,6 +48,9 @@ class DocumentAskRequest(BaseModel):
     top_k: int = 5
     chat_history: list[ChatMessage] | None = None  # previous turns for multi-turn chat
     custom_system: str | None = None  # optional user-defined system prompt override
+    # Cumulative citations from previous turns, used to keep [N] numbering stable
+    # across turns (new citations continue numbering after the max existing index).
+    prior_citations: list[dict] | None = None
 
 
 class IngestUrlRequest(BaseModel):

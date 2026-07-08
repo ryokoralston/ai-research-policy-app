@@ -6,13 +6,17 @@ import { api, postStream } from "@/lib/api";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import StreamingText from "@/components/ui/StreamingText";
 import RemindersPanel, { type Reminder } from "./RemindersPanel";
-import type { Citation } from "@/lib/types";
+import type { Citation, ApiChatMessage } from "@/lib/types";
 
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   streaming?: boolean;
   citations?: Citation[];
+  // Block-level messages this assistant turn produced (from the "complete"
+  // event's turn_messages) — replayed as chat_history on the next turn so
+  // prior tool_use/tool_result blocks survive instead of being flattened to text.
+  apiMessages?: ApiChatMessage[];
 }
 
 interface ChatPanelProps {
@@ -58,11 +62,28 @@ export default function ChatPanel({
     setQaRunning(true);
     setToolStatus(null);
 
-    // Build history for the API from completed (non-streaming) messages
-    // We send previous Q&A turns so Claude can reference them
-    const apiHistory = chatMessages
-      .filter((m) => !m.streaming)
-      .map((m) => ({ role: m.role, content: m.content }));
+    // Build history for the API from completed (non-streaming) messages.
+    // Assistant turns that produced block-level history (apiMessages) replay
+    // those blocks — including tool_use/tool_result — instead of the flattened
+    // text, so Claude can still see what it searched in earlier turns. Older/error
+    // turns without apiMessages fall back to plain text.
+    const apiHistory: ApiChatMessage[] = [];
+    for (const m of chatMessages) {
+      if (m.streaming) continue;
+      if (m.role === "user") {
+        apiHistory.push({ role: "user", content: m.content });
+      } else if (m.apiMessages && m.apiMessages.length > 0) {
+        apiHistory.push(...m.apiMessages);
+      } else if (m.content) {
+        apiHistory.push({ role: "assistant", content: m.content });
+      }
+    }
+
+    // Citations are cumulative across turns (see backend rag_service.answer_question) —
+    // send the last completed assistant turn's citations so [N] numbering continues
+    // instead of restarting at [1].
+    const lastAssistant = [...chatMessages].reverse().find((m) => m.role === "assistant" && !m.streaming);
+    const priorCitations = lastAssistant?.citations ?? null;
 
     // Show user message immediately, then add empty assistant placeholder
     setChatMessages((prev) => [
@@ -80,6 +101,7 @@ export default function ChatPanel({
           top_k: 5,
           chat_history: apiHistory,
           custom_system: systemPrompt.trim() || null,
+          prior_citations: priorCitations,
         },
         (event, data) => {
           const d = data as Record<string, unknown>;
@@ -119,6 +141,7 @@ export default function ChatPanel({
                   ...last,
                   streaming: false,
                   citations: (d.citations as Citation[] | undefined) ?? last.citations,
+                  apiMessages: (d.turn_messages as ApiChatMessage[] | undefined) ?? last.apiMessages,
                 };
               }
               return next;

@@ -192,6 +192,7 @@ async def answer_question(
     db: Session,
     chat_history: list[dict] | None = None,
     custom_system: str | None = None,
+    prior_citations: list[dict] | None = None,
 ) -> AsyncIterator[str]:
     """Stream an answer via a manual Anthropic tool-use loop.
 
@@ -201,6 +202,12 @@ async def answer_question(
 
     chat_history = [{"role": "user"|"assistant", "content": "..."}, ...]
     Previous turns are passed to Claude so it can reference earlier exchanges.
+    Assistant turn content may be plain text or a list of block dicts (replayed
+    tool_use/tool_result history — see anthropic_client.serialize_content_blocks).
+
+    prior_citations: cumulative citations from previous turns (the "citations"
+    list of the last "complete" event), used to keep [N] numbering stable across
+    turns instead of restarting at [1] every turn.
     """
     from rag.retriever import Retriever
 
@@ -211,9 +218,16 @@ async def answer_question(
     # deduplicated by construction — no separate dedup pass needed at the end.
     citation_index: dict[str, int] = {}
     ordered_citations: list[dict] = []
+    for c in prior_citations or []:
+        citation_index[c["chunk_id"]] = c["index"]
+        ordered_citations.append(c)
+    # New chunks continue numbering after the highest existing index (indices are
+    # contiguous by construction, but max() is safer than trusting that invariant).
+    next_citation_index = max((c["index"] for c in ordered_citations), default=0)
 
     async def execute_tool(name: str, tool_input: dict) -> str:
         """Run a tool call requested by Claude and return the result as a string."""
+        nonlocal next_citation_index
         # Try reminder tools first; returns None if the name doesn't match any of them
         reminder_result = await execute_reminder_tool(name, tool_input, db)
         if reminder_result is not None:
@@ -237,7 +251,8 @@ async def answer_question(
             for chunk in chunks:
                 doc_title = doc_titles.get(chunk.doc_id, "Unknown")
                 if chunk.chunk_id not in citation_index:
-                    citation_index[chunk.chunk_id] = len(citation_index) + 1
+                    next_citation_index += 1
+                    citation_index[chunk.chunk_id] = next_citation_index
                     ordered_citations.append({
                         "index": citation_index[chunk.chunk_id],
                         "doc_id": chunk.doc_id,
@@ -266,6 +281,9 @@ async def answer_question(
         "each one, e.g. [1][3]. "
         "If the tool returns no relevant content, say so explicitly. "
         "You have access to the conversation history — use it to answer follow-up questions naturally. "
+        "Search results from earlier turns remain visible in the conversation history — if they "
+        "already contain what you need, you may cite their bracketed numbers directly without "
+        "searching again. "
         "You can also set reminders for the user. "
         "For any relative date or time expression ('next Thursday', 'in two weeks', 'a week from Friday'), "
         "you MUST call get_current_datetime first, then add_duration_to_datetime to compute the exact "
@@ -280,6 +298,9 @@ async def answer_question(
         "supports — do not just cite once at the end. If a claim draws on multiple sources, cite "
         "each one, e.g. [1][3]. "
         "If the tool returns no relevant content, say so explicitly. "
+        "Search results from earlier turns remain visible in the conversation history — if they "
+        "already contain what you need, you may cite their bracketed numbers directly without "
+        "searching again. "
         "You can also set reminders for the user. "
         "For any relative date or time ('next Thursday', 'in two weeks', 'a week from Friday'), "
         "call get_current_datetime first, then add_duration_to_datetime, then set_reminder — "
@@ -297,6 +318,7 @@ async def answer_question(
     yield sse_event("start", {"question": question})
 
     full_text = ""
+    turn_messages: list[dict] = []
     # temperature=0.3: ドキュメントに基づく事実回答なので低め
     async for event_type, payload in stream_chat_with_tools(
         messages,
@@ -316,7 +338,16 @@ async def answer_question(
         elif event_type == "text":
             full_text += payload
             yield sse_event("token", {"text": payload})
+        elif event_type == "turn_messages":
+            turn_messages = payload
 
     # ordered_citations is already deduplicated by chunk_id and in first-seen
     # (index) order — built incrementally inside execute_tool above.
-    yield sse_event("complete", {"citations": ordered_citations, "word_count": len(full_text.split())})
+    # turn_messages: block-level messages this turn produced (see
+    # anthropic_client.serialize_content_blocks) — the frontend replays them as
+    # chat_history on the next turn so prior tool_use/tool_result blocks survive.
+    yield sse_event("complete", {
+        "citations": ordered_citations,
+        "turn_messages": turn_messages,
+        "word_count": len(full_text.split()),
+    })

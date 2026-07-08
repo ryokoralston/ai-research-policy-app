@@ -75,6 +75,41 @@ def _is_openai(model: str) -> bool:
     return model.startswith(("gpt-", "o1", "o3", "o4"))
 
 
+def _block_get(block, key):
+    """Read a field off an SDK content-block object or a plain dict, uniformly."""
+    if isinstance(block, dict):
+        return block.get(key)
+    return getattr(block, key, None)
+
+
+def serialize_content_blocks(content) -> list[dict]:
+    """Convert SDK content blocks (or plain dicts) to JSON-safe dicts for replay.
+
+    Whitelists only the fields the Messages API accepts back:
+      text     -> {"type": "text", "text": ...}   (skipped if text is empty/whitespace —
+                                                   the API rejects empty text blocks on replay)
+      tool_use -> {"type": "tool_use", "id": ..., "name": ..., "input": ...}
+    Unknown block types are skipped.
+    Accepts both SDK objects (attribute access) and plain dicts (key access).
+    """
+    result: list[dict] = []
+    for block in content:
+        block_type = _block_get(block, "type")
+        if block_type == "text":
+            text = _block_get(block, "text")
+            if text and text.strip():
+                result.append({"type": "text", "text": text})
+        elif block_type == "tool_use":
+            result.append({
+                "type": "tool_use",
+                "id": _block_get(block, "id"),
+                "name": _block_get(block, "name"),
+                "input": _block_get(block, "input"),
+            })
+        # unknown block types (e.g. thinking) are dropped — not replayable as-is
+    return result
+
+
 # ── Client factories ──────────────────────────────────────────────────────────
 
 def _get_anthropic_client(ai_settings: dict) -> anthropic.AsyncAnthropic:
@@ -148,7 +183,9 @@ async def generate_text(
     if stop_sequences:
         kwargs["stop_sequences"] = stop_sequences
     message = await client.messages.create(**kwargs)
-    generated = message.content[0].text  # type: ignore[union-attr]
+    # Join all text blocks (not just the first) — a response can contain more
+    # than one text block, e.g. interleaved with server-side tool use.
+    generated = "".join(b.text for b in message.content if b.type == "text")  # type: ignore[union-attr]
     # Stitch prefill + generated so the caller always gets the complete string
     return prefill + generated
 
@@ -294,6 +331,11 @@ async def stream_chat_with_tools(
     Yields structured events:
       ("text", token_str)  — streamed text delta from Claude
       ("tool_use", {"name": ..., "input": ...})  — emitted before executing each tool call
+      ("turn_messages", list[dict])  — last event yielded; the block-level messages
+        (assistant tool_use / user tool_result / final assistant text) produced during
+        this turn, JSON-safe and ready to prepend to the next turn's `messages` so the
+        full history — including prior tool_use/tool_result blocks — survives across
+        turns (see serialize_content_blocks).
 
     The loop runs until stop_reason is not "tool_use" or max_tool_iterations is reached.
     Each iteration: stream Claude's response, collect the final message, echo the
@@ -301,7 +343,8 @@ async def stream_chat_with_tools(
     tool_executor, append tool_result blocks, then continue.
 
     If tools is falsy or the model is OpenAI, falls back to stream_chat and yields
-    ("text", token) for each token. (Tool use is Anthropic-only.)
+    ("text", token) for each token, followed by a single-message ("turn_messages", ...)
+    with the accumulated text. (Tool use is Anthropic-only.)
 
     temperature: 0.0 = deterministic, 1.0 = default (more varied).
     max_tool_iterations: cap on tool-use rounds to prevent runaway loops.
@@ -313,12 +356,17 @@ async def stream_chat_with_tools(
 
     # Fall back to plain stream_chat for OpenAI models or when tools are not provided
     if _is_openai(model) or not tools:
+        full_text = ""
         async for token in stream_chat(messages, system=system, model=model, max_tokens=max_tokens, temperature=temperature):
+            full_text += token
             yield ("text", token)
+        # Guard against empty content — the API rejects empty assistant messages on replay
+        yield ("turn_messages", [{"role": "assistant", "content": full_text}] if full_text else [])
         return
 
     client = _get_anthropic_client(ai_settings)
     msgs = list(messages)  # don't mutate caller's list
+    turn_messages: list[dict] = []  # block-level messages produced this turn, for replay next turn
 
     for _ in range(max_tool_iterations):
         # Prompt caching: this is the one path in the app with a large, reusable
@@ -354,6 +402,7 @@ async def stream_chat_with_tools(
 
         # Echo the full assistant turn (including tool_use blocks) back into history
         msgs.append({"role": "assistant", "content": final.content})
+        turn_messages.append({"role": "assistant", "content": serialize_content_blocks(final.content)})
 
         tool_results = []
         for block in final.content:
@@ -374,4 +423,20 @@ async def stream_chat_with_tools(
                         "is_error": True,
                     })
 
-        msgs.append({"role": "user", "content": tool_results})
+        tool_results_msg = {"role": "user", "content": tool_results}
+        msgs.append(tool_results_msg)
+        turn_messages.append(tool_results_msg)
+
+    # Append the final text answer as a block-level message — but only if the loop
+    # ended normally (stop_reason != "tool_use"). If iterations were exhausted while
+    # stop_reason is still "tool_use", `final` ends with unanswered tool_use blocks
+    # that must NOT be replayed without matching tool_results; in that case
+    # turn_messages already ends safely on the last tool_result message appended above.
+    if final.stop_reason != "tool_use":
+        final_blocks = serialize_content_blocks(final.content)
+        # Guard against empty content (e.g. whitespace-only answer) — the API
+        # rejects assistant messages with an empty content list on replay.
+        if final_blocks:
+            turn_messages.append({"role": "assistant", "content": final_blocks})
+
+    yield ("turn_messages", turn_messages)

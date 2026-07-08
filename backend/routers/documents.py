@@ -232,7 +232,8 @@ async def ask_documents(request: DocumentAskRequest, db: Session = Depends(get_d
     async def event_generator():
         from services.rag_service import answer_question
         async for event in answer_question(
-            request.question, request.doc_ids, request.top_k, db, history, request.custom_system
+            request.question, request.doc_ids, request.top_k, db, history, request.custom_system,
+            prior_citations=request.prior_citations,
         ):
             yield event
 

@@ -97,6 +97,19 @@ export interface Citation {
   snippet: string;
 }
 
+// Block-level chat message content, replayed across Ask Documents turns so
+// prior tool_use/tool_result blocks survive (see backend
+// services/anthropic_client.py's serialize_content_blocks).
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
+
+export interface ApiChatMessage {
+  role: "user" | "assistant";
+  content: string | ContentBlock[];
+}
+
 export interface Debate {
   id: string;
   topic: string;
