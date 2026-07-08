@@ -3,6 +3,7 @@ Anthropic / OpenAI wrapper with automatic provider routing.
 Provides both streaming (SSE) and non-streaming text generation.
 Model defaults are loaded from DB (ModelSettings) with a 60-second cache.
 """
+import asyncio
 import json
 import logging
 import time
@@ -340,7 +341,8 @@ async def stream_chat_with_tools(
     The loop runs until stop_reason is not "tool_use" or max_tool_iterations is reached.
     Each iteration: stream Claude's response, collect the final message, echo the
     assistant turn (with tool_use blocks) back as history, run each requested tool via
-    tool_executor, append tool_result blocks, then continue.
+    tool_executor (parallel tool_use blocks within a round are executed concurrently),
+    append tool_result blocks, then continue.
 
     If tools is falsy or the model is OpenAI, falls back to stream_chat and yields
     ("text", token) for each token, followed by a single-message ("turn_messages", ...)
@@ -404,24 +406,35 @@ async def stream_chat_with_tools(
         msgs.append({"role": "assistant", "content": final.content})
         turn_messages.append({"role": "assistant", "content": serialize_content_blocks(final.content)})
 
-        tool_results = []
-        for block in final.content:
-            if block.type == "tool_use":
-                yield ("tool_use", {"name": block.name, "input": block.input})
-                try:
-                    result = await tool_executor(block.name, block.input)
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result,
-                    })
-                except Exception as exc:
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": f"{type(exc).__name__}: {exc}",
-                        "is_error": True,
-                    })
+        # Emit all tool_use events up front (before execution) since execution below
+        # is concurrent and no longer follows one-block-at-a-time ordering.
+        tool_blocks = [b for b in final.content if b.type == "tool_use"]
+        for block in tool_blocks:
+            yield ("tool_use", {"name": block.name, "input": block.input})
+
+        async def _run_tool(block) -> dict:
+            try:
+                result = await tool_executor(block.name, block.input)
+                return {
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result,
+                }
+            except Exception as exc:
+                return {
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": f"{type(exc).__name__}: {exc}",
+                    "is_error": True,
+                }
+
+        # Results are matched back to requests by tool_use_id, so completion order
+        # doesn't matter; asyncio.gather preserves input order regardless. Most
+        # executors in this app are effectively synchronous under the hood (sync
+        # SQLAlchemy session, sync Chroma calls), so they only interleave at await
+        # points — safe to run concurrently against the shared db session, and any
+        # genuinely async tools now overlap instead of running one at a time.
+        tool_results = list(await asyncio.gather(*(_run_tool(b) for b in tool_blocks)))
 
         tool_results_msg = {"role": "user", "content": tool_results}
         msgs.append(tool_results_msg)
