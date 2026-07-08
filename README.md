@@ -15,11 +15,11 @@ A web application for AI policy research, powered by Claude (Anthropic) and Tavi
 ## Features
 
 - **Research** — Automatically decomposes queries into sub-searches, runs parallel web searches via Tavily, and synthesizes results with Claude (streaming output)
-- **Document Library** — Upload PDFs, web pages, and YouTube transcripts to build a searchable knowledge base backed by ChromaDB (RAG)
-- **Analysis** — Generate in-depth analysis grounded in your document library, streamed in real time
-- **AI Policy Debate** — Simulate a multi-persona debate (e.g. pro-regulation vs. tech-optimist) on any AI policy topic
-- **Reports** — Generate PDF reports from three templates: Congressional Brief, Policy Memo, and Risk Assessment
-- **Daily Digest** — Receive a daily email summarizing the latest developments on topics you define (optional)
+- **Document Library** — Upload PDFs, web pages, and YouTube transcripts to build a searchable knowledge base backed by ChromaDB (RAG). The Ask Documents chat cites sources with sentence-level numbered citations (e.g. `[1]`) — hover any citation for the source title, page, and excerpt
+- **Analysis** — Generate in-depth analysis grounded in your document library, streamed in real time. Each analysis includes a citation confidence score that flags any claims not actually supported by the source material
+- **AI Policy Debate** — Simulate a multi-persona debate (e.g. pro-regulation vs. tech-optimist) on any AI policy topic. A Consensus Meter summarizes where participants actually agreed or diverged on each key claim
+- **Reports** — Generate PDF reports from three templates: Congressional Brief, Policy Memo, and Risk Assessment. Reports also include a citation confidence score grounding check
+- **Daily Digest** — Receive a daily email summarizing the latest developments on topics you define, including relevant federal rules and notices from the Federal Register (optional)
 - **Settings** — Configure models (claude-opus-4-6 / claude-haiku) and API keys from the browser
 
 ## Tech Stack
