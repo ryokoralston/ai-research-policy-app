@@ -107,7 +107,50 @@ def serialize_content_blocks(content) -> list[dict]:
                 "name": _block_get(block, "name"),
                 "input": _block_get(block, "input"),
             })
-        # unknown block types (e.g. thinking) are dropped — not replayable as-is
+        # Unknown block types are dropped — not replayable as-is. This includes
+        # "thinking" (no signature to preserve) and the server-tool block types
+        # "server_tool_use" / "web_search_tool_result" — those are intentionally
+        # skipped: server-side tool work isn't something we replay verbatim into
+        # a future turn's history (unlike pause_turn resumption, which appends
+        # the raw SDK content instead of going through this whitelist).
+    return result
+
+
+def extract_web_citations(content) -> list[dict]:
+    """Collect web-search citations attached to the final response's text blocks.
+
+    When Claude answers using web_search results (see WEB_SEARCH_TOOL in
+    rag_service.py), the API splits the response into multiple text blocks and
+    attaches a "citations" array to any block whose claim was grounded in a
+    web result. This walks every text block (SDK object or plain dict — via
+    _block_get, same as serialize_content_blocks) and flattens those citation
+    arrays into {"url", "title", "cited_text"} dicts.
+
+    Entries without a url are dropped (nothing to link to). Entries are
+    deduped by url, keeping the first occurrence. title falls back to the url
+    when missing or empty. Non-text blocks (server_tool_use,
+    web_search_tool_result, tool_use, ...) are ignored — citations only ever
+    live on text blocks.
+    """
+    seen_urls: set[str] = set()
+    result: list[dict] = []
+    for block in content:
+        if _block_get(block, "type") != "text":
+            continue
+        citations = _block_get(block, "citations")
+        if not citations:
+            continue
+        for citation in citations:
+            url = _block_get(citation, "url")
+            if not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            title = _block_get(citation, "title") or url
+            result.append({
+                "url": url,
+                "title": title,
+                "cited_text": _block_get(citation, "cited_text") or "",
+            })
     return result
 
 
@@ -119,8 +162,9 @@ async def _stream_events(stream) -> AsyncIterator[tuple[str, object]]:
     lives in exactly one place.
 
       ("text", str) — text delta (unchanged contract)
-      ("tool_pending", {"name": ...}) — a tool_use content block just started;
-        fires the moment Claude commits to a tool call, before any of its
+      ("tool_pending", {"name": ...}) — a tool_use or server_tool_use content
+        block just started; fires the moment Claude commits to a tool call
+        (client-side or server-side, e.g. web_search), before any of its
         arguments exist
       ("tool_input_delta", {"name": ..., "partial_json": ..., "snapshot": ...})
         — incremental tool-argument JSON while it streams. Only arrives
@@ -128,16 +172,17 @@ async def _stream_events(stream) -> AsyncIterator[tuple[str, object]]:
         arguments still arrive as input_json events, just all at once when
         the block closes rather than token-by-token.
 
-    Tracks the name of the currently-open tool_use content block (from the
-    most recent content_block_start) so tool_input_delta events — which
-    don't carry a name themselves — can be attributed to the right tool.
+    Tracks the name of the currently-open tool_use/server_tool_use content
+    block (from the most recent content_block_start) so tool_input_delta
+    events — which don't carry a name themselves — can be attributed to the
+    right tool.
     """
     current_tool_name: str | None = None
     async for event in stream:
         etype = getattr(event, "type", None)
         if etype == "text":
             yield ("text", event.text)
-        elif etype == "content_block_start" and getattr(event.content_block, "type", None) == "tool_use":
+        elif etype == "content_block_start" and getattr(event.content_block, "type", None) in ("tool_use", "server_tool_use"):
             current_tool_name = event.content_block.name
             yield ("tool_pending", {"name": current_tool_name})
         elif etype == "input_json" and event.partial_json:
@@ -378,6 +423,11 @@ async def stream_chat_with_tools(
       ("tool_input_delta", {"name": ..., "partial_json": ..., "snapshot": ...})  — incremental
         tool-argument JSON while it streams
       ("tool_use", {"name": ..., "input": ...})  — emitted before executing each tool call
+      ("web_citations", list[dict])  — second-to-last event yielded; the deduped
+        {"url", "title", "cited_text"} citations gathered from any server-side
+        web_search results the final answer drew on (see extract_web_citations).
+        Always yielded (possibly empty) so consumers can check emptiness rather
+        than branch on the event's absence.
       ("turn_messages", list[dict])  — last event yielded; the block-level messages
         (assistant tool_use / user tool_result / final assistant text) produced during
         this turn, JSON-safe and ready to prepend to the next turn's `messages` so the
@@ -388,10 +438,14 @@ async def stream_chat_with_tools(
     Each iteration: stream Claude's response, collect the final message, echo the
     assistant turn (with tool_use blocks) back as history, run each requested tool via
     tool_executor (parallel tool_use blocks within a round are executed concurrently),
-    append tool_result blocks, then continue. If max_tool_iterations is reached while
-    Claude still wants to call a tool, one final request is made with
-    tool_choice={"type": "none"} to force a text answer from the tool results gathered
-    so far, so the turn always ends with an answer instead of silently stopping.
+    append tool_result blocks, then continue. A stop_reason of "pause_turn" (the API's
+    internal server-side-tool iteration limit, e.g. mid-way through a multi-step
+    web_search) is handled by appending the raw assistant content back to history and
+    re-sending as-is — the API resumes the server-side work where it left off, no
+    extra nudge message needed. If max_tool_iterations is reached while Claude still
+    wants to call a tool, one final request is made with tool_choice={"type": "none"}
+    to force a text answer from the tool results gathered so far, so the turn always
+    ends with an answer instead of silently stopping.
 
     If tools is falsy or the model is OpenAI, falls back to stream_chat and yields
     ("text", token) for each token, followed by a single-message ("turn_messages", ...)
@@ -447,6 +501,17 @@ async def stream_chat_with_tools(
                 "tool-loop usage: input=%s cache_read=%s cache_write=%s",
                 u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens,
             )
+
+        if final.stop_reason == "pause_turn":
+            # Server-side tool work (e.g. web_search) hit the API's internal
+            # iteration limit mid-task. Append the raw content back and re-send
+            # as-is — no extra nudge message — and the API resumes the
+            # server-side work where it left off.
+            msgs.append({"role": "assistant", "content": final.content})  # raw content, re-send resumes
+            serialized = serialize_content_blocks(final.content)
+            if serialized:  # empty-content guard
+                turn_messages.append({"role": "assistant", "content": serialized})
+            continue
 
         if final.stop_reason != "tool_use":
             break
@@ -536,4 +601,5 @@ async def stream_chat_with_tools(
     if final_blocks:
         turn_messages.append({"role": "assistant", "content": final_blocks})
 
+    yield ("web_citations", extract_web_citations(final.content))
     yield ("turn_messages", turn_messages)

@@ -97,6 +97,17 @@ export interface Citation {
   snippet: string;
 }
 
+// Web-search citation emitted by the Ask Documents RAG chat when Claude's
+// answer draws on the server-side web_search tool (backend
+// services/anthropic_client.py's extract_web_citations, surfaced via
+// rag_service.py answer_question's "complete" SSE event). Unlike Citation
+// (library sources), these are not numbered / referenced by [N] markers.
+export interface WebCitation {
+  url: string;
+  title: string;
+  cited_text: string;
+}
+
 // Block-level chat message content, replayed across Ask Documents turns so
 // prior tool_use/tool_result blocks survive (see backend
 // services/anthropic_client.py's serialize_content_blocks).

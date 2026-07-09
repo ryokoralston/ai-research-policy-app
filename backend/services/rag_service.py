@@ -194,6 +194,17 @@ SEARCH_DOCUMENTS_TOOL = {
     "eager_input_streaming": True,
 }
 
+# Anthropic server-side web search tool. Deliberately pinned to the
+# web_search_20250305 tool type, NOT the newer web_search_20260209 — on this
+# account 20260209 silently reroutes through code_execution and every text
+# block comes back with citations=None (no way to attribute claims to a
+# source). 20250305 behaves as documented: a server_tool_use(name="web_search")
+# block, then a web_search_tool_result block, then text blocks with populated
+# citations (url/title/cited_text). No local executor runs for this tool — the
+# API executes the search itself; stream_chat_with_tools never calls
+# tool_executor for it. max_uses caps how many searches Claude can run per turn.
+WEB_SEARCH_TOOL = {"type": "web_search_20250305", "name": "web_search", "max_uses": 3}
+
 
 def _partial_query_from_snapshot(snapshot) -> str | None:
     """Best-effort extraction of the growing "query" string value from a
@@ -331,6 +342,10 @@ async def answer_question(
         "supports — do not just cite once at the end. If a claim draws on multiple sources, cite "
         "each one, e.g. [1][3]. "
         "If the tool returns no relevant content, say so explicitly. "
+        "Answer library-first: prefer material from search_documents. You may also use the "
+        "web_search tool when the document library lacks the information you need or the question "
+        "concerns current events; when your answer draws on web results, make clear which parts come "
+        "from the web — the bracketed [N] citations remain library-only and never refer to web sources. "
         "You have access to the conversation history — use it to answer follow-up questions naturally. "
         "Search results from earlier turns remain visible in the conversation history — if they "
         "already contain what you need, you may cite their bracketed numbers directly without "
@@ -352,6 +367,10 @@ async def answer_question(
         "supports — do not just cite once at the end. If a claim draws on multiple sources, cite "
         "each one, e.g. [1][3]. "
         "If the tool returns no relevant content, say so explicitly. "
+        "Answer library-first: prefer material from search_documents. You may also use the "
+        "web_search tool when the document library lacks the information you need or the question "
+        "concerns current events; when your answer draws on web results, make clear which parts come "
+        "from the web — the bracketed [N] citations remain library-only and never refer to web sources. "
         "Search results from earlier turns remain visible in the conversation history — if they "
         "already contain what you need, you may cite their bracketed numbers directly without "
         "searching again. "
@@ -376,18 +395,21 @@ async def answer_question(
 
     full_text = ""
     turn_messages: list[dict] = []
-    # Raw accumulated input JSON of the currently-streaming search_documents
-    # call. The SDK's parsed dict snapshot drops string values until their
-    # closing quote arrives (jiter partial_mode), so the dict path only
-    # produces the query once it's complete — accumulating the raw
-    # partial_json chunks ourselves is what makes the query grow
-    # token-by-token in the UI.
-    search_input_raw = ""
+    web_citations: list[dict] = []
+    # Raw accumulated input JSON of the currently-streaming tool call, keyed by
+    # tool name — both search_documents and web_search have a "query" field
+    # and can stream live progress. The SDK's parsed dict snapshot drops
+    # string values until their closing quote arrives (jiter partial_mode), so
+    # the dict path only produces the query once it's complete — accumulating
+    # the raw partial_json chunks ourselves is what makes the query grow
+    # token-by-token in the UI (only search_documents has eager_input_streaming
+    # enabled, so web_search's "delta" arrives as a single complete chunk).
+    tool_input_raw: dict[str, str] = {}
     # temperature=0.3: ドキュメントに基づく事実回答なので低め
     async for event_type, payload in stream_chat_with_tools(
         messages,
         system=system,
-        tools=[SEARCH_DOCUMENTS_TOOL, *REMINDER_TOOLS, TEXT_EDITOR_TOOL],
+        tools=[SEARCH_DOCUMENTS_TOOL, *REMINDER_TOOLS, TEXT_EDITOR_TOOL, WEB_SEARCH_TOOL],
         tool_executor=execute_tool,
         temperature=0.3,
     ):
@@ -395,20 +417,19 @@ async def answer_question(
             # Fired the instant Claude commits to a tool call, before its
             # arguments exist — lets the UI show an indicator immediately
             # instead of waiting for the whole tool_use block to finish.
-            if payload["name"] == "search_documents":
-                search_input_raw = ""  # new block — reset the accumulator
+            if payload["name"] in ("search_documents", "web_search"):
+                tool_input_raw[payload["name"]] = ""  # new block — reset the accumulator
             yield sse_event("tool_pending", {"name": payload["name"]})
         elif event_type == "tool_input_delta":
-            # Only search_documents has eager_input_streaming enabled, so this
-            # is the only tool whose arguments arrive incrementally; other
-            # tools' input_json events collapse to a single delta at block
-            # close, which the "tool" event below already covers.
-            if payload["name"] == "search_documents":
-                search_input_raw += payload["partial_json"]
+            # Only tools with a "query" input field have useful live-progress
+            # display; other tools' input_json events collapse to a single
+            # delta at block close, which the "tool" event below already covers.
+            if payload["name"] in ("search_documents", "web_search"):
+                tool_input_raw[payload["name"]] = tool_input_raw.get(payload["name"], "") + payload["partial_json"]
                 # Raw accumulation first (grows per token); dict snapshot as
                 # fallback (complete values only).
                 partial_query = (
-                    _partial_query_from_snapshot(search_input_raw)
+                    _partial_query_from_snapshot(tool_input_raw[payload["name"]])
                     or _partial_query_from_snapshot(payload["snapshot"])
                 )
                 if partial_query:
@@ -427,6 +448,8 @@ async def answer_question(
         elif event_type == "text":
             full_text += payload
             yield sse_event("token", {"text": payload})
+        elif event_type == "web_citations":
+            web_citations = payload
         elif event_type == "turn_messages":
             turn_messages = payload
 
@@ -435,8 +458,13 @@ async def answer_question(
     # turn_messages: block-level messages this turn produced (see
     # anthropic_client.serialize_content_blocks) — the frontend replays them as
     # chat_history on the next turn so prior tool_use/tool_result blocks survive.
+    # web_citations: deduped {"url", "title", "cited_text"} entries gathered from
+    # any web_search results the answer drew on (see
+    # anthropic_client.extract_web_citations) — defaults to [] since the OpenAI
+    # fallback path in stream_chat_with_tools never yields a "web_citations" event.
     yield sse_event("complete", {
         "citations": ordered_citations,
+        "web_citations": web_citations,
         "turn_messages": turn_messages,
         "word_count": len(full_text.split()),
     })

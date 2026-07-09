@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Citation } from "@/lib/types";
+import type { Citation, WebCitation } from "@/lib/types";
 
 /** react-markdown sanitizes link URLs by default and strips any scheme it doesn't
  *  recognize (http/https/mailto/tel/relative) — our synthetic "citation:N" scheme
@@ -21,6 +21,11 @@ interface StreamingTextProps {
    *  When provided, inline [N] markers are rendered as hoverable badges and a
    *  compact "Sources" list is rendered below the answer. */
   citations?: Citation[];
+  /** Web-search citations from the Ask Documents RAG chat's web_search tool (see
+   *  rag_service.py / anthropic_client.py's extract_web_citations). Not tied to
+   *  inline [N] markers — rendered as a separate link-chip list below the
+   *  library SourcesList when present. */
+  webCitations?: WebCitation[];
 }
 
 /** Matches a bracketed citation number not already part of a markdown link, e.g. "[1]" but not "[1](url)". */
@@ -101,7 +106,31 @@ function SourcesList({ citations }: { citations: Citation[] }) {
   );
 }
 
-export default function StreamingText({ text, className = "", asMarkdown = true, citations }: StreamingTextProps) {
+/** Web-search source list — link chips styled like SourcesList, but each chip
+ *  is a real link (target="_blank") since there's no [N] marker in the text
+ *  pointing back to it. */
+function WebSourcesList({ citations }: { citations: WebCitation[] }) {
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5 border-t border-slate-700/60 pt-2">
+      <span className="text-[10px] uppercase tracking-wide text-slate-500 w-full">Web sources</span>
+      {citations.map((c) => (
+        <a
+          key={c.url}
+          href={c.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={c.cited_text}
+          className="inline-flex items-center gap-1 rounded-full bg-slate-700/60 px-2 py-0.5
+                     text-[11px] text-slate-300 hover:bg-slate-700 hover:text-blue-300"
+        >
+          {c.title}
+        </a>
+      ))}
+    </div>
+  );
+}
+
+export default function StreamingText({ text, className = "", asMarkdown = true, citations, webCitations }: StreamingTextProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -127,6 +156,7 @@ export default function StreamingText({ text, className = "", asMarkdown = true,
         {renderedText}
       </ReactMarkdown>
       {hasCitations && <SourcesList citations={citations!} />}
+      {!!webCitations && webCitations.length > 0 && <WebSourcesList citations={webCitations} />}
       <div ref={endRef} />
     </div>
   );

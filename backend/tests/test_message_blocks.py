@@ -25,7 +25,7 @@ for _name in ("chromadb", "sentence_transformers"):
     if _name not in sys.modules:
         sys.modules[_name] = types.ModuleType(_name)
 
-from services.anthropic_client import serialize_content_blocks
+from services.anthropic_client import extract_web_citations, serialize_content_blocks
 from services.rag_service import _partial_query_from_snapshot
 
 
@@ -132,6 +132,124 @@ def test_empty_content_list():
     assert serialize_content_blocks([]) == []
 
 
+# ── extract_web_citations tests ───────────────────────────────────────────────
+# Covers both runtime shapes (SDK objects via attribute access, plain dicts via
+# key access — same _block_get helper as serialize_content_blocks), the
+# citations=None skip, url-based dedupe/drop rules, and non-text blocks.
+
+def test_extract_web_citations_sdk_style_block():
+    """SDK-style text block (attribute access) with one populated citation."""
+    citation = types.SimpleNamespace(
+        url="https://example.com/a", title="Example A", cited_text="some quoted text",
+    )
+    block = types.SimpleNamespace(type="text", text="Claim [1].", citations=[citation])
+    result = extract_web_citations([block])
+    assert result == [{
+        "url": "https://example.com/a", "title": "Example A", "cited_text": "some quoted text",
+    }], result
+
+
+def test_extract_web_citations_dict_style_block():
+    """Plain-dict text block (key access) with one populated citation."""
+    block = {
+        "type": "text",
+        "text": "Claim.",
+        "citations": [{"url": "https://example.com/b", "title": "Example B", "cited_text": "quote"}],
+    }
+    result = extract_web_citations([block])
+    assert result == [{
+        "url": "https://example.com/b", "title": "Example B", "cited_text": "quote",
+    }], result
+
+
+def test_extract_web_citations_none_citations_skipped():
+    """A text block whose citations field is None (no web grounding) yields nothing."""
+    block = types.SimpleNamespace(type="text", text="Plain text.", citations=None)
+    assert extract_web_citations([block]) == []
+
+
+def test_extract_web_citations_dedupe_by_url_keeps_first():
+    """Two citations sharing a url are deduped, keeping the first-seen entry."""
+    blocks = [
+        types.SimpleNamespace(type="text", text="First.", citations=[
+            types.SimpleNamespace(url="https://example.com/c", title="First Title", cited_text="first quote"),
+        ]),
+        types.SimpleNamespace(type="text", text="Second.", citations=[
+            types.SimpleNamespace(url="https://example.com/c", title="Second Title", cited_text="second quote"),
+        ]),
+    ]
+    result = extract_web_citations(blocks)
+    assert result == [{
+        "url": "https://example.com/c", "title": "First Title", "cited_text": "first quote",
+    }], result
+
+
+def test_extract_web_citations_title_falls_back_to_url():
+    """A citation with a missing/empty title falls back to using the url as the title."""
+    block = types.SimpleNamespace(type="text", text="Claim.", citations=[
+        types.SimpleNamespace(url="https://example.com/d", title="", cited_text="quote"),
+        types.SimpleNamespace(url="https://example.com/e", title=None, cited_text="quote"),
+    ])
+    result = extract_web_citations([block])
+    assert result == [
+        {"url": "https://example.com/d", "title": "https://example.com/d", "cited_text": "quote"},
+        {"url": "https://example.com/e", "title": "https://example.com/e", "cited_text": "quote"},
+    ], result
+
+
+def test_extract_web_citations_url_less_entries_dropped():
+    """A citation with no url (missing or empty) is dropped entirely — nothing to link to."""
+    block = types.SimpleNamespace(type="text", text="Claim.", citations=[
+        types.SimpleNamespace(url=None, title="No URL", cited_text="quote"),
+        types.SimpleNamespace(url="", title="Empty URL", cited_text="quote"),
+        types.SimpleNamespace(url="https://example.com/f", title="Kept", cited_text="quote"),
+    ])
+    result = extract_web_citations([block])
+    assert result == [{
+        "url": "https://example.com/f", "title": "Kept", "cited_text": "quote",
+    }], result
+
+
+def test_extract_web_citations_non_text_blocks_ignored():
+    """server_tool_use / tool_use / web_search_tool_result blocks are never scanned for citations."""
+    blocks = [
+        types.SimpleNamespace(type="server_tool_use", name="web_search", input={"query": "q"}),
+        {"type": "tool_use", "id": "toolu_1", "name": "search_documents", "input": {"query": "q"}},
+        types.SimpleNamespace(type="web_search_tool_result", content=[]),
+        types.SimpleNamespace(type="text", text="Claim.", citations=[
+            types.SimpleNamespace(url="https://example.com/g", title="Kept", cited_text="quote"),
+        ]),
+    ]
+    result = extract_web_citations(blocks)
+    assert result == [{
+        "url": "https://example.com/g", "title": "Kept", "cited_text": "quote",
+    }], result
+
+
+def test_extract_web_citations_empty_content():
+    """An empty content list returns an empty list."""
+    assert extract_web_citations([]) == []
+
+
+def test_extract_web_citations_multiple_blocks_combined_in_order():
+    """Citations from multiple text blocks are combined, preserving first-seen order."""
+    blocks = [
+        types.SimpleNamespace(type="text", text="First claim.", citations=[
+            types.SimpleNamespace(url="https://example.com/h", title="H", cited_text="quote h"),
+        ]),
+        types.SimpleNamespace(type="text", text="No citations here.", citations=None),
+        types.SimpleNamespace(type="text", text="Second claim.", citations=[
+            types.SimpleNamespace(url="https://example.com/i", title="I", cited_text="quote i"),
+            types.SimpleNamespace(url="https://example.com/h", title="H again", cited_text="dup"),  # dup of first
+        ]),
+    ]
+    result = extract_web_citations(blocks)
+    assert result == [
+        {"url": "https://example.com/h", "title": "H", "cited_text": "quote h"},
+        {"url": "https://example.com/i", "title": "I", "cited_text": "quote i"},
+    ], result
+
+
 # ── _partial_query_from_snapshot tests ────────────────────────────────────────
 # Covers both runtime shapes the SDK's InputJsonEvent.snapshot can take (a
 # dict from the tolerant partial-JSON parser, or a plain str fallback), plus
@@ -204,6 +322,16 @@ if __name__ == "__main__":
     _run("serialize_content_blocks: mixed SDK and dict blocks", test_mixed_sdk_and_dict_blocks)
     _run("serialize_content_blocks: tool_use field whitelist", test_tool_use_field_whitelist_drops_unknown_attrs)
     _run("serialize_content_blocks: empty content list", test_empty_content_list)
+
+    _run("extract_web_citations: SDK-style block", test_extract_web_citations_sdk_style_block)
+    _run("extract_web_citations: dict-style block", test_extract_web_citations_dict_style_block)
+    _run("extract_web_citations: citations=None skipped", test_extract_web_citations_none_citations_skipped)
+    _run("extract_web_citations: dedupe by url keeps first", test_extract_web_citations_dedupe_by_url_keeps_first)
+    _run("extract_web_citations: title falls back to url", test_extract_web_citations_title_falls_back_to_url)
+    _run("extract_web_citations: url-less entries dropped", test_extract_web_citations_url_less_entries_dropped)
+    _run("extract_web_citations: non-text blocks ignored", test_extract_web_citations_non_text_blocks_ignored)
+    _run("extract_web_citations: empty content", test_extract_web_citations_empty_content)
+    _run("extract_web_citations: multiple blocks combined in order", test_extract_web_citations_multiple_blocks_combined_in_order)
 
     _run("_partial_query_from_snapshot: dict with query", test_dict_snapshot_with_query)
     _run("_partial_query_from_snapshot: dict without query", test_dict_snapshot_without_query)

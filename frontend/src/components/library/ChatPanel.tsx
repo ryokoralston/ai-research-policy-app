@@ -7,13 +7,16 @@ import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import StreamingText from "@/components/ui/StreamingText";
 import RemindersPanel, { type Reminder } from "./RemindersPanel";
 import DraftsPanel, { type WorkspaceFile } from "./DraftsPanel";
-import type { Citation, ApiChatMessage } from "@/lib/types";
+import type { Citation, ApiChatMessage, WebCitation } from "@/lib/types";
 
 interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   streaming?: boolean;
   citations?: Citation[];
+  // Web-search citations gathered when Claude's answer drew on the web_search
+  // tool (from the "complete" event's web_citations — see rag_service.py).
+  webCitations?: WebCitation[];
   // Block-level messages this assistant turn produced (from the "complete"
   // event's turn_messages) — replayed as chat_history on the next turn so
   // prior tool_use/tool_result blocks survive instead of being flattened to text.
@@ -43,6 +46,8 @@ function pendingToolLabel(toolName: string): string {
   switch (toolName) {
     case "search_documents":
       return "Searching documents…";
+    case "web_search":
+      return "Searching the web…";
     case "get_current_datetime":
       return "Checking current date & time…";
     case "add_duration_to_datetime":
@@ -161,10 +166,14 @@ export default function ChatPanel({
             const toolName = d.name as string;
             setToolStatus(pendingToolLabel(toolName));
           } else if (event === "tool_progress") {
-            // Live-updating query text as it streams in (search_documents only —
-            // the only tool with eager_input_streaming enabled).
+            // Live-updating query text as it streams in. search_documents has
+            // eager_input_streaming enabled so this grows token-by-token;
+            // web_search's query still arrives here too, just as one chunk
+            // (see rag_service.py's tool_input_raw handling).
             if (d.name === "search_documents") {
               setToolStatus(`Searching documents: ${d.query as string}…`);
+            } else if (d.name === "web_search") {
+              setToolStatus(`Searching the web: ${d.query as string}…`);
             }
           } else if (event === "tool") {
             const toolName = d.name as string;
@@ -204,6 +213,7 @@ export default function ChatPanel({
                   ...last,
                   streaming: false,
                   citations: (d.citations as Citation[] | undefined) ?? last.citations,
+                  webCitations: (d.web_citations as WebCitation[] | undefined) ?? last.webCitations,
                   apiMessages: (d.turn_messages as ApiChatMessage[] | undefined) ?? last.apiMessages,
                 };
               }
@@ -320,7 +330,7 @@ export default function ChatPanel({
               >
                 {msg.role === "assistant" ? (
                   <>
-                    <StreamingText text={msg.content} citations={msg.citations} />
+                    <StreamingText text={msg.content} citations={msg.citations} webCitations={msg.webCitations} />
                     {msg.streaming && (
                       <span className="inline-flex items-center gap-1 mt-1 text-slate-400">
                         <LoadingSpinner size="sm" />
