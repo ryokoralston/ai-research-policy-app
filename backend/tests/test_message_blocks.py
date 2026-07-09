@@ -17,7 +17,16 @@ if _BACKEND_DIR not in sys.path:
 
 os.environ.setdefault("DATABASE_URL", "sqlite://")
 
+# rag_service imports chromadb/sentence_transformers transitively (via
+# rag.vector_store / services.embedding_service) — stub them out so this
+# module can import _partial_query_from_snapshot without those heavy/optional
+# deps installed. Same pattern as tests/test_rag_answer.py.
+for _name in ("chromadb", "sentence_transformers"):
+    if _name not in sys.modules:
+        sys.modules[_name] = types.ModuleType(_name)
+
 from services.anthropic_client import serialize_content_blocks
+from services.rag_service import _partial_query_from_snapshot
 
 
 # ── Test runner helpers ───────────────────────────────────────────────────────
@@ -123,6 +132,65 @@ def test_empty_content_list():
     assert serialize_content_blocks([]) == []
 
 
+# ── _partial_query_from_snapshot tests ────────────────────────────────────────
+# Covers both runtime shapes the SDK's InputJsonEvent.snapshot can take (a
+# dict from the tolerant partial-JSON parser, or a plain str fallback), plus
+# the "never let a partial/invalid JSON snapshot raise" requirement.
+
+def test_dict_snapshot_with_query():
+    """dict snapshot (SDK's parsed partial object) with a string query."""
+    assert _partial_query_from_snapshot({"query": "EU AI Act"}) == "EU AI Act"
+
+
+def test_dict_snapshot_without_query():
+    """dict snapshot missing the query key returns None, not a KeyError."""
+    assert _partial_query_from_snapshot({}) is None
+    assert _partial_query_from_snapshot({"other": "value"}) is None
+
+
+def test_dict_snapshot_with_non_string_query():
+    """A non-string query value (e.g. still None mid-stream) returns None."""
+    assert _partial_query_from_snapshot({"query": None}) is None
+    assert _partial_query_from_snapshot({"query": 123}) is None
+
+
+def test_dict_snapshot_with_empty_query():
+    """An empty-string query returns None (nothing useful to display yet)."""
+    assert _partial_query_from_snapshot({"query": ""}) is None
+
+
+def test_str_snapshot_complete_query():
+    """str snapshot with a complete, well-formed query value."""
+    result = _partial_query_from_snapshot('{"query": "EU AI Act penalties"}')
+    assert result == "EU AI Act penalties", result
+
+
+def test_str_snapshot_unterminated_partial_query():
+    """str snapshot mid-stream: the value is cut off (no closing quote) —
+    the regex must still pull out the partial text streamed so far."""
+    result = _partial_query_from_snapshot('{"query": "EU AI Ac')
+    assert result == "EU AI Ac", result
+
+
+def test_str_snapshot_with_escaped_quotes():
+    """Escaped quotes inside the partial value are unescaped in the result."""
+    result = _partial_query_from_snapshot(r'{"query": "the \"AI Act\" penalt')
+    assert result == 'the "AI Act" penalt', result
+
+
+def test_str_snapshot_invalid_garbage():
+    """A string with no recognizable "query" key returns None, never raises."""
+    assert _partial_query_from_snapshot("not json at all {{{") is None
+    assert _partial_query_from_snapshot("") is None
+
+
+def test_non_dict_non_str_snapshot():
+    """Any other runtime type (e.g. an SDK-internal object) returns None."""
+    assert _partial_query_from_snapshot(None) is None
+    assert _partial_query_from_snapshot(42) is None
+    assert _partial_query_from_snapshot(["query", "x"]) is None
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -136,6 +204,16 @@ if __name__ == "__main__":
     _run("serialize_content_blocks: mixed SDK and dict blocks", test_mixed_sdk_and_dict_blocks)
     _run("serialize_content_blocks: tool_use field whitelist", test_tool_use_field_whitelist_drops_unknown_attrs)
     _run("serialize_content_blocks: empty content list", test_empty_content_list)
+
+    _run("_partial_query_from_snapshot: dict with query", test_dict_snapshot_with_query)
+    _run("_partial_query_from_snapshot: dict without query", test_dict_snapshot_without_query)
+    _run("_partial_query_from_snapshot: dict with non-string query", test_dict_snapshot_with_non_string_query)
+    _run("_partial_query_from_snapshot: dict with empty query", test_dict_snapshot_with_empty_query)
+    _run("_partial_query_from_snapshot: str complete query", test_str_snapshot_complete_query)
+    _run("_partial_query_from_snapshot: str unterminated partial query", test_str_snapshot_unterminated_partial_query)
+    _run("_partial_query_from_snapshot: str with escaped quotes", test_str_snapshot_with_escaped_quotes)
+    _run("_partial_query_from_snapshot: str invalid garbage", test_str_snapshot_invalid_garbage)
+    _run("_partial_query_from_snapshot: non-dict/non-str snapshot", test_non_dict_non_str_snapshot)
 
     total = len(_PASSED) + len(_FAILED)
     print(f"\n{'=' * 50}")

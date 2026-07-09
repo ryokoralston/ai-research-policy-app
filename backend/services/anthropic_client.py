@@ -111,6 +111,49 @@ def serialize_content_blocks(content) -> list[dict]:
     return result
 
 
+async def _stream_events(stream) -> AsyncIterator[tuple[str, object]]:
+    """Consume a client.messages.stream() context's enriched event iterator and
+    translate SDK events into this module's event contract. Shared by both
+    streaming call sites in stream_chat_with_tools (the main tool-loop request
+    and the forced tool_choice="none" request) so the event-handling logic
+    lives in exactly one place.
+
+      ("text", str) — text delta (unchanged contract)
+      ("tool_pending", {"name": ...}) — a tool_use content block just started;
+        fires the moment Claude commits to a tool call, before any of its
+        arguments exist
+      ("tool_input_delta", {"name": ..., "partial_json": ..., "snapshot": ...})
+        — incremental tool-argument JSON while it streams. Only arrives
+        unbuffered for tools with eager_input_streaming=True; other tools'
+        arguments still arrive as input_json events, just all at once when
+        the block closes rather than token-by-token.
+
+    Tracks the name of the currently-open tool_use content block (from the
+    most recent content_block_start) so tool_input_delta events — which
+    don't carry a name themselves — can be attributed to the right tool.
+    """
+    current_tool_name: str | None = None
+    async for event in stream:
+        etype = getattr(event, "type", None)
+        if etype == "text":
+            yield ("text", event.text)
+        elif etype == "content_block_start" and getattr(event.content_block, "type", None) == "tool_use":
+            current_tool_name = event.content_block.name
+            yield ("tool_pending", {"name": current_tool_name})
+        elif etype == "input_json" and event.partial_json:
+            snapshot = event.snapshot
+            # Defensive JSON-safety: pass dicts/strs through as-is; anything
+            # else (e.g. an SDK-internal object) gets stringified rather than
+            # risking a non-serializable value reaching the SSE layer.
+            if not isinstance(snapshot, (dict, str)):
+                snapshot = str(snapshot)
+            yield ("tool_input_delta", {
+                "name": current_tool_name,
+                "partial_json": event.partial_json,
+                "snapshot": snapshot,
+            })
+
+
 # ── Client factories ──────────────────────────────────────────────────────────
 
 def _get_anthropic_client(ai_settings: dict) -> anthropic.AsyncAnthropic:
@@ -331,6 +374,9 @@ async def stream_chat_with_tools(
 
     Yields structured events:
       ("text", token_str)  — streamed text delta from Claude
+      ("tool_pending", {"name": ...})  — a tool call has started; its arguments are still generating
+      ("tool_input_delta", {"name": ..., "partial_json": ..., "snapshot": ...})  — incremental
+        tool-argument JSON while it streams
       ("tool_use", {"name": ..., "input": ...})  — emitted before executing each tool call
       ("turn_messages", list[dict])  — last event yielded; the block-level messages
         (assistant tool_use / user tool_result / final assistant text) produced during
@@ -390,8 +436,8 @@ async def stream_chat_with_tools(
             cache_control={"type": "ephemeral"},
             **({"system": system} if system else {}),
         ) as stream:
-            async for text in stream.text_stream:
-                yield ("text", text)
+            async for event in _stream_events(stream):
+                yield event
             final = await stream.get_final_message()
 
         # Verifiable cache signal (see Anthropic docs: cache_read_input_tokens).
@@ -477,8 +523,8 @@ async def stream_chat_with_tools(
             cache_control={"type": "ephemeral"},
             **({"system": system} if system else {}),
         ) as stream:
-            async for text in stream.text_stream:
-                yield ("text", text)
+            async for event in _stream_events(stream):
+                yield event
             final = await stream.get_final_message()
 
     # Append the final text answer as a block-level message. After the loop (and the

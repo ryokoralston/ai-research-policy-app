@@ -30,6 +30,27 @@ interface ChatPanelProps {
 }
 
 /**
+ * Label shown the instant a tool call starts (the "tool_pending" SSE event),
+ * before its arguments have finished streaming in. No input values are
+ * available yet, so this is a shorter, generic version of the per-tool
+ * labels used once the full "tool" event arrives below.
+ */
+function pendingToolLabel(toolName: string): string {
+  switch (toolName) {
+    case "search_documents":
+      return "Searching documents…";
+    case "get_current_datetime":
+      return "Checking current date & time…";
+    case "add_duration_to_datetime":
+      return "Calculating date…";
+    case "set_reminder":
+      return "Setting reminder…";
+    default:
+      return `Running ${toolName}…`;
+  }
+}
+
+/**
  * G-1: extracted from app/library/page.tsx — the "Ask Documents" chat
  * sidebar (Q&A + system prompt configurator + tool-call indicator +
  * reminders). JSX/className are unchanged from the original.
@@ -105,7 +126,19 @@ export default function ChatPanel({
         },
         (event, data) => {
           const d = data as Record<string, unknown>;
-          if (event === "tool") {
+          if (event === "tool_pending") {
+            // Fires the instant Claude commits to a tool call, before its
+            // arguments exist — show a generic per-tool indicator right away
+            // rather than waiting for the full "tool" event.
+            const toolName = d.name as string;
+            setToolStatus(pendingToolLabel(toolName));
+          } else if (event === "tool_progress") {
+            // Live-updating query text as it streams in (search_documents only —
+            // the only tool with eager_input_streaming enabled).
+            if (d.name === "search_documents") {
+              setToolStatus(`Searching documents: ${d.query as string}…`);
+            }
+          } else if (event === "tool") {
             const toolName = d.name as string;
             const toolInput = d.input as Record<string, unknown> | undefined;
             let label: string;

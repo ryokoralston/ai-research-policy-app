@@ -1,4 +1,5 @@
 """RAG pipeline: document indexing and Q&A."""
+import re
 import uuid
 from datetime import datetime
 from typing import AsyncIterator
@@ -182,7 +183,47 @@ SEARCH_DOCUMENTS_TOOL = {
         },
         "required": ["query"],
     },
+    # Fine-grained tool streaming (GA — no beta header needed). Disables
+    # server-side buffering/validation of the streamed input JSON, so the
+    # query streams out token-by-token instead of arriving all at once when
+    # the tool_use block closes. Trade-off: the display path (see
+    # _partial_query_from_snapshot below) must tolerate partial/invalid JSON
+    # while a delta is mid-token. Not applied to the reminder tools — their
+    # arguments are short enough that buffered delivery is already instant.
+    "eager_input_streaming": True,
 }
+
+
+def _partial_query_from_snapshot(snapshot) -> str | None:
+    """Best-effort extraction of the growing "query" string value from a
+    streamed search_documents input snapshot, for live progress display.
+
+    snapshot may be:
+      - a dict (SDK's tolerant partial-JSON parser has already produced a
+        parsed object) — read "query" directly if it's a string.
+      - a str (fallback / defensive case) — the JSON is by definition
+        incomplete mid-stream (e.g. '{"query": "EU AI Ac'), so it is never
+        run through json.loads; instead a tolerant regex pulls out the
+        growing string value even though the surrounding JSON is invalid.
+      - anything else — returns None.
+
+    Returns None (never raises) when no usable partial value can be found,
+    so callers can simply skip the SSE yield in that case.
+    """
+    if isinstance(snapshot, dict):
+        query = snapshot.get("query")
+        return query if isinstance(query, str) and query else None
+    if isinstance(snapshot, str):
+        match = re.search(r'"query"\s*:\s*"((?:[^"\\]|\\.)*)', snapshot)
+        if not match:
+            return None
+        raw = match.group(1)
+        # Minimal unescape of the two characters most likely to appear
+        # mid-stream — this is a display-only best-effort value, not a
+        # full JSON string decoder.
+        unescaped = raw.replace('\\"', '"').replace("\\\\", "\\")
+        return unescaped or None
+    return None
 
 
 async def answer_question(
@@ -325,6 +366,13 @@ async def answer_question(
 
     full_text = ""
     turn_messages: list[dict] = []
+    # Raw accumulated input JSON of the currently-streaming search_documents
+    # call. The SDK's parsed dict snapshot drops string values until their
+    # closing quote arrives (jiter partial_mode), so the dict path only
+    # produces the query once it's complete — accumulating the raw
+    # partial_json chunks ourselves is what makes the query grow
+    # token-by-token in the UI.
+    search_input_raw = ""
     # temperature=0.3: ドキュメントに基づく事実回答なので低め
     async for event_type, payload in stream_chat_with_tools(
         messages,
@@ -333,7 +381,32 @@ async def answer_question(
         tool_executor=execute_tool,
         temperature=0.3,
     ):
-        if event_type == "tool_use":
+        if event_type == "tool_pending":
+            # Fired the instant Claude commits to a tool call, before its
+            # arguments exist — lets the UI show an indicator immediately
+            # instead of waiting for the whole tool_use block to finish.
+            if payload["name"] == "search_documents":
+                search_input_raw = ""  # new block — reset the accumulator
+            yield sse_event("tool_pending", {"name": payload["name"]})
+        elif event_type == "tool_input_delta":
+            # Only search_documents has eager_input_streaming enabled, so this
+            # is the only tool whose arguments arrive incrementally; other
+            # tools' input_json events collapse to a single delta at block
+            # close, which the "tool" event below already covers.
+            if payload["name"] == "search_documents":
+                search_input_raw += payload["partial_json"]
+                # Raw accumulation first (grows per token); dict snapshot as
+                # fallback (complete values only).
+                partial_query = (
+                    _partial_query_from_snapshot(search_input_raw)
+                    or _partial_query_from_snapshot(payload["snapshot"])
+                )
+                if partial_query:
+                    yield sse_event("tool_progress", {
+                        "name": payload["name"],
+                        "query": partial_query,
+                    })
+        elif event_type == "tool_use":
             # Keep "query" field for search_documents so existing frontend code doesn't break;
             # add "input" with the full tool input for all tools (new frontend uses this).
             yield sse_event("tool", {
