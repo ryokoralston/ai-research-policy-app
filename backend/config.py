@@ -11,6 +11,8 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
     tavily_api_key: str = ""
+    voyage_api_key: str = ""
+    voyage_embedding_model: str = "voyage-3-large"
 
     # App login. When set, all /api routes require a bearer token obtained from
     # POST /api/auth/login. When empty, auth is disabled (local-dev convenience)

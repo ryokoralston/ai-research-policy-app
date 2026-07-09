@@ -18,13 +18,21 @@ class RetrievedChunk:
 
 
 class VectorStore:
+    # Legacy default, kept only as a fallback / reference; the collection
+    # actually used is determined per active embedding provider (see below).
     COLLECTION_NAME = "policy_documents"
 
-    def __init__(self):
+    def __init__(self, collection_name: str | None = None):
         settings = get_settings()
+        if collection_name is None:
+            # Import inside __init__ to avoid a module-level import cycle
+            # (services.embedding_service does not import rag.vector_store,
+            # but keeping this local documents the intent and is cheap).
+            from services.embedding_service import EmbeddingService
+            collection_name = EmbeddingService().collection_name
         self._client = chromadb.PersistentClient(path=settings.chroma_persist_dir)
         self._collection = self._client.get_or_create_collection(
-            name=self.COLLECTION_NAME,
+            name=collection_name,
             metadata={"hnsw:space": "cosine"},
         )
 
@@ -83,3 +91,10 @@ class VectorStore:
 
     def count(self) -> int:
         return self._collection.count()
+
+    def clear(self) -> None:
+        """Delete all entries in this collection (used by the reindex script
+        to make reruns idempotent)."""
+        existing = self._collection.get(include=[])
+        if existing["ids"]:
+            self._collection.delete(ids=existing["ids"])
