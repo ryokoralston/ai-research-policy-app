@@ -8,6 +8,7 @@ import UploadPanel from "@/components/library/UploadPanel";
 import FolderSection from "@/components/library/FolderSection";
 import ChatPanel from "@/components/library/ChatPanel";
 import type { Reminder } from "@/components/library/RemindersPanel";
+import type { WorkspaceFile } from "@/components/library/DraftsPanel";
 
 export default function LibraryPage() {
   const [docs, setDocs] = useState<Document[]>([]);
@@ -19,6 +20,9 @@ export default function LibraryPage() {
 
   // Reminders
   const [reminders, setReminders] = useState<Reminder[]>([]);
+
+  // Drafts (text editor tool workspace files)
+  const [draftFiles, setDraftFiles] = useState<WorkspaceFile[]>([]);
 
   const loadDocs = useCallback(() => {
     api.documents.list().then((data) => {
@@ -34,6 +38,13 @@ export default function LibraryPage() {
       .catch(() => {});
   }, []);
 
+  const loadDrafts = useCallback(() => {
+    api.workspace
+      .list()
+      .then((data) => setDraftFiles(data))
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     loadDocs();
     const interval = setInterval(loadDocs, 5000);
@@ -43,6 +54,10 @@ export default function LibraryPage() {
   useEffect(() => {
     loadReminders();
   }, [loadReminders]);
+
+  useEffect(() => {
+    loadDrafts();
+  }, [loadDrafts]);
 
   const handleDeleteReminder = async (id: string) => {
     await api.reminders.delete(id).catch(() => {});
@@ -84,6 +99,8 @@ export default function LibraryPage() {
           reminders={reminders}
           onDeleteReminder={handleDeleteReminder}
           loadReminders={loadReminders}
+          draftFiles={draftFiles}
+          loadDrafts={loadDrafts}
           onClose={() => setQaOpen(false)}
         />
       )}

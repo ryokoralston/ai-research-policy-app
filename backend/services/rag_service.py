@@ -12,6 +12,7 @@ from rag.vector_store import VectorStore
 from services.embedding_service import EmbeddingService
 from services.anthropic_client import stream_text, stream_chat, stream_chat_with_tools, sse_event, UNTRUSTED_CONTENT_GUARD
 from services.reminder_tools import REMINDER_TOOLS, execute_reminder_tool
+from services.text_editor_tool import TEXT_EDITOR_TOOL, TEXT_EDITOR_TOOL_NAME, execute_text_editor_tool
 
 
 def _embed_and_store(
@@ -314,6 +315,9 @@ async def answer_question(
                 )
             context = "\n\n---\n\n".join(context_parts)
             return f"<source_documents>\n{context}\n</source_documents>"
+
+        if name == TEXT_EDITOR_TOOL_NAME:
+            return await execute_text_editor_tool(tool_input)
         raise ValueError(f"Unknown tool: {name}")
 
     # Build system prompt: describe the tool and citation requirements
@@ -334,7 +338,10 @@ async def answer_question(
         "You can also set reminders for the user. "
         "For any relative date or time expression ('next Thursday', 'in two weeks', 'a week from Friday'), "
         "you MUST call get_current_datetime first, then add_duration_to_datetime to compute the exact "
-        "target datetime, and finally call set_reminder — never compute dates yourself."
+        "target datetime, and finally call set_reminder — never compute dates yourself. "
+        "You also have a draft workspace: use the text editor tool to create and revise draft files "
+        "(memos, briefs, notes) when the user asks you to draft, save, or edit a document — refer to "
+        "files by simple relative names like 'briefing.md'."
     )
     system = (
         f"{custom_system}\n\n"
@@ -351,7 +358,10 @@ async def answer_question(
         "You can also set reminders for the user. "
         "For any relative date or time ('next Thursday', 'in two weeks', 'a week from Friday'), "
         "call get_current_datetime first, then add_duration_to_datetime, then set_reminder — "
-        "never compute dates yourself."
+        "never compute dates yourself. "
+        "You also have a draft workspace: use the text editor tool to create and revise draft files "
+        "(memos, briefs, notes) when the user asks you to draft, save, or edit a document — refer to "
+        "files by simple relative names like 'briefing.md'."
         if custom_system else default_system
     )
     # The retrieved chunks are untrusted document content — guard against any
@@ -377,7 +387,7 @@ async def answer_question(
     async for event_type, payload in stream_chat_with_tools(
         messages,
         system=system,
-        tools=[SEARCH_DOCUMENTS_TOOL, *REMINDER_TOOLS],
+        tools=[SEARCH_DOCUMENTS_TOOL, *REMINDER_TOOLS, TEXT_EDITOR_TOOL],
         tool_executor=execute_tool,
         temperature=0.3,
     ):

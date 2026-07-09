@@ -198,6 +198,17 @@ export const api = {
       request<{ deleted: string }>(`/api/reminders/${id}`, { method: "DELETE" }),
   },
 
+  workspace: {
+    list: () =>
+      request<{ name: string; size_bytes: number; modified_at: string }[]>(
+        "/api/workspace"
+      ),
+    getFile: (name: string) =>
+      request<{ name: string; content: string }>(
+        `/api/workspace/file?name=${encodeURIComponent(name)}`
+      ),
+  },
+
   auth: {
     status: () => request<{ auth_required: boolean }>("/api/auth/status"),
     login: (password: string) =>

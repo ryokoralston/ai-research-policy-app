@@ -6,6 +6,7 @@ import { api, postStream } from "@/lib/api";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import StreamingText from "@/components/ui/StreamingText";
 import RemindersPanel, { type Reminder } from "./RemindersPanel";
+import DraftsPanel, { type WorkspaceFile } from "./DraftsPanel";
 import type { Citation, ApiChatMessage } from "@/lib/types";
 
 interface ChatMessage {
@@ -26,6 +27,9 @@ interface ChatPanelProps {
   onDeleteReminder: (id: string) => void;
   /** Refresh the reminders list — called after a set_reminder tool call completes. */
   loadReminders: () => void;
+  draftFiles: WorkspaceFile[];
+  /** Refresh the drafts list — called after the text editor tool completes. */
+  loadDrafts: () => void;
   onClose: () => void;
 }
 
@@ -45,8 +49,30 @@ function pendingToolLabel(toolName: string): string {
       return "Calculating date…";
     case "set_reminder":
       return "Setting reminder…";
+    case "str_replace_based_edit_tool":
+      return "Working on draft files…";
     default:
       return `Running ${toolName}…`;
+  }
+}
+
+/**
+ * Per-command label for the text editor tool's full "tool" event, once its
+ * input (command + path) has finished streaming in.
+ */
+function textEditorToolLabel(input: Record<string, unknown> | undefined): string {
+  const command = input?.command as string | undefined;
+  const path = (input?.path as string | undefined) ?? "";
+  switch (command) {
+    case "view":
+      return `Reading draft: ${path}…`;
+    case "create":
+      return `Creating draft: ${path}…`;
+    case "str_replace":
+    case "insert":
+      return `Editing draft: ${path}…`;
+    default:
+      return "Working on draft files…";
   }
 }
 
@@ -60,6 +86,8 @@ export default function ChatPanel({
   reminders,
   onDeleteReminder,
   loadReminders,
+  draftFiles,
+  loadDrafts,
   onClose,
 }: ChatPanelProps) {
   const [question, setQuestion] = useState("");
@@ -150,6 +178,8 @@ export default function ChatPanel({
               label = "Calculating date…";
             } else if (toolName === "set_reminder") {
               label = `Setting reminder: ${toolInput?.content as string ?? ""}…`;
+            } else if (toolName === "str_replace_based_edit_tool") {
+              label = textEditorToolLabel(toolInput);
             } else {
               label = `Running ${toolName}…`;
             }
@@ -182,6 +212,8 @@ export default function ChatPanel({
             setQaRunning(false);
             // Refresh reminders in case a set_reminder tool call was made
             loadReminders();
+            // Refresh drafts in case the text editor tool wrote/edited a file
+            loadDrafts();
           }
         }
       );
@@ -263,6 +295,9 @@ export default function ChatPanel({
 
       {/* Reminders panel */}
       <RemindersPanel reminders={reminders} onDelete={onDeleteReminder} />
+
+      {/* Drafts panel */}
+      <DraftsPanel files={draftFiles} />
 
       {/* Chat messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">

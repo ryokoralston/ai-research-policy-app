@@ -15,6 +15,7 @@ from routers.digest import router as digest_router, record_sent, set_scheduler
 from routers.settings import router as settings_router
 from routers.auth import router as auth_router
 from routers.reminders import router as reminders_router
+from routers.workspace import router as workspace_router
 from services.auth import auth_enabled, require_auth
 from services.digest_service import send_digest
 
@@ -119,6 +120,7 @@ app.include_router(debate.router, dependencies=_protected)
 app.include_router(digest_router, dependencies=_protected)
 app.include_router(settings_router, dependencies=_protected)
 app.include_router(reminders_router, dependencies=_protected)
+app.include_router(workspace_router, dependencies=_protected)
 
 
 @app.get("/health")

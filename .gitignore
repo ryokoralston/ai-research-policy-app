@@ -24,6 +24,9 @@ venv/
 backend/data/
 data/
 
+# ── Draft workspace (text editor tool scratch files) ───────────────────────────
+backend/workspace/
+
 # ── Node / Next.js ────────────────────────────────────────────────────────────
 node_modules/
 frontend/.next/
