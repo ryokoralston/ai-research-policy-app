@@ -418,6 +418,11 @@ async def stream_chat_with_tools(
         async def _run_tool(block) -> dict:
             try:
                 result = await tool_executor(block.name, block.input)
+                # The Messages API requires tool_result content to be a string (or a
+                # content-block list) — json.dumps keeps structured tool outputs
+                # (e.g. a future tool returning a dict/list) replayable on the wire.
+                if not isinstance(result, str):
+                    result = json.dumps(result)
                 return {
                     "type": "tool_result",
                     "tool_use_id": block.id,

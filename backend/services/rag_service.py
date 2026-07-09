@@ -226,7 +226,13 @@ async def answer_question(
     next_citation_index = max((c["index"] for c in ordered_citations), default=0)
 
     async def execute_tool(name: str, tool_input: dict) -> str:
-        """Run a tool call requested by Claude and return the result as a string."""
+        """Run a tool call requested by Claude and return the result as a string.
+
+        Raises ValueError for an unrecognized tool name so the caller's _run_tool
+        (anthropic_client.stream_chat_with_tools) converts it into an is_error=True
+        tool_result — an unknown-tool string result would otherwise look like a
+        normal success to Claude, leaving it unable to tell the call failed.
+        """
         nonlocal next_citation_index
         # Try reminder tools first; returns None if the name doesn't match any of them
         reminder_result = await execute_reminder_tool(name, tool_input, db)
@@ -267,7 +273,7 @@ async def answer_question(
                 )
             context = "\n\n---\n\n".join(context_parts)
             return f"<source_documents>\n{context}\n</source_documents>"
-        return f"Unknown tool: {name}"
+        raise ValueError(f"Unknown tool: {name}")
 
     # Build system prompt: describe the tool and citation requirements
     default_system = (

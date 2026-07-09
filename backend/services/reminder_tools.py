@@ -104,33 +104,8 @@ SET_REMINDER_TOOL = {
 
 REMINDER_TOOLS = [GET_CURRENT_DATETIME_TOOL, ADD_DURATION_TO_DATETIME_TOOL, SET_REMINDER_TOOL]
 
-_REMINDER_TOOL_NAMES = {t["name"] for t in REMINDER_TOOLS}
-
 # Weekday names indexed Monday=0 … Sunday=6 (matches datetime.weekday())
 _WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-
-
-# ── Tool executor ─────────────────────────────────────────────────────────────
-
-async def execute_reminder_tool(name: str, tool_input: dict, db: Session) -> str | None:
-    """Execute one of the three reminder tools.
-
-    Returns a result string on success/error, or None if the tool name is not
-    one of the reminder tools (so the caller can fall through to other tools).
-    """
-    if name not in _REMINDER_TOOL_NAMES:
-        return None
-
-    if name == "get_current_datetime":
-        return _get_current_datetime(tool_input)
-
-    if name == "add_duration_to_datetime":
-        return _add_duration_to_datetime(tool_input)
-
-    if name == "set_reminder":
-        return await _set_reminder(tool_input, db)
-
-    return None  # unreachable, but satisfies type checker
 
 
 def _get_current_datetime(tool_input: dict | None = None) -> str:
@@ -222,3 +197,36 @@ async def _set_reminder(tool_input: dict, db: Session) -> str:
         f"You will be reminded to: \"{content}\" "
         f"on {due_at.strftime('%A, %B %-d, %Y at %-I:%M %p')} ({weekday})."
     )
+
+
+# ── Tool registry / executor ──────────────────────────────────────────────────
+# Registry-based dispatch: adding a tool means adding one entry here, not another
+# if/elif branch in execute_reminder_tool. Handlers are normalized to a uniform
+# async (tool_input, db) -> str signature so the registry can hold a plain
+# dict[str, callable] regardless of whether the underlying handler is sync or
+# already async.
+
+def _sync_handler(fn):
+    """Wrap a sync (tool_input) -> str handler as an async (tool_input, db) -> str."""
+    async def wrapper(tool_input: dict, db: Session) -> str:
+        return fn(tool_input)
+    return wrapper
+
+
+_REMINDER_TOOL_HANDLERS: dict[str, callable] = {
+    "get_current_datetime": _sync_handler(_get_current_datetime),
+    "add_duration_to_datetime": _sync_handler(_add_duration_to_datetime),
+    "set_reminder": _set_reminder,  # already async (tool_input, db) -> str
+}
+
+
+async def execute_reminder_tool(name: str, tool_input: dict, db: Session) -> str | None:
+    """Execute one of the reminder tools via the handler registry.
+
+    Returns a result string on success/error, or None if the tool name is not
+    one of the reminder tools (so the caller can fall through to other tools).
+    """
+    handler = _REMINDER_TOOL_HANDLERS.get(name)
+    if handler is None:
+        return None
+    return await handler(tool_input, db)
