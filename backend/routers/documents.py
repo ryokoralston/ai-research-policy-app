@@ -213,6 +213,16 @@ def delete_document(doc_id: str, db: Session = Depends(get_db)):
             doc_id, exc_info=True,
         )
 
+    # Remove from the BM25 lexical index (best effort, same policy as above)
+    try:
+        from rag.lexical_index import LexicalIndex
+        LexicalIndex().delete_document(doc_id)
+    except Exception:
+        logger.warning(
+            "BM25 index cleanup failed for document %s — continuing with DB delete",
+            doc_id, exc_info=True,
+        )
+
     # Remove file
     if doc.file_path and os.path.exists(doc.file_path):
         os.remove(doc.file_path)

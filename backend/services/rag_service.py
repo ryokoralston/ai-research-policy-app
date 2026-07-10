@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from models import Document, DocumentChunk
 from rag.chunker import chunk_pdf, chunk_html, chunk_plain_text, TextChunk, _approx_tokens
+from rag.lexical_index import LexicalIndex
 from rag.vector_store import VectorStore
 from services.embedding_service import EmbeddingService
 from services.anthropic_client import stream_text, stream_chat, stream_chat_with_tools, sse_event, UNTRUSTED_CONTENT_GUARD
@@ -40,6 +41,7 @@ def _embed_and_store(
     """
     embed_service = EmbeddingService()
     vs = VectorStore()
+    lexical = LexicalIndex()
 
     texts = [c.content for c in chunks]
     embeddings = embed_service.embed_texts(texts)
@@ -60,20 +62,30 @@ def _embed_and_store(
             chroma_id=chunk_id,
         ))
 
+    metadatas = [
+        {
+            "doc_id": doc.id,
+            "page_number": c.page_number,
+            "section_header": c.section_header or "",
+            "chunk_index": c.chunk_index,
+        }
+        for c in chunks
+    ]
+
     # Batch add to ChromaDB
     vs.add_chunks(
         chunk_ids=chunk_ids,
         embeddings=embeddings,
         documents=texts,
-        metadatas=[
-            {
-                "doc_id": doc.id,
-                "page_number": c.page_number,
-                "section_header": c.section_header or "",
-                "chunk_index": c.chunk_index,
-            }
-            for c in chunks
-        ],
+        metadatas=metadatas,
+    )
+
+    # Mirror into the lexical (BM25) index with the same ids/texts/metadata
+    # so exact-term search stays in sync with semantic search.
+    lexical.add_chunks(
+        chunk_ids=chunk_ids,
+        documents=texts,
+        metadatas=metadatas,
     )
 
     db.bulk_save_objects(db_chunks)

@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/research.db"
     chroma_persist_dir: str = "./data/chroma"
     uploads_dir: str = "./data/uploads"
+    bm25_index_path: str = "./data/bm25.db"
 
     claude_model: str = "claude-opus-4-6"
     claude_fast_model: str = "claude-haiku-4-5-20251001"
