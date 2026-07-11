@@ -11,8 +11,9 @@ app DB (models.DocumentChunk / database.py) and from ChromaDB's persist
 dir — it is purely a search index and can always be rebuilt from the main
 DB via scripts/build_bm25_index.py.
 
-This is index infrastructure only: nothing in rag/retriever.py calls into
-this yet. Hybrid merging of lexical + vector results is a future change.
+This index is fused with ChromaDB's semantic search results in
+rag/retriever.py's Retriever.retrieve, via Reciprocal Rank Fusion
+(rag/retriever.py's rrf_fuse).
 """
 import os
 import re
