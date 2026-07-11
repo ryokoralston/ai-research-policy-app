@@ -4,8 +4,10 @@ Provides both streaming (SSE) and non-streaming text generation.
 Model defaults are loaded from DB (ModelSettings) with a 60-second cache.
 """
 import asyncio
+import base64
 import json
 import logging
+import os
 import time
 from typing import AsyncIterator
 
@@ -304,6 +306,89 @@ async def generate_json(
     )
     # Strip the markdown fence prefix, then strip surrounding whitespace
     return json.loads(raw[len("```json"):].strip())
+
+
+# Extensions this app treats as vision-ingestible images, mapped to the
+# media_type the Messages API expects on an image content block. Single
+# source of truth — used both to build image content blocks here and (via
+# image_media_type) by rag_service's ingestion branch and the upload
+# router's extension allowlist.
+IMAGE_MEDIA_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+
+
+def image_media_type(filename: str) -> str | None:
+    """Map a filename's extension to an Anthropic vision media_type.
+
+    Case-insensitive. Returns None for extensions the vision API doesn't
+    support (including no extension at all) — callers use that to decide
+    whether a file should go through the image-ingestion path at all.
+    Pure function, no I/O — safe to unit test directly.
+    """
+    ext = os.path.splitext(filename)[1].lower()
+    return IMAGE_MEDIA_TYPES.get(ext)
+
+
+def _image_message_content(image_bytes: bytes, media_type: str, prompt: str) -> list[dict]:
+    """Build the user-message content list for a vision request: an image
+    block first, then a text block — the order the Messages API requires.
+
+    Factored out of generate_text_with_image so the content-block assembly
+    (base64 encoding, block shape, ordering) is unit-testable without a live
+    API call.
+    """
+    encoded = base64.standard_b64encode(image_bytes).decode()
+    return [
+        {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": encoded}},
+        {"type": "text", "text": prompt},
+    ]
+
+
+async def generate_text_with_image(
+    prompt: str,
+    image_bytes: bytes,
+    media_type: str,
+    system: str = "",
+    model: str | None = None,
+    max_tokens: int = 4096,
+) -> str:
+    """Non-streaming vision call: send one image + a text prompt, return the
+    text response. Used to turn an uploaded image into a searchable text
+    description for RAG indexing (see rag_service.index_document).
+
+    Anthropic-only — this app has no vision path for the OpenAI provider, so
+    an OpenAI model raises ValueError rather than silently misrouting or
+    hitting an API that doesn't support the request shape.
+
+    Default model is ai_settings["main_model"] (image-understanding quality
+    matters most when the description becomes the document's entire
+    searchable text) — pass model=ai_settings["fast_model"] explicitly for
+    lighter-weight vision uses.
+
+    Mirrors generate_text's response handling: joins all text blocks in the
+    response rather than assuming exactly one.
+    """
+    ai_settings = _load_ai_settings()
+    model = model or ai_settings["main_model"]
+
+    if _is_openai(model):
+        raise ValueError(f"generate_text_with_image does not support OpenAI models: {model}")
+
+    client = _get_anthropic_client(ai_settings)
+    kwargs: dict = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": _image_message_content(image_bytes, media_type, prompt)}],
+    }
+    if system:
+        kwargs["system"] = system
+    message = await client.messages.create(**kwargs)
+    return "".join(b.text for b in message.content if b.type == "text")  # type: ignore[union-attr]
 
 
 async def stream_text(

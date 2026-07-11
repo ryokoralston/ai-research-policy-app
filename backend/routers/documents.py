@@ -13,13 +13,17 @@ from database import get_db
 from models import Document, DocumentChunk
 from schemas import DocumentResponse, DocumentDetail, DocumentAskRequest
 from schemas.document import IngestUrlRequest, DocumentFolderRequest, FolderRenameRequest
+from services.anthropic_client import IMAGE_MEDIA_TYPES
 from services.ingestion import _extract_youtube_id, _get_youtube_transcript, _scrape_url
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_EXTENSIONS = {".pdf", ".txt", ".html", ".htm"}
+# Text/document formats plus the image extensions vision-ingestion supports
+# (single source of truth: services.anthropic_client.IMAGE_MEDIA_TYPES, also
+# used by rag_service.index_document to route images through Claude vision).
+ALLOWED_EXTENSIONS = {".pdf", ".txt", ".html", ".htm"} | set(IMAGE_MEDIA_TYPES.keys())
 
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024   # 25 MB cap on uploaded files
 
@@ -38,7 +42,10 @@ async def upload_document(
     doc_id = str(uuid.uuid4())
     ext = os.path.splitext(file.filename or "")[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="Only PDF, TXT, and HTML files are supported")
+        raise HTTPException(
+            status_code=400,
+            detail="Only PDF, TXT, HTML, and image files (PNG, JPG, WEBP, GIF) are supported",
+        )
 
     file_path = os.path.join(settings.uploads_dir, f"{doc_id}{ext}")
     # Read with a hard cap to avoid loading an unbounded file into memory.

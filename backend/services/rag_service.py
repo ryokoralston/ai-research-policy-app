@@ -11,9 +11,40 @@ from rag.chunker import chunk_pdf, chunk_html, chunk_plain_text, TextChunk, _app
 from rag.lexical_index import LexicalIndex
 from rag.vector_store import VectorStore
 from services.embedding_service import EmbeddingService
-from services.anthropic_client import stream_text, stream_chat, stream_chat_with_tools, sse_event, UNTRUSTED_CONTENT_GUARD
+from services.anthropic_client import (
+    stream_text, stream_chat, stream_chat_with_tools, sse_event, UNTRUSTED_CONTENT_GUARD,
+    generate_text_with_image, image_media_type,
+)
 from services.reminder_tools import REMINDER_TOOLS, execute_reminder_tool
 from services.text_editor_tool import TEXT_EDITOR_TOOL, TEXT_EDITOR_TOOL_NAME, execute_text_editor_tool
+
+
+# Prompt used to turn an uploaded image into a searchable text document for
+# the RAG library. Written for indexing, not chat — no preamble/meta-
+# commentary, since the entire output becomes the document's chunked,
+# embedded content.
+IMAGE_DESCRIPTION_PROMPT = (
+    "Produce a searchable text rendition of this image for a policy research "
+    "document library.\n\n"
+    "Start with a short title line summarizing the image. Then:\n"
+    "- Transcribe ALL visible text verbatim, exactly as it appears — labels, "
+    "captions, headings, numbers, legends, footnotes.\n"
+    "- If the image is a chart or graph: state the chart type, the axes and "
+    "their units, each data series, and approximate data values for each "
+    "series.\n"
+    "- If the image is a diagram, map, or photograph: describe concretely and "
+    "in detail what it shows — objects, layout, spatial relationships, and "
+    "any notable features — so someone who cannot see the image understands "
+    "its content.\n\n"
+    "Format the output in markdown. Do not include any preamble, meta-"
+    "commentary, or statements about what you are doing or what kind of image "
+    "this is — output only the description itself."
+)
+
+# Prepended to every image-derived description so downstream consumers (chat
+# citations, document detail views) can tell the text was machine-generated
+# from an image rather than extracted verbatim from a text-native source.
+IMAGE_DOC_MARKER = "[Image document — automatically transcribed by AI vision]"
 
 
 def _embed_and_store(
@@ -97,7 +128,9 @@ def _embed_and_store(
 
 
 async def index_document(doc_id: str, db: Session) -> None:
-    """Chunk file and index into ChromaDB. Supports PDF, TXT, HTML. Called as a background task."""
+    """Chunk file and index into ChromaDB. Supports PDF, TXT, HTML, and images
+    (PNG/JPG/WEBP/GIF — described via Claude vision, then chunked as text).
+    Called as a background task."""
     import os as _os
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc or not doc.file_path:
@@ -105,11 +138,19 @@ async def index_document(doc_id: str, db: Session) -> None:
 
     try:
         ext = _os.path.splitext(doc.file_path)[1].lower()
+        media_type = image_media_type(doc.file_path)
         if ext == ".pdf":
             chunks, page_count, word_count = chunk_pdf(doc.file_path)
         elif ext in (".html", ".htm"):
             with open(doc.file_path, encoding="utf-8", errors="ignore") as f:
                 chunks, word_count = chunk_html(f.read())
+            page_count = None
+        elif media_type:
+            with open(doc.file_path, "rb") as f:
+                image_bytes = f.read()
+            description = await generate_text_with_image(IMAGE_DESCRIPTION_PROMPT, image_bytes, media_type)
+            description = f"{IMAGE_DOC_MARKER}\n{description}"
+            chunks, word_count = chunk_plain_text(description)
             page_count = None
         else:  # .txt or transcript
             with open(doc.file_path, encoding="utf-8", errors="ignore") as f:

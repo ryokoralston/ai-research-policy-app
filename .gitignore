@@ -22,6 +22,7 @@ venv/
 
 # ── Data / uploads / DB ───────────────────────────────────────────────────────
 backend/data/
+backend/uploads/
 data/
 
 # ── Draft workspace (text editor tool scratch files) ───────────────────────────

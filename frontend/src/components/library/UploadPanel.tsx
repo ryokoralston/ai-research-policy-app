@@ -24,10 +24,15 @@ export default function UploadPanel({ onUploaded }: UploadPanelProps) {
 
   const handleUpload = async (files: File[]) => {
     const invalid = files.filter(
-      (f) => !["pdf", "txt", "html", "htm"].includes(f.name.split(".").pop()?.toLowerCase() ?? "")
+      (f) => !["pdf", "txt", "html", "htm", "png", "jpg", "jpeg", "webp", "gif"].includes(
+        f.name.split(".").pop()?.toLowerCase() ?? ""
+      )
     );
     if (invalid.length > 0) {
-      alert(`Unsupported file type: ${invalid.map((f) => f.name).join(", ")}\nOnly PDF, TXT, and HTML files are supported.`);
+      alert(
+        `Unsupported file type: ${invalid.map((f) => f.name).join(", ")}\n` +
+          "Only PDF, TXT, HTML, and image files (PNG, JPG, WEBP, GIF) are supported."
+      );
       return;
     }
     setUploading(true);
@@ -104,7 +109,7 @@ export default function UploadPanel({ onUploaded }: UploadPanelProps) {
             browse
             <input
               type="file"
-              accept=".pdf,.txt,.html,.htm"
+              accept=".pdf,.txt,.html,.htm,.png,.jpg,.jpeg,.webp,.gif"
               multiple
               style={{ display: "none" }}
               onChange={(e) =>
@@ -113,7 +118,7 @@ export default function UploadPanel({ onUploaded }: UploadPanelProps) {
             />
           </label>
         </p>
-        <p className="text-slate-600 text-xs">PDF, TXT, HTML — multiple files supported</p>
+        <p className="text-slate-600 text-xs">PDF, TXT, HTML, images (PNG/JPG/WEBP/GIF) — multiple files supported</p>
         {uploading && <div className="mt-2"><LoadingSpinner size="sm" /></div>}
       </div>
     </>
