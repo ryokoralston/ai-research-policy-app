@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from models import Report, ReportSection, ResearchSession, Document, DocumentChunk, Debate, DebateArgument
 from schemas import ReportGenerateRequest
-from services.anthropic_client import stream_text, sse_event, UNTRUSTED_CONTENT_GUARD
+from services.anthropic_client import stream_text_with_thinking, sse_event, UNTRUSTED_CONTENT_GUARD
 from services.citation_verifier import verify_grounding
 from templates import TEMPLATES
 
@@ -79,7 +79,10 @@ async def generate_report_stream(
         )
 
         section_content = ""
-        async for token in stream_text(prompt, system=system_prompt):
+        async for kind, token in stream_text_with_thinking(prompt, system=system_prompt):
+            if kind == "thinking":
+                yield sse_event("thinking", {"text": token, "section": section_key})
+                continue
             section_content += token
             yield sse_event("token", {"text": token, "section": section_key})
 
@@ -181,7 +184,10 @@ async def _generate_single_pass(
     yield sse_event("section_start", {"section": "full_report", "title": "Report"})
 
     full_content_raw = ""
-    async for token in stream_text(prompt, system=system_prompt):
+    async for kind, token in stream_text_with_thinking(prompt, system=system_prompt):
+        if kind == "thinking":
+            yield sse_event("thinking", {"text": token, "section": "full_report"})
+            continue
         full_content_raw += token
         yield sse_event("token", {"text": token, "section": "full_report"})
 

@@ -9,6 +9,7 @@ import Badge from "@/components/ui/Badge";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import StreamingText from "@/components/ui/StreamingText";
 import CitationConfidenceCard from "@/components/ui/CitationConfidenceCard";
+import ReasoningPanel from "@/components/ui/ReasoningPanel";
 
 const ANALYSIS_TYPES = [
   { id: "technology", label: "Technology" },
@@ -52,6 +53,7 @@ export default function AnalysisPage() {
   const [generating, setGenerating] = useState(false);
   const [currentSection, setCurrentSection] = useState("");
   const [outputText, setOutputText] = useState("");
+  const [thinkingText, setThinkingText] = useState("");
   const [scores, setScores] = useState<Record<string, number> | null>(null);
   const [citationConfidence, setCitationConfidence] = useState<CitationConfidence | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -69,6 +71,7 @@ export default function AnalysisPage() {
     if (!subject.trim()) return;
     setGenerating(true);
     setOutputText("");
+    setThinkingText("");
     setScores(null);
     setCitationConfidence(null);
     setError(null);
@@ -82,6 +85,8 @@ export default function AnalysisPage() {
           const d = data as Record<string, unknown>;
           if (event === "section_start") {
             setCurrentSection(d.title as string);
+          } else if (event === "thinking") {
+            setThinkingText((prev) => prev + (d.text as string));
           } else if (event === "token") {
             setOutputText((prev) => prev + (d.text as string));
           } else if (event === "scores") {
@@ -191,6 +196,7 @@ export default function AnalysisPage() {
           {error && (
             <div className="bg-red-900/30 border border-red-800 rounded-lg p-4 text-red-300 text-sm mb-4">{error}</div>
           )}
+          <ReasoningPanel text={thinkingText} />
           <div className="grid grid-cols-3 gap-6">
             {scores && (
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">

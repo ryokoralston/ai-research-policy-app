@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from models import RiskAnalysis, ResearchSession
 from schemas import AnalysisStartRequest
-from services.anthropic_client import generate_json, stream_text, sse_event, UNTRUSTED_CONTENT_GUARD
+from services.anthropic_client import generate_json, stream_text_with_thinking, sse_event, UNTRUSTED_CONTENT_GUARD
 from services.citation_verifier import verify_grounding
 from services.research_agent import run_research_agent
 from templates import TEMPLATES
@@ -102,10 +102,16 @@ async def run_risk_analysis(
         )
 
         section_content = ""
-        # temperature=0.3: リスク分析は論理的・再現性重視のため低め
+        # temperature=0.3 (logical/reproducible output for risk analysis) is no
+        # longer passed here — adaptive thinking rejects a non-default
+        # temperature (400 from the API). Thinking is on by default now, which
+        # gives its own consistency benefit for this reasoning-heavy section.
         # System guard: research_material is untrusted — treat it as data only.
         section_system = template["system"] + "\n\n" + UNTRUSTED_CONTENT_GUARD
-        async for token in stream_text(prompt, system=section_system, temperature=0.3):
+        async for kind, token in stream_text_with_thinking(prompt, system=section_system):
+            if kind == "thinking":
+                yield sse_event("thinking", {"text": token, "section": section_key})
+                continue
             section_content += token
             yield sse_event("token", {"text": token, "section": section_key})
 

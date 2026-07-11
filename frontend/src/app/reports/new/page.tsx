@@ -9,6 +9,7 @@ import { countWords, parseWordRange, wordCountColor } from "@/lib/wordCount";
 import StreamingText from "@/components/ui/StreamingText";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import CitationConfidenceCard from "@/components/ui/CitationConfidenceCard";
+import ReasoningPanel from "@/components/ui/ReasoningPanel";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -91,6 +92,7 @@ function NewReportForm() {
   const [generating, setGenerating]     = useState(false);
   const [currentSection, setCurrentSection] = useState("");
   const [outputText, setOutputText]     = useState("");
+  const [thinkingText, setThinkingText] = useState("");
   const [reportId, setReportId]         = useState<string | null>(null);
   const [citationConfidence, setCitationConfidence] = useState<CitationConfidence | null>(null);
   const [error, setError]               = useState<string | null>(null);
@@ -181,6 +183,7 @@ function NewReportForm() {
     setStep(3);
     setGenerating(true);
     setOutputText("");
+    setThinkingText("");
     setCitationConfidence(null);
     setError(null);
     abortRef.current = new AbortController();
@@ -202,6 +205,8 @@ function NewReportForm() {
           const d = data as Record<string, unknown>;
           if (event === "section_start") {
             setCurrentSection(d.title as string);
+          } else if (event === "thinking") {
+            setThinkingText((prev) => prev + (d.text as string));
           } else if (event === "token") {
             setOutputText((prev) => prev + (d.text as string));
           } else if (event === "verification") {
@@ -597,6 +602,8 @@ function NewReportForm() {
                   </span>
                 </div>
               )}
+
+              <ReasoningPanel text={thinkingText} />
 
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 min-h-96">
                 {outputText ? (

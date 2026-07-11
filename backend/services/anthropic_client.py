@@ -353,6 +353,99 @@ async def stream_text(
             yield text
 
 
+def _thinking_stream_tuple(event) -> tuple[str, str] | None:
+    """Pure mapping from a raw Anthropic stream event to a (kind, text) tuple.
+
+    Dispatches only on content_block_delta events:
+      delta.type == "thinking_delta" -> ("thinking", delta.thinking)
+      delta.type == "text_delta"     -> ("text", delta.text)
+    Every other event type (message_start, content_block_start, message_delta,
+    message_stop, content_block_stop, ...) returns None.
+
+    Empty delta text (e.g. delta.thinking == "" when thinking.display is
+    "omitted") still returns a tuple with an empty string — this function's
+    job is dispatch, not filtering. Callers that want to skip empty deltas
+    (e.g. stream_text_with_thinking, to avoid emitting useless SSE events)
+    filter on the returned text themselves.
+
+    Factored out from stream_text_with_thinking so the event->tuple mapping
+    is unit-testable with plain fake objects (e.g. types.SimpleNamespace),
+    with no live API call required.
+    """
+    if getattr(event, "type", None) != "content_block_delta":
+        return None
+    delta = getattr(event, "delta", None)
+    delta_type = getattr(delta, "type", None)
+    if delta_type == "thinking_delta":
+        return ("thinking", getattr(delta, "thinking", "") or "")
+    if delta_type == "text_delta":
+        return ("text", getattr(delta, "text", "") or "")
+    return None
+
+
+async def stream_text_with_thinking(
+    prompt: str,
+    system: str = "",
+    model: str | None = None,
+    max_tokens: int = 8192,
+) -> AsyncIterator[tuple[str, str]]:
+    """Streaming text generation with adaptive thinking. Yields (kind, text)
+    tuples in stream order: ("thinking", delta_text) for thinking deltas and
+    ("text", delta_text) for text deltas.
+
+    Anthropic path: thinking={"type": "adaptive"} (no beta header needed).
+    temperature is intentionally NOT sent — extended-thinking sampling
+    constraint on the API; passing it alongside thinking returns a 400.
+    Raw stream events are iterated directly (not stream.text_stream, which
+    only surfaces text deltas) and dispatched via _thinking_stream_tuple.
+
+    OpenAI path (_is_openai(model)): no thinking support on that provider —
+    falls back to the same streaming shape as stream_text and yields
+    everything as ("text", delta).
+
+    Never use this for prefill paths (generate_text/generate_json) — thinking
+    and assistant-turn prefill are incompatible.
+    """
+    ai_settings = _load_ai_settings()
+    model = model or ai_settings["main_model"]
+
+    if _is_openai(model):
+        client = _get_openai_client(ai_settings)
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+        stream = await client.chat.completions.create(
+            model=model,
+            max_tokens=max_tokens,
+            messages=messages,
+            stream=True,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield ("text", delta)
+        return
+
+    client = _get_anthropic_client(ai_settings)
+    kwargs: dict = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "thinking": {"type": "adaptive"},
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    if system:
+        kwargs["system"] = system
+    async with client.messages.stream(**kwargs) as stream:
+        async for event in stream:
+            mapped = _thinking_stream_tuple(event)
+            if mapped is None:
+                continue
+            kind, text = mapped
+            if text:
+                yield (kind, text)
+
+
 async def stream_chat(
     messages: list[dict],
     system: str = "",
