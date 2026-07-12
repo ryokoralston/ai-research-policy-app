@@ -391,6 +391,67 @@ async def generate_text_with_image(
     return "".join(b.text for b in message.content if b.type == "text")  # type: ignore[union-attr]
 
 
+def _pdf_message_content(pdf_bytes: bytes, prompt: str) -> list[dict]:
+    """Build the user-message content list for a PDF document request: a
+    document block first, then a text block — the order the Messages API
+    requires (Claude sees each page both as extracted text and visually).
+
+    Factored out of generate_text_with_pdf so the content-block assembly
+    (base64 encoding, block shape, ordering) is unit-testable without a live
+    API call. Mirrors _image_message_content's structure.
+    """
+    encoded = base64.standard_b64encode(pdf_bytes).decode()
+    return [
+        {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": encoded}},
+        {"type": "text", "text": prompt},
+    ]
+
+
+async def generate_text_with_pdf(
+    prompt: str,
+    pdf_bytes: bytes,
+    system: str = "",
+    model: str | None = None,
+    max_tokens: int = 16000,
+) -> str:
+    """Non-streaming PDF call: send the whole PDF as a native document block
+    (no beta header) plus a text prompt, return the text response. Used to
+    transcribe scanned/image-only PDFs into searchable text for RAG indexing
+    (see rag_service.index_document's scanned-PDF fallback).
+
+    Anthropic-only — mirrors generate_text_with_image's OpenAI guard: an
+    OpenAI model raises ValueError rather than silently misrouting.
+
+    Default model is ai_settings["main_model"], same rationale as
+    generate_text_with_image — transcription quality matters most when the
+    output becomes the document's entire searchable text.
+
+    Truncation caveat: at the default max_tokens=16000, a very long
+    page-by-page transcription can hit the cap and be cut off mid-page.
+    Callers guard page count before calling this (see rag_service's
+    MAX_FALLBACK_PAGES) precisely to keep transcriptions within budget.
+
+    Mirrors generate_text_with_image's response handling: joins all text
+    blocks in the response rather than assuming exactly one.
+    """
+    ai_settings = _load_ai_settings()
+    model = model or ai_settings["main_model"]
+
+    if _is_openai(model):
+        raise ValueError(f"generate_text_with_pdf does not support OpenAI models: {model}")
+
+    client = _get_anthropic_client(ai_settings)
+    kwargs: dict = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": [{"role": "user", "content": _pdf_message_content(pdf_bytes, prompt)}],
+    }
+    if system:
+        kwargs["system"] = system
+    message = await client.messages.create(**kwargs)
+    return "".join(b.text for b in message.content if b.type == "text")  # type: ignore[union-attr]
+
+
 async def stream_text(
     prompt: str,
     system: str = "",

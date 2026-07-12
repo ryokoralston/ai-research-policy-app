@@ -13,7 +13,7 @@ from rag.vector_store import VectorStore
 from services.embedding_service import EmbeddingService
 from services.anthropic_client import (
     stream_text, stream_chat, stream_chat_with_tools, sse_event, UNTRUSTED_CONTENT_GUARD,
-    generate_text_with_image, image_media_type,
+    generate_text_with_image, image_media_type, generate_text_with_pdf,
 )
 from services.reminder_tools import REMINDER_TOOLS, execute_reminder_tool
 from services.text_editor_tool import TEXT_EDITOR_TOOL, TEXT_EDITOR_TOOL_NAME, execute_text_editor_tool
@@ -45,6 +45,85 @@ IMAGE_DESCRIPTION_PROMPT = (
 # citations, document detail views) can tell the text was machine-generated
 # from an image rather than extracted verbatim from a text-native source.
 IMAGE_DOC_MARKER = "[Image document — automatically transcribed by AI vision]"
+
+
+# Prompt used to transcribe an entire scanned/image-only (or sparse-text) PDF
+# into markdown via Claude's PDF document-block vision path (see
+# anthropic_client.generate_text_with_pdf). Each page gets its own "## Page N"
+# heading so the chunker's markdown-heading detection (rag/chunker.py's
+# _detect_heading) creates one section per page automatically, instead of
+# needing a separate page-splitting pass here.
+PDF_TRANSCRIPTION_PROMPT = (
+    "Transcribe this ENTIRE PDF to markdown for a searchable policy-research "
+    "document library. Go through every page in order — do not skip or "
+    "summarize pages.\n\n"
+    "For each page:\n"
+    "- Begin with a markdown heading in exactly this form: `## Page N` (N = "
+    "the 1-based page number).\n"
+    "- Transcribe ALL visible text verbatim, exactly as it appears — body "
+    "text, headings, labels, captions, footnotes, page numbers, table "
+    "contents.\n"
+    "- If the page contains a chart, graph, diagram, map, or photograph: "
+    "describe it concretely, including its data — chart type, axes and "
+    "units, each data series, and approximate values.\n\n"
+    "Do not include any preamble, meta-commentary, or statements about what "
+    "you are doing — output only the page-by-page transcription itself."
+)
+
+# Prepended to every fallback-transcribed PDF's text so downstream consumers
+# (chat citations, document detail views) can tell the content was machine-
+# transcribed from page images rather than extracted verbatim by pdfplumber.
+SCANNED_PDF_MARKER = "[Scanned PDF — automatically transcribed by AI vision]"
+
+# Below this average words-per-page, a PDF is treated as needing the vision
+# fallback even if pdfplumber extracted some text. Scanned pages typically
+# extract ~0 words (no text layer at all); slide-deck-style PDFs (a title and
+# a few labels per page, the rest is images) extract a handful of words per
+# page but are still effectively unsearchable without the fallback — a small
+# positive threshold catches both cases while leaving normal text PDFs
+# (typically hundreds of words/page) untouched.
+MIN_WORDS_PER_PAGE = 15
+
+# Guards on the vision-fallback transcription call: it costs a full Claude
+# request over the whole PDF and must fit within generate_text_with_pdf's
+# max_tokens budget, so it's only attempted for PDFs within these bounds.
+# Beyond them we keep today's behavior (index whatever text pdfplumber
+# found, or status=error if none) rather than calling the API.
+MAX_FALLBACK_FILE_BYTES = 25 * 1024 * 1024  # 25 MB — matches routers/documents.py's upload cap
+MAX_FALLBACK_PAGES = 50  # keeps the page-by-page transcription within max_tokens=16000
+
+
+def _pdf_needs_vision_fallback(chunks: list, word_count: int, page_count: int) -> bool:
+    """True when a PDF's pdfplumber-extracted text is too sparse to be
+    useful and the vision-transcription fallback should run instead.
+
+    Two cases:
+      - `not chunks`: pdfplumber extracted no usable text at all (a
+        fully scanned/image-only PDF) — the chunker produced zero chunks.
+      - average words/page below MIN_WORDS_PER_PAGE: pdfplumber extracted
+        *something* (so `chunks` may be non-empty) but too little to be
+        meaningfully searchable — e.g. a slide deck that's mostly images
+        with a title and a few captions per page.
+
+    page_count <= 0 is guarded (avoids a division by zero) and treated as
+    "needs fallback" — a PDF chunk_pdf could not even count pages for is
+    at least as suspect as one with sparse text.
+    """
+    if not chunks:
+        return True
+    if page_count <= 0:
+        return True
+    return (word_count / page_count) < MIN_WORDS_PER_PAGE
+
+
+def _within_fallback_guards(file_size: int, page_count: int) -> bool:
+    """True when a PDF is small/short enough to attempt the vision-
+    transcription fallback (see MAX_FALLBACK_FILE_BYTES / MAX_FALLBACK_PAGES).
+
+    Pure size/count check — no I/O — so index_document only reads the raw
+    PDF bytes off disk once this returns True.
+    """
+    return file_size <= MAX_FALLBACK_FILE_BYTES and page_count <= MAX_FALLBACK_PAGES
 
 
 def _embed_and_store(
@@ -141,6 +220,15 @@ async def index_document(doc_id: str, db: Session) -> None:
         media_type = image_media_type(doc.file_path)
         if ext == ".pdf":
             chunks, page_count, word_count = chunk_pdf(doc.file_path)
+            if _pdf_needs_vision_fallback(chunks, word_count, page_count):
+                file_size = _os.path.getsize(doc.file_path)
+                if _within_fallback_guards(file_size, page_count):
+                    with open(doc.file_path, "rb") as f:
+                        pdf_bytes = f.read()
+                    transcription = await generate_text_with_pdf(PDF_TRANSCRIPTION_PROMPT, pdf_bytes)
+                    transcription = f"{SCANNED_PDF_MARKER}\n{transcription}"
+                    chunks, word_count = chunk_plain_text(transcription)
+                    # page_count stays the real PDF page count from chunk_pdf above
         elif ext in (".html", ".htm"):
             with open(doc.file_path, encoding="utf-8", errors="ignore") as f:
                 chunks, word_count = chunk_html(f.read())
