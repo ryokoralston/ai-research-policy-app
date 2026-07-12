@@ -20,6 +20,40 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 
+def _build_shared_context(subject: str, analysis_type: str, source_material: str) -> str:
+    """Byte-identical-across-sections prefix of the section prompt: the
+    subject/analysis-type framing plus the (potentially large) research
+    material. Passed as `cached_context` to stream_text_with_thinking (see
+    run_risk_analysis) so every section call within one analysis reuses a
+    single cache write across this prefix instead of paying full price for
+    source_material on every section.
+
+    Must render identically for every section of a given analysis — nothing
+    that varies by section belongs here (see _build_section_prompt for the
+    per-section remainder). Concatenating this function's output with
+    _build_section_prompt's output reproduces exactly the single prompt
+    string this module built before the cached_context split.
+    """
+    context = (
+        f"You are conducting a risk assessment of: {subject}\n"
+        f"Analysis type: {analysis_type}\n\n"
+    )
+    if source_material:
+        context += f"<research_material>\n{source_material[:6000]}\n</research_material>\n\n"
+    return context
+
+
+def _build_section_prompt(section_title: str, instructions: str) -> str:
+    """Per-section remainder of the prompt: section_title/instructions vary
+    every call, so this is sent as the varying `prompt` argument alongside
+    the shared, cached context built by _build_shared_context."""
+    return (
+        f"Write the '{section_title}' section of the risk assessment.\n"
+        f"Instructions: {instructions}\n\n"
+        f"Write ONLY the section content in Markdown (no header)."
+    )
+
+
 def _strip_duplicate_heading(content: str, section_title: str = "") -> str:
     """Remove duplicate section headers from section content.
     (Named distinctly from report_generator._strip_scores_json_lines — the two
@@ -81,25 +115,19 @@ async def run_risk_analysis(
     full_content_parts: list[str] = []
     extracted_scores: dict = {}
 
+    # Shared/cacheable prefix: subject + analysis type + research material —
+    # byte-identical across every section call below. Passed as
+    # cached_context so the section loop reuses a single cache write instead
+    # of paying full price for source_material on every section.
+    shared_context = _build_shared_context(request.subject, request.analysis_type, source_material)
+
     for section_def in template["sections"]:
         section_key = section_def["key"]
         section_title = section_def["title"]
 
         yield sse_event("section_start", {"section": section_key, "title": section_title})
 
-        prompt = (
-            f"You are conducting a risk assessment of: {request.subject}\n"
-            f"Analysis type: {request.analysis_type}\n\n"
-        )
-        if source_material:
-            # Upgrade weak --- delimiters to a descriptive XML tag (lesson).
-            prompt += f"<research_material>\n{source_material[:6000]}\n</research_material>\n\n"
-
-        prompt += (
-            f"Write the '{section_title}' section of the risk assessment.\n"
-            f"Instructions: {section_def['instructions']}\n\n"
-            f"Write ONLY the section content in Markdown (no header)."
-        )
+        prompt = _build_section_prompt(section_title, section_def["instructions"])
 
         section_content = ""
         # temperature=0.3 (logical/reproducible output for risk analysis) is no
@@ -108,7 +136,9 @@ async def run_risk_analysis(
         # gives its own consistency benefit for this reasoning-heavy section.
         # System guard: research_material is untrusted — treat it as data only.
         section_system = template["system"] + "\n\n" + UNTRUSTED_CONTENT_GUARD
-        async for kind, token in stream_text_with_thinking(prompt, system=section_system):
+        async for kind, token in stream_text_with_thinking(
+            prompt, system=section_system, cached_context=shared_context, usage_log_tag="risk-section",
+        ):
             if kind == "thinking":
                 yield sse_event("thinking", {"text": token, "section": section_key})
                 continue

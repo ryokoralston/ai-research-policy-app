@@ -13,7 +13,7 @@ _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
-from services.anthropic_client import _thinking_stream_tuple
+from services.anthropic_client import _thinking_stream_tuple, _thinking_message_content
 
 
 def _event(etype, delta=None):
@@ -97,6 +97,40 @@ def test_missing_thinking_attr_defaults_to_empty_string():
     assert result == ("thinking", ""), result
 
 
+# ── _thinking_message_content ───────────────────────────────────────────────
+# Pure message-content construction used by stream_text_with_thinking's
+# cached_context feature — no live API call needed.
+
+def test_no_cached_context_returns_plain_prompt_string():
+    result = _thinking_message_content("What are the key risks?", None)
+    assert result == "What are the key risks?", result
+
+
+def test_cached_context_returns_two_blocks_with_cache_control_on_first_only():
+    result = _thinking_message_content("Write section X.", "shared source material")
+    assert isinstance(result, list), result
+    assert len(result) == 2, result
+
+    first, second = result
+    assert first == {
+        "type": "text",
+        "text": "shared source material",
+        "cache_control": {"type": "ephemeral"},
+    }, first
+    assert second == {"type": "text", "text": "Write section X."}, second
+    assert "cache_control" not in second, second
+
+
+def test_cached_context_empty_string_still_builds_two_blocks():
+    # "" is falsy but distinct from None — must still take the two-block path
+    # (the caller's contract is "is cached_context is None", not truthiness).
+    result = _thinking_message_content("prompt text", "")
+    assert isinstance(result, list), result
+    assert result[0]["text"] == "", result
+    assert result[0]["cache_control"] == {"type": "ephemeral"}, result
+    assert result[1] == {"type": "text", "text": "prompt text"}, result
+
+
 # ── Test runner ──────────────────────────────────────────────────────────────
 
 _PASSED: list[str] = []
@@ -126,6 +160,10 @@ if __name__ == "__main__":
     _run("empty thinking text -> ('thinking', '')", test_empty_thinking_text_still_returns_thinking_tuple)
     _run("empty text delta -> ('text', '')", test_empty_text_delta_still_returns_text_tuple)
     _run("missing .thinking attr -> ('thinking', '')", test_missing_thinking_attr_defaults_to_empty_string)
+
+    _run("no cached_context -> plain prompt string", test_no_cached_context_returns_plain_prompt_string)
+    _run("cached_context -> two blocks, cache_control on first only", test_cached_context_returns_two_blocks_with_cache_control_on_first_only)
+    _run("cached_context='' still builds two blocks", test_cached_context_empty_string_still_builds_two_blocks)
 
     total = len(_PASSED) + len(_FAILED)
     print(f"\n{'=' * 50}")

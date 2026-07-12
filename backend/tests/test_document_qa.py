@@ -38,6 +38,7 @@ def test_pdf_document_block_shape_and_roundtrip():
     assert block["source"]["media_type"] == "application/pdf", block
     assert block["citations"] == {"enabled": True}, block
     assert block["title"] == "My Document", block
+    assert block["cache_control"] == {"type": "ephemeral"}, block
 
     decoded = base64.standard_b64decode(block["source"]["data"])
     assert decoded == pdf_bytes, decoded
@@ -61,6 +62,7 @@ def test_text_document_block_shape():
     }, block
     assert block["citations"] == {"enabled": True}, block
     assert block["title"] == "Text Doc", block
+    assert block["cache_control"] == {"type": "ephemeral"}, block
 
 
 def test_text_document_block_title_propagation():

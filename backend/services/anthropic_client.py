@@ -529,11 +529,37 @@ def _thinking_stream_tuple(event) -> tuple[str, str] | None:
     return None
 
 
+def _thinking_message_content(prompt: str, cached_context: str | None) -> str | list[dict]:
+    """Pure construction of the user-message `content` for
+    stream_text_with_thinking.
+
+    cached_context is None (today's default, unchanged behavior): returns the
+    plain prompt string.
+
+    cached_context is set: returns two text blocks — the shared/reusable
+    cached_context first, carrying an ephemeral cache_control breakpoint, and
+    the per-call prompt second (uncached). Since tools/system render before
+    messages, this one breakpoint caches system + cached_context together;
+    only the trailing prompt block is billed as fresh input on each call.
+
+    Factored out so the block-shape logic is unit-testable without a live API
+    call — see tests/test_thinking_stream.py.
+    """
+    if cached_context is None:
+        return prompt
+    return [
+        {"type": "text", "text": cached_context, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": prompt},
+    ]
+
+
 async def stream_text_with_thinking(
     prompt: str,
     system: str = "",
     model: str | None = None,
     max_tokens: int = 8192,
+    cached_context: str | None = None,
+    usage_log_tag: str | None = None,
 ) -> AsyncIterator[tuple[str, str]]:
     """Streaming text generation with adaptive thinking. Yields (kind, text)
     tuples in stream order: ("thinking", delta_text) for thinking deltas and
@@ -544,6 +570,19 @@ async def stream_text_with_thinking(
     constraint on the API; passing it alongside thinking returns a 400.
     Raw stream events are iterated directly (not stream.text_stream, which
     only surfaces text deltas) and dispatched via _thinking_stream_tuple.
+
+    cached_context: optional large, reusable text (e.g. the source material
+    shared across a loop of section-generation calls) placed in its own
+    cache_control breakpoint ahead of `prompt` — see _thinking_message_content
+    for the exact block shape. Anthropic path only. On the OpenAI path (no
+    cache_control support in this module) cached_context is simply prepended
+    to the prompt text, with no cache semantics — documented behavior, not a
+    bug: OpenAI has its own automatic prompt-caching mechanism server-side.
+
+    usage_log_tag: when set (Anthropic path only), logs input/cache_read/
+    cache_write token usage after the stream ends, same style as the tool
+    loop's usage log in stream_chat_with_tools — pass e.g. "report-section" /
+    "risk-section" so cache hits are observable in the logs.
 
     OpenAI path (_is_openai(model)): no thinking support on that provider —
     falls back to the same streaming shape as stream_text and yields
@@ -560,7 +599,11 @@ async def stream_text_with_thinking(
         messages = []
         if system:
             messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
+        # No cache_control support on this provider — prepend cached_context
+        # to the prompt text so the model still sees it, with no cache
+        # semantics (see docstring).
+        effective_prompt = f"{cached_context}\n\n{prompt}" if cached_context else prompt
+        messages.append({"role": "user", "content": effective_prompt})
         stream = await client.chat.completions.create(
             model=model,
             max_tokens=max_tokens,
@@ -578,7 +621,7 @@ async def stream_text_with_thinking(
         "model": model,
         "max_tokens": max_tokens,
         "thinking": {"type": "adaptive"},
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [{"role": "user", "content": _thinking_message_content(prompt, cached_context)}],
     }
     if system:
         kwargs["system"] = system
@@ -590,6 +633,14 @@ async def stream_text_with_thinking(
             kind, text = mapped
             if text:
                 yield (kind, text)
+        if usage_log_tag:
+            final = await stream.get_final_message()
+            u = getattr(final, "usage", None)
+            if u is not None:
+                logger.info(
+                    "%s usage: input=%s cache_read=%s cache_write=%s",
+                    usage_log_tag, u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens,
+                )
 
 
 async def stream_chat(

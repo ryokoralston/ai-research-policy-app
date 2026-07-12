@@ -57,6 +57,18 @@ async def generate_report_stream(
     # ── Calculate per-section word budgets if a total word limit is specified ──
     word_budgets = _calculate_word_budgets(template["sections"], request.custom_instructions)
 
+    # Shared/cacheable prefix: report framing (title/type/audience) + the
+    # (large) source material — byte-identical across every section call
+    # below. Passed as cached_context so the section loop's repeated calls
+    # reuse a single cache write instead of paying full price for
+    # source_material on every section.
+    shared_context = _build_shared_context(
+        report_title=request.title,
+        report_type=request.report_type,
+        audience=request.audience,
+        source_material=source_material,
+    )
+
     # ── Generate sections one by one ─────────────────────────────────────────
     all_sections: list[dict] = []
     full_content_parts: list[str] = []
@@ -69,17 +81,15 @@ async def generate_report_stream(
 
         prompt = _build_section_prompt(
             section_def=section_def,
-            report_title=request.title,
-            report_type=request.report_type,
-            audience=request.audience,
-            source_material=source_material,
             custom_instructions=request.custom_instructions,
             previous_sections=all_sections,
             word_budget=word_budgets[i] if word_budgets else None,
         )
 
         section_content = ""
-        async for kind, token in stream_text_with_thinking(prompt, system=system_prompt):
+        async for kind, token in stream_text_with_thinking(
+            prompt, system=system_prompt, cached_context=shared_context, usage_log_tag="report-section",
+        ):
             if kind == "thinking":
                 yield sse_event("thinking", {"text": token, "section": section_key})
                 continue
@@ -167,12 +177,15 @@ async def _generate_single_pass(
     # Apply 85% buffer to account for Claude's tendency to overshoot word counts
     target_words = max(30, round(word_limit * 0.85))
 
+    # Single call — caching gives nothing across calls here, but split out and
+    # pass the source material as cached_context anyway for structural
+    # consistency with the section loop above; harmless for a single request.
+    shared_context = _build_single_pass_shared_context(source_material)
+
     prompt = (
         f"Write a complete '{request.report_type.replace('_', ' ').title()}' report.\n"
         f"Title: {request.title}\n"
         f"Audience: {request.audience}\n\n"
-        # "Structure with XML tags" lesson: descriptive tag instead of --- fences
-        f"<source_material>\n{source_material[:8000]}\n</source_material>\n\n"
         f"Structure the report with these sections: {', '.join(section_titles)}\n\n"
         f"Format in clean Markdown with ## section headers.\n\n"
         f"⚠️ STRICT REQUIREMENT: The TOTAL word count of the entire report MUST be "
@@ -184,7 +197,9 @@ async def _generate_single_pass(
     yield sse_event("section_start", {"section": "full_report", "title": "Report"})
 
     full_content_raw = ""
-    async for kind, token in stream_text_with_thinking(prompt, system=system_prompt):
+    async for kind, token in stream_text_with_thinking(
+        prompt, system=system_prompt, cached_context=shared_context, usage_log_tag="report-section",
+    ):
         if kind == "thinking":
             yield sse_event("thinking", {"text": token, "section": "full_report"})
             continue
@@ -363,16 +378,52 @@ def _calculate_word_budgets(sections: list[dict], custom_instructions: str | Non
     return budgets
 
 
-def _build_section_prompt(
-    section_def: dict,
+def _build_shared_context(
     report_title: str,
     report_type: str,
     audience: str,
     source_material: str,
+) -> str:
+    """Byte-identical-across-sections prefix of the section prompt: report
+    framing (title/type/audience) plus the (large) source material. Passed as
+    `cached_context` to stream_text_with_thinking (see generate_report_stream)
+    so every section call within one report reuses a single cache write
+    across this prefix instead of paying full price for source_material on
+    every section call.
+
+    Must render identically for every section of a given report — nothing
+    that varies by section belongs here (see _build_section_prompt for the
+    per-section remainder). Concatenating this function's output with
+    _build_section_prompt's output reproduces exactly the single prompt
+    string this module built before the cached_context split.
+    """
+    return (
+        f"You are writing a '{report_type.replace('_', ' ').title()}' report.\n"
+        f"Report title: {report_title}\n"
+        f"Target audience: {audience}\n\n"
+        f"<source_material>\n{source_material[:8000]}\n</source_material>\n"
+    )
+
+
+def _build_single_pass_shared_context(source_material: str) -> str:
+    """Cacheable prefix for the single-pass path (_generate_single_pass): just
+    the source material. Caching gives nothing across calls here (a single
+    request per report), but splitting it out keeps this path structurally
+    consistent with the section loop's cached_context usage — harmless.
+    """
+    return f"<source_material>\n{source_material[:8000]}\n</source_material>\n\n"
+
+
+def _build_section_prompt(
+    section_def: dict,
     custom_instructions: str | None,
     previous_sections: list[dict],
     word_budget: int | None = None,
 ) -> str:
+    """Per-section remainder of the prompt: previous_sections grows and
+    section_def/word_budget vary every call, so this is sent as the varying
+    `prompt` argument alongside the shared, cached context built by
+    _build_shared_context (see generate_report_stream)."""
     prev_context = ""
     if previous_sections:
         prev_context = "\n\nPrevious sections already written:\n" + "\n\n".join(
@@ -392,10 +443,6 @@ def _build_section_prompt(
     )
 
     return (
-        f"You are writing a '{report_type.replace('_', ' ').title()}' report.\n"
-        f"Report title: {report_title}\n"
-        f"Target audience: {audience}\n\n"
-        f"<source_material>\n{source_material[:8000]}\n</source_material>\n"
         f"{prev_context}\n\n"
         f"Now write the '{section_def['title']}' section.\n"
         f"Instructions: {section_def['instructions']}\n\n"

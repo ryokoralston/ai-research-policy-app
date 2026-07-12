@@ -23,6 +23,7 @@ would just redo that work on every question; the stored transcription is
 the better source.
 """
 import base64
+import logging
 import os
 from typing import AsyncIterator
 
@@ -31,6 +32,8 @@ from sqlalchemy.orm import Session
 from models import Document, DocumentChunk
 from services.anthropic_client import sse_event, _load_ai_settings, _get_anthropic_client, _block_get
 from services.rag_service import SCANNED_PDF_MARKER
+
+logger = logging.getLogger(__name__)
 
 # Guards on the native-PDF citations path: the whole PDF is base64-encoded and
 # sent as a single document content block in one request, so it must stay
@@ -59,6 +62,13 @@ def _pdf_document_block(pdf_bytes: bytes, title: str) -> dict:
 
     Factored out of build_document_block so the block shape (base64 encoding,
     field names) is unit-testable without touching the filesystem or DB.
+
+    Carries its own ephemeral cache_control breakpoint: the question text
+    block that follows it in the user message (see ask_document_with_citations)
+    varies per call, but the document itself is re-sent byte-for-byte every
+    time a user asks another question about the same doc — this breakpoint
+    lets a second question within the TTL read the (system +) document prefix
+    from cache instead of paying full price again.
     """
     encoded = base64.standard_b64encode(pdf_bytes).decode()
     return {
@@ -66,6 +76,7 @@ def _pdf_document_block(pdf_bytes: bytes, title: str) -> dict:
         "source": {"type": "base64", "media_type": "application/pdf", "data": encoded},
         "title": title,
         "citations": {"enabled": True},
+        "cache_control": {"type": "ephemeral"},
     }
 
 
@@ -73,13 +84,15 @@ def _text_document_block(text: str, title: str) -> dict:
     """Build a plain-text `document` content block with citations enabled.
 
     Factored out of build_document_block for the same reason as
-    _pdf_document_block — pure, unit-testable block construction.
+    _pdf_document_block — pure, unit-testable block construction. See that
+    function's docstring for why cache_control is attached here too.
     """
     return {
         "type": "document",
         "source": {"type": "text", "media_type": "text/plain", "data": text},
         "title": title,
         "citations": {"enabled": True},
+        "cache_control": {"type": "ephemeral"},
     }
 
 
@@ -239,6 +252,17 @@ async def ask_document_with_citations(doc_id: str, question: str, db: Session) -
                     payload = _citation_payload(citation, next_index, source_kind)
                     ordered_citations.append(payload)
                     yield sse_event("citation", payload)
+
+            # Verifiable cache signal (see Anthropic docs: cache_read_input_tokens).
+            # Still inside the `async with` block — get_final_message() is only
+            # valid while the stream context is open.
+            final = await stream.get_final_message()
+            u = getattr(final, "usage", None)
+            if u is not None:
+                logger.info(
+                    "doc-qa usage: input=%s cache_read=%s cache_write=%s",
+                    u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens,
+                )
     except Exception as exc:
         yield sse_event("error", {"message": str(exc)})
         return
