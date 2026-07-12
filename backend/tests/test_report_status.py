@@ -8,8 +8,8 @@ Covers:
   4. PATCH /api/reports/{id} rejects statuses outside the allowed vocabulary
      with 400, without partially applying the other fields in the request
 
-No Claude API / network calls — stream_text is monkeypatched with a fake
-async generator. Run from the backend directory:
+No Claude API / network calls — stream_text_with_thinking is monkeypatched
+with a fake async generator. Run from the backend directory:
     ./venv/bin/python -m tests.test_report_status
 
 Uses a plain assert-based runner because pytest is not installed in the venv.
@@ -40,10 +40,15 @@ import services.report_generator as report_generator
 
 # ── Fakes ─────────────────────────────────────────────────────────────────────
 
-async def _fake_stream_text(prompt, system="", model=None, max_tokens=8192, temperature=1.0):
-    """Stand-in for anthropic_client.stream_text: yields a fixed short text."""
+async def _fake_stream_text_with_thinking(
+    prompt, system="", model=None, max_tokens=8192, cached_context=None, usage_log_tag=None,
+):
+    """Stand-in for anthropic_client.stream_text_with_thinking: yields one
+    ("thinking", ...) tuple — which callers must skip rather than accumulate
+    — followed by ("text", token) tuples for a fixed short text."""
+    yield ("thinking", "planning the section...")
     for token in ["Lorem ", "ipsum ", "section ", "content."]:
-        yield token
+        yield ("text", token)
 
 
 def _make_test_session():
@@ -94,8 +99,8 @@ async def _run_generation(db, request, report_id):
 
 def test_sectioned_generation_sets_completed():
     """Section-by-section path saves the report with status='completed'."""
-    original = report_generator.stream_text
-    report_generator.stream_text = _fake_stream_text
+    original = report_generator.stream_text_with_thinking
+    report_generator.stream_text_with_thinking = _fake_stream_text_with_thinking
     try:
         db = _make_test_session()
         report_id, session_id = _seed_report_and_session(db)
@@ -111,13 +116,13 @@ def test_sectioned_generation_sets_completed():
         assert any('"event_type": "complete"' in e for e in events), "complete event expected"
         db.close()
     finally:
-        report_generator.stream_text = original
+        report_generator.stream_text_with_thinking = original
 
 
 def test_single_pass_generation_sets_completed():
     """Word-limit (single-pass) path saves the report with status='completed'."""
-    original = report_generator.stream_text
-    report_generator.stream_text = _fake_stream_text
+    original = report_generator.stream_text_with_thinking
+    report_generator.stream_text_with_thinking = _fake_stream_text_with_thinking
     try:
         db = _make_test_session()
         report_id, session_id = _seed_report_and_session(db)
@@ -133,7 +138,7 @@ def test_single_pass_generation_sets_completed():
         assert any('"section": "full_report"' in e for e in events), "single-pass path expected"
         db.close()
     finally:
-        report_generator.stream_text = original
+        report_generator.stream_text_with_thinking = original
 
 
 # ── Migration tests ───────────────────────────────────────────────────────────

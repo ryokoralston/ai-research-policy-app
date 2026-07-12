@@ -1,6 +1,6 @@
 """Tests for run_risk_analysis: score extraction via generate_json + fallback.
 
-stream_text / generate_json are monkeypatched — no API calls. Exercises both
+stream_text_with_thinking / generate_json are monkeypatched — no API calls. Exercises both
 the success path (scores event emitted, risk_scores_json saved) and the
 failure path (extraction error is logged, analysis still completes).
 
@@ -33,14 +33,18 @@ from database import Base
 from models import RiskAnalysis
 from schemas import AnalysisStartRequest
 import services.risk_analyzer as risk_analyzer
+from services.risk_analyzer import _build_shared_context, _build_section_prompt
 
 _SCORES = {"capability": 7, "deployment": 5, "governance": 6,
            "geopolitical": 4, "misuse": 8, "systemic": 5}
 
 
-async def _fake_stream_text(prompt, system="", model=None, max_tokens=8192, temperature=1.0):
-    yield "Section content "
-    yield "for the assessment."
+async def _fake_stream_text_with_thinking(
+    prompt, system="", model=None, max_tokens=8192, cached_context=None, usage_log_tag=None,
+):
+    yield ("thinking", "reasoning about risk dimensions...")
+    yield ("text", "Section content ")
+    yield ("text", "for the assessment.")
 
 
 _DEFAULT_CONFIDENCE = {
@@ -72,8 +76,8 @@ def _run_analysis(fake_generate_json, fake_verify_grounding=None, context="Some 
 
     fake_verify_grounding = fake_verify_grounding or _default_verify_grounding
 
-    orig = (risk_analyzer.stream_text, risk_analyzer.generate_json, risk_analyzer.verify_grounding)
-    risk_analyzer.stream_text = _fake_stream_text
+    orig = (risk_analyzer.stream_text_with_thinking, risk_analyzer.generate_json, risk_analyzer.verify_grounding)
+    risk_analyzer.stream_text_with_thinking = _fake_stream_text_with_thinking
     risk_analyzer.generate_json = fake_generate_json
     risk_analyzer.verify_grounding = fake_verify_grounding
     try:
@@ -81,7 +85,7 @@ def _run_analysis(fake_generate_json, fake_verify_grounding=None, context="Some 
             return [e async for e in risk_analyzer.run_risk_analysis(analysis_id, request, db)]
         events = asyncio.run(collect())
     finally:
-        risk_analyzer.stream_text, risk_analyzer.generate_json, risk_analyzer.verify_grounding = orig
+        risk_analyzer.stream_text_with_thinking, risk_analyzer.generate_json, risk_analyzer.verify_grounding = orig
 
     analysis = db.query(RiskAnalysis).filter(RiskAnalysis.id == analysis_id).first()
     db.refresh(analysis)
@@ -177,6 +181,78 @@ def test_extraction_failure_completes_without_scores():
     db.close()
 
 
+# ── _build_shared_context / _build_section_prompt (prompt-caching split) ───────
+# Pure sanity checks — no monkeypatching, no DB. The shared/cached part must
+# hold the (potentially large) research material, the per-section part must
+# never repeat it, and the shared part must be byte-identical across repeated
+# calls with the same inputs (required for the cache_control breakpoint to
+# actually hit across the section loop).
+
+_RESEARCH_MATERIAL = "Frontier model capability evaluations show rapid improvement " * 20
+
+
+def test_shared_context_contains_research_material():
+    shared = _build_shared_context("Autonomous weapons", "technology", _RESEARCH_MATERIAL)
+    assert _RESEARCH_MATERIAL[:50] in shared, shared[:200]
+    assert "Autonomous weapons" in shared
+    assert "technology" in shared
+
+
+def test_section_prompt_does_not_contain_research_material():
+    prompt = _build_section_prompt("Risk Dimensions", "Score each dimension 1-10.")
+    assert _RESEARCH_MATERIAL[:50] not in prompt, prompt
+    assert "Risk Dimensions" in prompt
+    assert "Score each dimension 1-10." in prompt
+
+
+def test_shared_context_byte_identical_across_calls():
+    first = _build_shared_context("Autonomous weapons", "technology", _RESEARCH_MATERIAL)
+    second = _build_shared_context("Autonomous weapons", "technology", _RESEARCH_MATERIAL)
+    assert first == second, (first, second)
+
+
+def test_shared_context_omits_tag_when_no_material():
+    shared = _build_shared_context("Autonomous weapons", "technology", "")
+    assert "<research_material>" not in shared, shared
+
+
+def test_concatenated_shared_and_section_prompt_matches_pre_split_text():
+    """Concatenating the shared context with the per-section prompt must
+    reproduce exactly the single prompt string this module built before the
+    cached_context split (same text, just partitioned)."""
+    shared = _build_shared_context("Autonomous weapons", "technology", "short material")
+    per_section = _build_section_prompt("Risk Dimensions", "Score each dimension 1-10.")
+    combined = shared + per_section
+
+    expected = (
+        "You are conducting a risk assessment of: Autonomous weapons\n"
+        "Analysis type: technology\n\n"
+        "<research_material>\nshort material\n</research_material>\n\n"
+        "Write the 'Risk Dimensions' section of the risk assessment.\n"
+        "Instructions: Score each dimension 1-10.\n\n"
+        "Write ONLY the section content in Markdown (no header)."
+    )
+    assert combined == expected, combined
+
+
+def test_concatenated_shared_and_section_prompt_matches_pre_split_text_no_material():
+    """Same reconstruction check, but for the no-source-material branch (the
+    <research_material> tag must not appear at all, with no stray blank line
+    left behind from its omission)."""
+    shared = _build_shared_context("Autonomous weapons", "technology", "")
+    per_section = _build_section_prompt("Risk Dimensions", "Score each dimension 1-10.")
+    combined = shared + per_section
+
+    expected = (
+        "You are conducting a risk assessment of: Autonomous weapons\n"
+        "Analysis type: technology\n\n"
+        "Write the 'Risk Dimensions' section of the risk assessment.\n"
+        "Instructions: Score each dimension 1-10.\n\n"
+        "Write ONLY the section content in Markdown (no header)."
+    )
+    assert combined == expected, combined
+
+
 # ── Test runner ───────────────────────────────────────────────────────────────
 
 _PASSED: list[str] = []
@@ -198,6 +274,13 @@ if __name__ == "__main__":
 
     _run("scores extracted and saved", test_scores_extracted_and_saved)
     _run("extraction failure completes without scores", test_extraction_failure_completes_without_scores)
+
+    _run("shared context contains research material", test_shared_context_contains_research_material)
+    _run("section prompt excludes research material", test_section_prompt_does_not_contain_research_material)
+    _run("shared context byte-identical across calls", test_shared_context_byte_identical_across_calls)
+    _run("shared context omits tag when no material", test_shared_context_omits_tag_when_no_material)
+    _run("concatenated shared+section prompt matches pre-split text", test_concatenated_shared_and_section_prompt_matches_pre_split_text)
+    _run("concatenated shared+section prompt matches pre-split text (no material)", test_concatenated_shared_and_section_prompt_matches_pre_split_text_no_material)
     _run("verification saved alongside scores", test_verification_saved_alongside_scores)
     _run("verification skipped when no source material", test_verification_skipped_when_no_source_material)
     _run("verification failure does not break main flow", test_verification_failure_does_not_break_main_flow)

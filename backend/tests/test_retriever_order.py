@@ -14,7 +14,11 @@ Covers:
 chromadb / sentence-transformers are NOT required: both are stubbed in
 sys.modules before importing rag.retriever (chromadb is only touched at
 VectorStore.__init__, which these tests never call; CrossEncoder is imported
-inside retrieve() and swapped per test).
+inside retrieve() and swapped per test). The BM25 LexicalIndex leg is stubbed
+with _FakeLexicalIndex (empty results) so retrieve()'s RRF fusion step
+degenerates to the single vector ranking — order-preserving — keeping these
+tests focused on reading-order sort and reranker-caching semantics rather
+than fusion (which test_retriever_fusion.py covers separately).
 
 Run from the backend directory:
     ./venv/bin/python -m tests.test_retriever_order
@@ -70,10 +74,22 @@ class _FakeEmbedding:
         return [0.0]
 
 
+class _FakeLexicalIndex:
+    """Stub for the BM25 LexicalIndex — these tests are only concerned with
+    reading-order sorting and reranker-caching, not fusion, so the lexical
+    leg contributes no candidates. rrf_fuse over a single (vector-only)
+    ranking list preserves that list's relative order, so this stub keeps
+    the vector-order assertions below valid unchanged."""
+
+    def search(self, query, n_results=20, doc_ids=None):
+        return []
+
+
 def _make_retriever(candidates) -> Retriever:
     r = Retriever.__new__(Retriever)  # skip __init__ (would touch chromadb)
     r._vs = _FakeVectorStore(candidates)
     r._embed = _FakeEmbedding()
+    r._lexical = _FakeLexicalIndex()
     return r
 
 

@@ -6,7 +6,7 @@ when source_material is empty, a failure in verify_grounding doesn't break
 the main save/complete flow, and a successful result is merged into
 Report.metadata_json without clobbering other keys already stored there.
 
-stream_text / verify_grounding are monkeypatched — no API calls.
+stream_text_with_thinking / verify_grounding are monkeypatched — no API calls.
 
 Run from the backend directory:
     ./venv/bin/python -m tests.test_report_verification
@@ -39,9 +39,12 @@ _CONFIDENCE = {
 }
 
 
-async def _fake_stream_text(prompt, system="", model=None, max_tokens=8192, temperature=1.0):
-    yield "Generated "
-    yield "section text."
+async def _fake_stream_text_with_thinking(
+    prompt, system="", model=None, max_tokens=8192, cached_context=None, usage_log_tag=None,
+):
+    yield ("thinking", "considering...")
+    yield ("text", "Generated ")
+    yield ("text", "section text.")
 
 
 async def _default_verify_grounding(content, source_material):
@@ -71,15 +74,15 @@ def _make_report_with_session(db, existing_metadata_json=None):
 
 
 def _patch_and_run(db, report_id, request, fake_verify_grounding):
-    orig = (report_generator.stream_text, report_generator.verify_grounding)
-    report_generator.stream_text = _fake_stream_text
+    orig = (report_generator.stream_text_with_thinking, report_generator.verify_grounding)
+    report_generator.stream_text_with_thinking = _fake_stream_text_with_thinking
     report_generator.verify_grounding = fake_verify_grounding
     try:
         async def collect():
             return [e async for e in report_generator.generate_report_stream(report_id, request, db)]
         events = asyncio.run(collect())
     finally:
-        report_generator.stream_text, report_generator.verify_grounding = orig
+        report_generator.stream_text_with_thinking, report_generator.verify_grounding = orig
     report = db.query(Report).filter(Report.id == report_id).first()
     db.refresh(report)
     return report, events
@@ -158,8 +161,8 @@ def test_single_pass_verification_skipped_when_source_material_empty():
     )
     system_prompt = "You are a policy memo writer."
 
-    orig = (report_generator.stream_text, report_generator.verify_grounding)
-    report_generator.stream_text = _fake_stream_text
+    orig = (report_generator.stream_text_with_thinking, report_generator.verify_grounding)
+    report_generator.stream_text_with_thinking = _fake_stream_text_with_thinking
     report_generator.verify_grounding = counting_verify
     try:
         async def collect():
@@ -171,7 +174,7 @@ def test_single_pass_verification_skipped_when_source_material_empty():
             ]
         events = asyncio.run(collect())
     finally:
-        report_generator.stream_text, report_generator.verify_grounding = orig
+        report_generator.stream_text_with_thinking, report_generator.verify_grounding = orig
 
     assert called["count"] == 0, "verify_grounding must be skipped with empty source_material"
     report = db.query(Report).filter(Report.id == report_id).first()
