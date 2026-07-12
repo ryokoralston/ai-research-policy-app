@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from config import get_settings
 from database import get_db
 from models import Document, DocumentChunk
-from schemas import DocumentResponse, DocumentDetail, DocumentAskRequest
+from schemas import DocumentResponse, DocumentDetail, DocumentAskRequest, DocumentCitedAskRequest
 from schemas.document import IngestUrlRequest, DocumentFolderRequest, FolderRenameRequest
 from services.anthropic_client import IMAGE_MEDIA_TYPES
 from services.ingestion import _extract_youtube_id, _get_youtube_transcript, _scrape_url
@@ -252,6 +252,20 @@ async def ask_documents(request: DocumentAskRequest, db: Session = Depends(get_d
             request.question, request.doc_ids, request.top_k, db, history, request.custom_system,
             prior_citations=request.prior_citations,
         ):
+            yield event
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+@router.post("/{doc_id}/ask-citations")
+async def ask_document_citations(doc_id: str, request: DocumentCitedAskRequest, db: Session = Depends(get_db)):
+    """Single-document Q&A with API-native citations (see
+    services/document_qa.py) — distinct from /ask above, which searches
+    across the whole (or a selected subset of the) document library via a
+    tool-use loop and assigns its own sentence-level [N] citations."""
+    async def event_generator():
+        from services.document_qa import ask_document_with_citations
+        async for event in ask_document_with_citations(doc_id, request.question, db):
             yield event
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")

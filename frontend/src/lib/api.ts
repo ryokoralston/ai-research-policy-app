@@ -129,6 +129,10 @@ export const api = {
         body: JSON.stringify({ folder_id, new_name }),
       }),
     askUrl: () => `${BASE_URL}/api/documents/ask`,
+    // Single-document Q&A with API-native citations (see backend
+    // services/document_qa.py) — distinct from askUrl above, which searches
+    // across the whole/selected library via a tool-use loop.
+    askCitationsUrl: (id: string) => `${BASE_URL}/api/documents/${id}/ask-citations`,
   },
 
   reports: {

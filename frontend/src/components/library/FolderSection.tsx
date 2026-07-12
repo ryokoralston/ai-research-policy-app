@@ -3,12 +3,13 @@
 import { useEffect, useRef, useState } from "react";
 import {
   BookOpen, Trash2, Folder, FolderOpen, ExternalLink, Globe, FileText,
-  FileCode, File, Youtube, FolderPlus, Pencil, Check, X,
+  FileCode, File, Youtube, FolderPlus, Pencil, Check, X, MessageCircleQuestion,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { Document } from "@/lib/types";
 import Badge from "@/components/ui/Badge";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
+import DocumentAskModal from "./DocumentAskModal";
 
 interface CollectionMeta {
   collection_id: string;
@@ -65,6 +66,9 @@ interface FolderSectionProps {
  */
 export default function FolderSection({ docs, setDocs, loading, selectedDocs, setSelectedDocs, loadDocs }: FolderSectionProps) {
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set());
+
+  // "Ask this document" modal (single-document Q&A with API-native citations)
+  const [askDoc, setAskDoc] = useState<Document | null>(null);
 
   // Folder modal state
   const [folderModalOpen, setFolderModalOpen] = useState(false);
@@ -332,6 +336,14 @@ export default function FolderSection({ docs, setDocs, loading, selectedDocs, se
                           {doc.status}
                         </Badge>
                         <button
+                          onClick={() => setAskDoc(doc)}
+                          disabled={doc.status !== "indexed"}
+                          className="p-1.5 text-slate-500 hover:text-blue-400 disabled:opacity-30 disabled:hover:text-slate-500 transition-colors"
+                          title="Ask this document"
+                        >
+                          <MessageCircleQuestion size={13} />
+                        </button>
+                        <button
                           onClick={() => handleDelete(doc.id)}
                           className="p-1.5 text-slate-500 hover:text-red-400 transition-colors"
                         >
@@ -391,6 +403,14 @@ export default function FolderSection({ docs, setDocs, loading, selectedDocs, se
                 </div>
               </div>
               <button
+                onClick={() => setAskDoc(doc)}
+                disabled={doc.status !== "indexed"}
+                className="p-2 text-slate-500 hover:text-blue-400 disabled:opacity-30 disabled:hover:text-slate-500 transition-colors"
+                title="Ask this document"
+              >
+                <MessageCircleQuestion size={14} />
+              </button>
+              <button
                 onClick={() => handleDelete(doc.id)}
                 className="p-2 text-slate-500 hover:text-red-400 transition-colors"
               >
@@ -400,6 +420,9 @@ export default function FolderSection({ docs, setDocs, loading, selectedDocs, se
           ))}
         </div>
       )}
+
+      {/* Ask this document modal */}
+      {askDoc && <DocumentAskModal doc={askDoc} onClose={() => setAskDoc(null)} />}
 
       {/* Folder Modal */}
       {folderModalOpen && (

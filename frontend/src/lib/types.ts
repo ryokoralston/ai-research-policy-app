@@ -97,6 +97,24 @@ export interface Citation {
   snippet: string;
 }
 
+// API-native citation emitted by the single-document "Ask this document"
+// feature (backend services/document_qa.py's ask_document_with_citations,
+// via POST /api/documents/{doc_id}/ask-citations). Unlike Citation above
+// (our own sentence-level [N] numbering over multi-document search results),
+// these come directly from the Anthropic Messages API's document `citations`
+// feature: `source_kind` says whether this document was sent as a native PDF
+// (page-located) or as plain extracted text (char-located).
+export interface DocumentCitation {
+  index: number;
+  cited_text: string;
+  document_title: string | null;
+  source_kind: "pdf" | "text";
+  start_page_number?: number | null;
+  end_page_number?: number | null;
+  start_char_index?: number | null;
+  end_char_index?: number | null;
+}
+
 // Web-search citation emitted by the Ask Documents RAG chat when Claude's
 // answer draws on the server-side web_search tool (backend
 // services/anthropic_client.py's extract_web_citations, surfaced via

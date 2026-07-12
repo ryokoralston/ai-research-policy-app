@@ -55,3 +55,11 @@ class DocumentAskRequest(BaseModel):
 
 class IngestUrlRequest(BaseModel):
     url: str
+
+
+class DocumentCitedAskRequest(BaseModel):
+    """Body for POST /api/documents/{doc_id}/ask-citations — single-document
+    Q&A with API-native citations (see services/document_qa.py). Unlike
+    DocumentAskRequest, this is single-turn (no chat_history) and scoped to
+    exactly one document, so it only needs the question."""
+    question: str

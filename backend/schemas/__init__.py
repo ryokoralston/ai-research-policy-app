@@ -3,7 +3,7 @@ from .research import (
     ResearchSessionDetail,
 )
 from .document import (
-    DocumentResponse, DocumentDetail, DocumentAskRequest,
+    DocumentResponse, DocumentDetail, DocumentAskRequest, DocumentCitedAskRequest,
 )
 from .report import (
     ReportGenerateRequest, ReportResponse, ReportDetail, ReportSectionResponse,
@@ -19,7 +19,7 @@ from .debate import (
 __all__ = [
     "ResearchStartRequest", "ResearchSessionResponse", "SearchResultResponse",
     "ResearchSessionDetail",
-    "DocumentResponse", "DocumentDetail", "DocumentAskRequest",
+    "DocumentResponse", "DocumentDetail", "DocumentAskRequest", "DocumentCitedAskRequest",
     "ReportGenerateRequest", "ReportResponse", "ReportDetail", "ReportSectionResponse",
     "ReportUpdateRequest",
     "AnalysisStartRequest", "RiskAnalysisResponse",
