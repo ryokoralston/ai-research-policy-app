@@ -57,6 +57,7 @@ if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 from database import SessionLocal
@@ -98,6 +99,7 @@ def _doc_label(doc: Document) -> str:
         "section header, and a trimmed content snippet. Each result includes "
         "a doc_id — pass it to read_document to fetch that source's full text."
     ),
+    annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
 )
 def search_library(
     query: str = Field(description="Natural-language search query."),
@@ -140,6 +142,7 @@ def search_library(
         "metadata. Raises an error if doc_id is unknown or the document has "
         "no indexed chunks."
     ),
+    annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
 )
 def read_document(
     doc_id: str = Field(description="Document id, e.g. from a search_library result."),
@@ -188,6 +191,7 @@ def read_document(
         "with doc_id, title (or filename if untitled), page count, and word "
         "count."
     ),
+    annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False),
 )
 def list_documents() -> str:
     db = SessionLocal()
