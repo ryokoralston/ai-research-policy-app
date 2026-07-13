@@ -222,6 +222,10 @@ export const api = {
       ),
   },
 
+  datalab: {
+    analyzeUrl: () => `${BASE_URL}/api/datalab/analyze`, // multipart POST (file + question), returns SSE
+  },
+
   digest: {
     sendNow: () =>
       request<{
@@ -337,6 +341,35 @@ export async function postStream(
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
+    signal,
+  });
+
+  if (res.status === 401) {
+    handleUnauthorized();
+    throw new Error("Unauthorized");
+  }
+  if (!res.ok || !res.body) {
+    throw new Error(`Stream request failed: ${res.status}`);
+  }
+
+  await consumeSseStream(res.body, onEvent);
+}
+
+/**
+ * Consume an SSE stream from a multipart/form-data POST endpoint (e.g. a
+ * file upload). Same event parsing as postStream — no "Content-Type" header
+ * is set explicitly so the browser attaches the correct multipart boundary.
+ */
+export async function postStreamForm(
+  url: string,
+  form: FormData,
+  onEvent: (event: string, data: unknown) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { ...authHeaders() },
+    body: form,
     signal,
   });
 

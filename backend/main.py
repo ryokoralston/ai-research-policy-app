@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import get_settings
 from database import SessionLocal, init_db, get_or_init_digest_settings
-from routers import research, documents, reports, analysis, debate
+from routers import research, documents, reports, analysis, debate, data_analysis
 from routers.digest import router as digest_router, record_sent, set_scheduler
 from routers.settings import router as settings_router
 from routers.auth import router as auth_router
@@ -117,6 +117,7 @@ app.include_router(documents.router, dependencies=_protected)
 app.include_router(reports.router, dependencies=_protected)
 app.include_router(analysis.router, dependencies=_protected)
 app.include_router(debate.router, dependencies=_protected)
+app.include_router(data_analysis.router, dependencies=_protected)
 app.include_router(digest_router, dependencies=_protected)
 app.include_router(settings_router, dependencies=_protected)
 app.include_router(reminders_router, dependencies=_protected)

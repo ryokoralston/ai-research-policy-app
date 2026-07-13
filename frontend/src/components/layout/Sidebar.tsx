@@ -16,6 +16,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   LogOut,
+  FlaskConical,
 } from "lucide-react";
 import ThemeToggle from "./ThemeToggle";
 import { getToken, clearToken } from "@/lib/api";
@@ -26,6 +27,7 @@ const NAV_ITEMS = [
   { href: "/reports", label: "Reports", icon: FileText },
   { href: "/library", label: "Library", icon: BookOpen },
   { href: "/analysis", label: "Risk Analysis", icon: Shield },
+  { href: "/datalab", label: "Data Lab", icon: FlaskConical },
   { href: "/debate", label: "Debate", icon: Users },
   { href: "/digest", label: "Daily Digest", icon: Mail },
   { href: "/settings", label: "Settings", icon: Settings },
