@@ -10,6 +10,15 @@ back the FastAPI app's document/chat routes, as three read-only MCP tools:
   - read_document(doc_id)        — full text of one document, in chunk order
   - list_documents()             — one line per indexed document
 
+It also exposes the same document library as two read-only MCP resources —
+structured counterparts to the tools above, meant for programmatic use
+(e.g. a client's @-mention autocomplete) rather than LLM/human reading:
+
+  - docs://documents            (application/json) — JSON array of indexed
+                                 documents, structured counterpart of list_documents
+  - docs://documents/{doc_id}   (text/plain)        — full text of one document,
+                                 structured counterpart of read_document
+
 Run directly:
 
     cd backend && ./venv/bin/python mcp_server.py
@@ -90,6 +99,66 @@ def _doc_label(doc: Document) -> str:
     return doc.title or doc.filename
 
 
+def _indexed_documents(db) -> list[Document]:
+    """Indexed documents ordered by created_at — the query shared by the
+    list_documents tool and the docs://documents resource, so both stay in
+    sync as documents are added.
+    """
+    return (
+        db.query(Document)
+        .filter(Document.status == "indexed")
+        .order_by(Document.created_at)
+        .all()
+    )
+
+
+def _document_full_text(doc_id: str) -> str:
+    """Full text of one indexed document: header (title/filename/page count)
+    followed by its chunks in reading order, truncated to
+    MAX_READ_DOCUMENT_CHARS. Shared by the read_document tool and the
+    docs://documents/{doc_id} resource so both return identical text for the
+    same doc_id.
+
+    Raises ValueError if doc_id is unknown, the document isn't indexed, or
+    it has no indexed chunks.
+    """
+    db = SessionLocal()
+    try:
+        doc = db.get(Document, doc_id)
+        if doc is None:
+            raise ValueError(f"Unknown doc_id: {doc_id!r}")
+        if doc.status != "indexed":
+            raise ValueError(
+                f"Document {doc_id!r} ({_doc_label(doc)}) is not indexed "
+                f"(status={doc.status!r})"
+            )
+
+        chunks = (
+            db.query(DocumentChunk)
+            .filter(DocumentChunk.document_id == doc_id)
+            .order_by(DocumentChunk.chunk_index)
+            .all()
+        )
+        if not chunks:
+            raise ValueError(
+                f"Document {doc_id!r} ({_doc_label(doc)}) is marked indexed but has no chunks"
+            )
+
+        header = (
+            f"Title: {_doc_label(doc)}\n"
+            f"Filename: {doc.filename}\n"
+            f"Pages: {doc.page_count if doc.page_count is not None else 'unknown'}\n"
+            + "-" * 40 + "\n"
+        )
+        body = "\n\n".join(c.content for c in chunks)
+        text = header + body
+        if len(text) > MAX_READ_DOCUMENT_CHARS:
+            text = text[:MAX_READ_DOCUMENT_CHARS].rstrip() + "\n\n[... truncated ...]"
+        return text
+    finally:
+        db.close()
+
+
 @mcp.tool(
     name="search_library",
     description=(
@@ -147,41 +216,7 @@ def search_library(
 def read_document(
     doc_id: str = Field(description="Document id, e.g. from a search_library result."),
 ) -> str:
-    db = SessionLocal()
-    try:
-        doc = db.get(Document, doc_id)
-        if doc is None:
-            raise ValueError(f"Unknown doc_id: {doc_id!r}")
-        if doc.status != "indexed":
-            raise ValueError(
-                f"Document {doc_id!r} ({_doc_label(doc)}) is not indexed "
-                f"(status={doc.status!r})"
-            )
-
-        chunks = (
-            db.query(DocumentChunk)
-            .filter(DocumentChunk.document_id == doc_id)
-            .order_by(DocumentChunk.chunk_index)
-            .all()
-        )
-        if not chunks:
-            raise ValueError(
-                f"Document {doc_id!r} ({_doc_label(doc)}) is marked indexed but has no chunks"
-            )
-
-        header = (
-            f"Title: {_doc_label(doc)}\n"
-            f"Filename: {doc.filename}\n"
-            f"Pages: {doc.page_count if doc.page_count is not None else 'unknown'}\n"
-            + "-" * 40 + "\n"
-        )
-        body = "\n\n".join(c.content for c in chunks)
-        text = header + body
-        if len(text) > MAX_READ_DOCUMENT_CHARS:
-            text = text[:MAX_READ_DOCUMENT_CHARS].rstrip() + "\n\n[... truncated ...]"
-        return text
-    finally:
-        db.close()
+    return _document_full_text(doc_id)
 
 
 @mcp.tool(
@@ -196,12 +231,7 @@ def read_document(
 def list_documents() -> str:
     db = SessionLocal()
     try:
-        docs = (
-            db.query(Document)
-            .filter(Document.status == "indexed")
-            .order_by(Document.created_at)
-            .all()
-        )
+        docs = _indexed_documents(db)
         if not docs:
             return "No indexed documents in the library."
         lines = [
@@ -212,6 +242,60 @@ def list_documents() -> str:
         return "\n".join(lines)
     finally:
         db.close()
+
+
+# ── Resources ─────────────────────────────────────────────────────────────
+#
+# Structured counterparts to the tools above: same underlying data, but
+# machine-shaped output (JSON / plain text without formatting) for clients
+# that want to consume it programmatically — e.g. an @-mention autocomplete
+# list, rather than text meant for an LLM or human to read. Only SQLite is
+# touched here, same as list_documents/read_document; no retriever involved.
+
+
+@mcp.resource(
+    "docs://documents",
+    mime_type="application/json",
+    description=(
+        "Structured list of every indexed document in the library — the "
+        "programmatic counterpart of the list_documents tool. Returns a "
+        "JSON array of objects ({id, title, pages, words}), one per "
+        "document, in the same order as list_documents. Intended for "
+        "programmatic consumers (e.g. @-mention autocomplete in a client "
+        "UI) rather than LLM/human reading; use the list_documents tool for "
+        "human/LLM-readable text."
+    ),
+)
+def list_docs() -> list[dict]:
+    db = SessionLocal()
+    try:
+        docs = _indexed_documents(db)
+        return [
+            {
+                "id": d.id,
+                "title": _doc_label(d),
+                "pages": d.page_count,
+                "words": d.word_count,
+            }
+            for d in docs
+        ]
+    finally:
+        db.close()
+
+
+@mcp.resource(
+    "docs://documents/{doc_id}",
+    mime_type="text/plain",
+    description=(
+        "Full text of one indexed document, assembled from its chunks in "
+        "reading order and prefixed with title/filename/page-count "
+        "metadata — the same content the read_document tool returns. "
+        "Raises an error if doc_id is unknown or the document has no "
+        "indexed chunks."
+    ),
+)
+def fetch_doc(doc_id: str) -> str:
+    return _document_full_text(doc_id)
 
 
 if __name__ == "__main__":

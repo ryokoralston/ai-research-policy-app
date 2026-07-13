@@ -34,6 +34,15 @@ def test_tools_registered():
     assert names == {"search_library", "read_document", "list_documents"}, names
 
 
+def test_resources_registered():
+    resource_manager = mcp_server.mcp._resource_manager
+    resource_uris = {str(r.uri) for r in resource_manager.list_resources()}
+    assert "docs://documents" in resource_uris, resource_uris
+
+    template_uris = {t.uri_template for t in resource_manager.list_templates()}
+    assert "docs://documents/{doc_id}" in template_uris, template_uris
+
+
 # ── list_documents ───────────────────────────────────────────────────────────
 
 def test_list_documents_contains_known_title():
@@ -121,6 +130,51 @@ def test_read_document_unknown_id_raises_value_error():
     assert raised, "expected ValueError for an unknown doc_id"
 
 
+# ── docs://documents resource (list_docs) ────────────────────────────────────
+
+def test_list_docs_contains_live_doc_id_with_expected_shape():
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter(Document.status == "indexed").first()
+        assert doc is not None, "expected at least one indexed document in the dev DB"
+        expected_id = doc.id
+    finally:
+        db.close()
+
+    entries = mcp_server.list_docs()
+    assert isinstance(entries, list) and entries, "expected a non-empty list"
+
+    ids = {e["id"] for e in entries}
+    assert expected_id in ids, (expected_id, ids)
+
+    for entry in entries:
+        assert set(entry.keys()) == {"id", "title", "pages", "words"}, entry
+        assert entry["title"], entry
+
+
+# ── docs://documents/{doc_id} resource (fetch_doc) ───────────────────────────
+
+def test_fetch_doc_matches_read_document_tool():
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter(Document.status == "indexed").first()
+        assert doc is not None, "expected at least one indexed document in the dev DB"
+        doc_id = doc.id
+    finally:
+        db.close()
+
+    assert mcp_server.fetch_doc(doc_id) == mcp_server.read_document(doc_id)
+
+
+def test_fetch_doc_unknown_id_raises_value_error():
+    raised = False
+    try:
+        mcp_server.fetch_doc("no-such-id")
+    except ValueError:
+        raised = True
+    assert raised, "expected ValueError for an unknown doc_id"
+
+
 # ── search_library (slow: loads the embedding model) ────────────────────────
 
 def test_search_library_returns_numbered_results_with_doc_ids():
@@ -175,11 +229,15 @@ if __name__ == "__main__":
     print("\nRunning mcp_server.py tests...\n")
 
     _run("tools registered", test_tools_registered)
+    _run("resources registered", test_resources_registered)
     _run("list_documents contains known title", test_list_documents_contains_known_title)
     _run("list_documents empty-library message not hit", test_list_documents_empty_library_message)
     _run("read_document known id contains first chunk", test_read_document_known_id_contains_first_chunk)
     _run("read_document truncates long documents", test_read_document_truncates_long_documents)
     _run("read_document unknown id raises ValueError", test_read_document_unknown_id_raises_value_error)
+    _run("list_docs contains live doc id with expected shape", test_list_docs_contains_live_doc_id_with_expected_shape)
+    _run("fetch_doc matches read_document tool", test_fetch_doc_matches_read_document_tool)
+    _run("fetch_doc unknown id raises ValueError", test_fetch_doc_unknown_id_raises_value_error)
     _run("search_library empty-results message path", test_search_library_empty_results_message)
     # Slowest last: loads the embedding model (+ reranker on first retrieve).
     _run("search_library returns numbered results with doc_ids", test_search_library_returns_numbered_results_with_doc_ids)

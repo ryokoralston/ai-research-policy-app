@@ -16,6 +16,7 @@ Run from the backend directory:
     ./venv/bin/python -m tests.test_mcp_client
 """
 import asyncio
+import json
 import os
 import sys
 
@@ -27,6 +28,7 @@ import mcp.types as types
 from mcp_client import MCPClient
 from database import SessionLocal
 from models.document import Document
+from pydantic import AnyUrl
 
 _SERVER_SCRIPT = os.path.join(_BACKEND_DIR, "mcp_server.py")
 
@@ -110,6 +112,53 @@ def test_call_tool_read_document_unknown_id_is_error_result():
     assert _result_text(result), "expected error message text in the result content"
 
 
+# ── resources: docs://documents, docs://documents/{doc_id} ──────────────────
+#
+# MCPClient has no resource-specific helper methods yet (client-side resource
+# support is a later lesson) — these go through client.session() directly,
+# the same underlying mcp.ClientSession the tool-call tests above use via
+# MCPClient.list_tools()/call_tool().
+
+def test_list_resources_and_templates_include_docs_endpoints():
+    async def _do(client):
+        resources = await client.session().list_resources()
+        templates = await client.session().list_resource_templates()
+        return resources, templates
+
+    resources, templates = _with_client(_do)
+
+    resource_uris = {str(r.uri) for r in resources.resources}
+    assert "docs://documents" in resource_uris, resource_uris
+
+    template_uris = {t.uriTemplate for t in templates.resourceTemplates}
+    assert "docs://documents/{doc_id}" in template_uris, template_uris
+
+
+def test_read_resource_documents_returns_json_list_with_live_doc_id():
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter(Document.status == "indexed").first()
+        assert doc is not None, "expected at least one indexed document in the dev DB"
+        expected_id = doc.id
+    finally:
+        db.close()
+
+    async def _do(client):
+        return await client.session().read_resource(AnyUrl("docs://documents"))
+
+    result = _with_client(_do)
+    assert len(result.contents) == 1, result.contents
+    content = result.contents[0]
+    assert isinstance(content, types.TextResourceContents), content
+    if content.mimeType is not None:
+        assert content.mimeType == "application/json", content.mimeType
+
+    entries = json.loads(content.text)
+    assert isinstance(entries, list) and entries, entries
+    ids = {entry["id"] for entry in entries}
+    assert expected_id in ids, (expected_id, ids)
+
+
 # ── session() before connect ─────────────────────────────────────────────
 
 def test_session_before_connect_raises_connection_error():
@@ -145,6 +194,8 @@ if __name__ == "__main__":
     _run("list_tools have descriptions and input schema", test_list_tools_have_descriptions_and_input_schema)
     _run("call_tool list_documents contains live doc id", test_call_tool_list_documents_contains_live_doc_id)
     _run("call_tool read_document unknown id is error result", test_call_tool_read_document_unknown_id_is_error_result)
+    _run("list_resources and list_resource_templates include docs endpoints", test_list_resources_and_templates_include_docs_endpoints)
+    _run("read_resource docs://documents returns JSON list with live doc id", test_read_resource_documents_returns_json_list_with_live_doc_id)
     _run("session() before connect raises ConnectionError", test_session_before_connect_raises_connection_error)
 
     total = len(_PASSED) + len(_FAILED)
