@@ -14,13 +14,16 @@ Run directly:
 
     cd backend && ./venv/bin/python mcp_client.py
 
-This connects to mcp_server.py over stdio, lists its tools, and calls
-list_documents() to sanity-check the round trip end to end.
+This connects to mcp_server.py over stdio, lists its tools, calls
+list_documents() to sanity-check the round trip end to end, and reads its
+docs://documents resources.
 """
 import asyncio
 import contextlib
+import json
 import os
 import sys
+from typing import Any
 
 _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 if _BACKEND_DIR not in sys.path:
@@ -29,6 +32,7 @@ if _BACKEND_DIR not in sys.path:
 import mcp.types as types
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from pydantic import AnyUrl
 
 
 class MCPClient:
@@ -115,6 +119,36 @@ class MCPClient:
     async def call_tool(self, tool_name: str, tool_input: dict) -> types.CallToolResult | None:
         return await self.session().call_tool(tool_name, tool_input)
 
+    async def list_resources(self) -> list[types.Resource]:
+        result = await self.session().list_resources()
+        return result.resources
+
+    async def list_resource_templates(self) -> list[types.ResourceTemplate]:
+        result = await self.session().list_resource_templates()
+        return result.resourceTemplates
+
+    async def read_resource(self, uri: str) -> Any:
+        """Read one resource by URI and return its content already unpacked:
+        a parsed Python object (list/dict/...) for application/json content,
+        or a plain str for anything else (e.g. text/plain).
+
+        The MCP SDK's ClientSession.read_resource() requires a pydantic
+        AnyUrl, not a plain str — the caller here still passes a plain str
+        URI; the AnyUrl conversion is an internal implementation detail.
+
+        Raises ValueError if the resource's first content block isn't text
+        (e.g. BlobResourceContents) — this client has no binary consumers
+        yet, so an unsupported content type should fail loudly rather than
+        be silently mishandled.
+        """
+        result = await self.session().read_resource(AnyUrl(uri))
+        resource = result.contents[0]
+        if isinstance(resource, types.TextResourceContents):
+            if resource.mimeType == "application/json":
+                return json.loads(resource.text)
+            return resource.text
+        raise ValueError(f"Unsupported resource content type: {type(resource).__name__}")
+
 
 async def main():
     server_script = os.path.join(_BACKEND_DIR, "mcp_server.py")
@@ -137,6 +171,18 @@ async def main():
         preview_lines = text.splitlines()[:5]
         for line in preview_lines:
             print(f"  {line}")
+
+        print("\nReading docs://documents resource...\n")
+        entries = await client.read_resource("docs://documents")
+        print(f"  {len(entries)} entries")
+        if entries:
+            first = entries[0]
+            print(f"  first: id={first['id']} title={first['title']!r}")
+
+            print(f"\nReading docs://documents/{first['id']} resource...\n")
+            doc_text = await client.read_resource(f"docs://documents/{first['id']}")
+            for line in doc_text.splitlines()[:2]:
+                print(f"  {line}")
 
 
 if __name__ == "__main__":

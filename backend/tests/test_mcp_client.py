@@ -16,7 +16,6 @@ Run from the backend directory:
     ./venv/bin/python -m tests.test_mcp_client
 """
 import asyncio
-import json
 import os
 import sys
 
@@ -25,10 +24,10 @@ if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
 import mcp.types as types
+from mcp.shared.exceptions import McpError
 from mcp_client import MCPClient
 from database import SessionLocal
 from models.document import Document
-from pydantic import AnyUrl
 
 _SERVER_SCRIPT = os.path.join(_BACKEND_DIR, "mcp_server.py")
 
@@ -114,23 +113,22 @@ def test_call_tool_read_document_unknown_id_is_error_result():
 
 # ── resources: docs://documents, docs://documents/{doc_id} ──────────────────
 #
-# MCPClient has no resource-specific helper methods yet (client-side resource
-# support is a later lesson) — these go through client.session() directly,
-# the same underlying mcp.ClientSession the tool-call tests above use via
-# MCPClient.list_tools()/call_tool().
+# Exercised through MCPClient's resource helpers (list_resources,
+# list_resource_templates, read_resource) rather than client.session()
+# directly.
 
 def test_list_resources_and_templates_include_docs_endpoints():
     async def _do(client):
-        resources = await client.session().list_resources()
-        templates = await client.session().list_resource_templates()
+        resources = await client.list_resources()
+        templates = await client.list_resource_templates()
         return resources, templates
 
     resources, templates = _with_client(_do)
 
-    resource_uris = {str(r.uri) for r in resources.resources}
+    resource_uris = {str(r.uri) for r in resources}
     assert "docs://documents" in resource_uris, resource_uris
 
-    template_uris = {t.uriTemplate for t in templates.resourceTemplates}
+    template_uris = {t.uriTemplate for t in templates}
     assert "docs://documents/{doc_id}" in template_uris, template_uris
 
 
@@ -144,19 +142,54 @@ def test_read_resource_documents_returns_json_list_with_live_doc_id():
         db.close()
 
     async def _do(client):
-        return await client.session().read_resource(AnyUrl("docs://documents"))
+        return await client.read_resource("docs://documents")
 
-    result = _with_client(_do)
-    assert len(result.contents) == 1, result.contents
-    content = result.contents[0]
-    assert isinstance(content, types.TextResourceContents), content
-    if content.mimeType is not None:
-        assert content.mimeType == "application/json", content.mimeType
-
-    entries = json.loads(content.text)
+    entries = _with_client(_do)
+    # read_resource already parses application/json content into Python
+    # objects — no json.loads needed here.
     assert isinstance(entries, list) and entries, entries
+    assert all(isinstance(entry, dict) for entry in entries), entries
     ids = {entry["id"] for entry in entries}
     assert expected_id in ids, (expected_id, ids)
+
+
+def test_read_resource_document_by_id_returns_text_with_title():
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter(Document.status == "indexed").first()
+        assert doc is not None, "expected at least one indexed document in the dev DB"
+        expected_id = doc.id
+        expected_label = doc.title or doc.filename
+    finally:
+        db.close()
+
+    async def _do(client):
+        return await client.read_resource(f"docs://documents/{expected_id}")
+
+    text = _with_client(_do)
+    # text/plain content is returned as a plain str, not JSON-parsed.
+    assert isinstance(text, str), text
+    assert expected_label in text, (expected_label, text[:500])
+
+
+def test_read_resource_document_unknown_id_raises_mcp_error():
+    async def _do(client):
+        return await client.read_resource("docs://documents/no-such-id")
+
+    # Unlike call_tool (where FastMCP converts a raised exception into an
+    # error CallToolResult with isError=True), reading a resource template
+    # whose handler raises propagates as a client-side exception over the
+    # JSON-RPC transport: mcp.shared.exceptions.McpError, wrapping the
+    # server's ValueError("Unknown doc_id: ...") message. Empirically
+    # verified — there is no error payload to inspect, the call itself
+    # raises.
+    raised = None
+    try:
+        _with_client(_do)
+    except McpError as exc:
+        raised = exc
+    assert raised is not None, "expected McpError for an unknown template doc_id"
+    assert "no-such-id" in str(raised), raised
 
 
 # ── session() before connect ─────────────────────────────────────────────
@@ -196,6 +229,8 @@ if __name__ == "__main__":
     _run("call_tool read_document unknown id is error result", test_call_tool_read_document_unknown_id_is_error_result)
     _run("list_resources and list_resource_templates include docs endpoints", test_list_resources_and_templates_include_docs_endpoints)
     _run("read_resource docs://documents returns JSON list with live doc id", test_read_resource_documents_returns_json_list_with_live_doc_id)
+    _run("read_resource docs://documents/{id} returns text with title", test_read_resource_document_by_id_returns_text_with_title)
+    _run("read_resource docs://documents/{unknown id} raises McpError", test_read_resource_document_unknown_id_raises_mcp_error)
     _run("session() before connect raises ConnectionError", test_session_before_connect_raises_connection_error)
 
     total = len(_PASSED) + len(_FAILED)
