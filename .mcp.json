@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "policy-library": {
+      "command": "bash",
+      "args": ["-c", "cd backend && exec ./venv/bin/python mcp_server.py"]
+    }
+  }
+}
