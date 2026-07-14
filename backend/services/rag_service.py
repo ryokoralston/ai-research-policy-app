@@ -17,6 +17,7 @@ from services.anthropic_client import (
 )
 from services.reminder_tools import REMINDER_TOOLS, execute_reminder_tool
 from services.text_editor_tool import TEXT_EDITOR_TOOL, TEXT_EDITOR_TOOL_NAME, execute_text_editor_tool
+from services.query_router import route_query, guidance_for
 
 
 # Prompt used to turn an uploaded image into a searchable text document for
@@ -533,6 +534,15 @@ async def answer_question(
     messages.append({"role": "user", "content": question})
 
     yield sse_event("start", {"question": question})
+
+    # Routing workflow: classify the question with a cheap, fast call, then fold
+    # per-category response-style guidance into the system prompt below. Never
+    # changes which tools are available — a misroute must not remove capability.
+    category = await route_query(question, chat_history)
+    yield sse_event("route", {"category": category})
+    guidance = guidance_for(category)
+    if guidance:
+        system = f"{system}\n\n<response_style>\n{guidance}\n</response_style>"
 
     full_text = ""
     turn_messages: list[dict] = []

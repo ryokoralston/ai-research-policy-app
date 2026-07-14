@@ -21,6 +21,9 @@ interface ChatMessage {
   // event's turn_messages) — replayed as chat_history on the next turn so
   // prior tool_use/tool_result blocks survive instead of being flattened to text.
   apiMessages?: ApiChatMessage[];
+  // Routing-workflow category from the "route" SSE event (see backend
+  // services/query_router.py) — undefined if the event never arrived.
+  routeCategory?: string;
 }
 
 interface ChatPanelProps {
@@ -159,7 +162,20 @@ export default function ChatPanel({
         },
         (event, data) => {
           const d = data as Record<string, unknown>;
-          if (event === "tool_pending") {
+          if (event === "route") {
+            // Fires once near the start of the turn (see rag_service.py's
+            // answer_question) — attach the category to the in-flight
+            // assistant placeholder so it survives once streaming ends.
+            const category = d.category as string;
+            setChatMessages((prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.role === "assistant") {
+                next[next.length - 1] = { ...last, routeCategory: category };
+              }
+              return next;
+            });
+          } else if (event === "tool_pending") {
             // Fires the instant Claude commits to a tool call, before its
             // arguments exist — show a generic per-tool indicator right away
             // rather than waiting for the full "tool" event.
@@ -330,6 +346,11 @@ export default function ChatPanel({
               >
                 {msg.role === "assistant" ? (
                   <>
+                    {msg.routeCategory && (
+                      <div className="inline-flex items-center gap-2 text-xs text-slate-400 bg-slate-800/60 rounded-lg px-2 py-1 mb-1.5">
+                        Route: {msg.routeCategory.replace(/_/g, " ")}
+                      </div>
+                    )}
                     <StreamingText text={msg.content} citations={msg.citations} webCitations={msg.webCitations} />
                     {msg.streaming && (
                       <span className="inline-flex items-center gap-1 mt-1 text-slate-400">
