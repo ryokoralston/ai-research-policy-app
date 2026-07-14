@@ -31,6 +31,7 @@ from database import Base
 from models import Report, ResearchSession
 from schemas import ReportGenerateRequest
 import services.report_generator as report_generator
+import services.report_quality as report_quality
 
 _CONFIDENCE = {
     "confidence_score": 7,
@@ -74,15 +75,27 @@ def _make_report_with_session(db, existing_metadata_json=None):
 
 
 def _patch_and_run(db, report_id, request, fake_verify_grounding):
-    orig = (report_generator.stream_text_with_thinking, report_generator.verify_grounding)
+    # report_generator.generate_report_stream now delegates the post-verification
+    # revision pass to services.report_quality.revise_if_ungrounded, which resolves
+    # stream_text_with_thinking/verify_grounding through report_quality's OWN module
+    # globals (not report_generator's) — so both modules' bindings must be patched
+    # here, or a grade with non-empty unsupported_claims (see _CONFIDENCE below)
+    # would trigger a real, unpatched API call during the revision attempt.
+    orig = (
+        report_generator.stream_text_with_thinking, report_generator.verify_grounding,
+        report_quality.stream_text_with_thinking, report_quality.verify_grounding,
+    )
     report_generator.stream_text_with_thinking = _fake_stream_text_with_thinking
     report_generator.verify_grounding = fake_verify_grounding
+    report_quality.stream_text_with_thinking = _fake_stream_text_with_thinking
+    report_quality.verify_grounding = fake_verify_grounding
     try:
         async def collect():
             return [e async for e in report_generator.generate_report_stream(report_id, request, db)]
         events = asyncio.run(collect())
     finally:
-        report_generator.stream_text_with_thinking, report_generator.verify_grounding = orig
+        (report_generator.stream_text_with_thinking, report_generator.verify_grounding,
+         report_quality.stream_text_with_thinking, report_quality.verify_grounding) = orig
     report = db.query(Report).filter(Report.id == report_id).first()
     db.refresh(report)
     return report, events

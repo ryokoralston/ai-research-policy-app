@@ -98,6 +98,18 @@ function NewReportForm() {
   const [error, setError]               = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Evaluator-optimizer revision pass (see backend services/report_quality.py):
+  // fired after the base report + first grounding check, at most once. Revision
+  // tokens accumulate into revisionBufferRef only — never into outputText — so
+  // nothing changes on screen until "revision_end" decides whether to keep them.
+  // A ref (not state) because the "revision_end" handler needs to read the fully
+  // accumulated text synchronously; state set via functional updates can't be
+  // read back out mid-stream.
+  const [revising, setRevising]                 = useState(false);
+  const [revisionClaimCount, setRevisionClaimCount] = useState(0);
+  const [revisionResult, setRevisionResult]     = useState<"accepted" | "rejected" | null>(null);
+  const revisionBufferRef = useRef("");
+
   // Template editor mode (No Source)
   const [templateMode, setTemplateMode] = useState(false);
   const [templateSections, setTemplateSections] = useState<
@@ -186,6 +198,10 @@ function NewReportForm() {
     setThinkingText("");
     setCitationConfidence(null);
     setError(null);
+    setRevising(false);
+    setRevisionClaimCount(0);
+    setRevisionResult(null);
+    revisionBufferRef.current = "";
     abortRef.current = new AbortController();
 
     const payload: Record<string, unknown> = {
@@ -208,7 +224,24 @@ function NewReportForm() {
           } else if (event === "thinking") {
             setThinkingText((prev) => prev + (d.text as string));
           } else if (event === "token") {
-            setOutputText((prev) => prev + (d.text as string));
+            if (d.section === "revision") {
+              revisionBufferRef.current += d.text as string;
+            } else {
+              setOutputText((prev) => prev + (d.text as string));
+            }
+          } else if (event === "revision_start") {
+            setRevising(true);
+            setRevisionResult(null);
+            revisionBufferRef.current = "";
+            setRevisionClaimCount(((d.unsupported_claims as string[]) || []).length);
+          } else if (event === "revision_end") {
+            setRevising(false);
+            if (d.accepted) {
+              setOutputText(revisionBufferRef.current);
+              setRevisionResult("accepted");
+            } else {
+              setRevisionResult("rejected");
+            }
           } else if (event === "verification") {
             setCitationConfidence({
               confidence_score: d.confidence_score as number | undefined,
@@ -598,7 +631,11 @@ function NewReportForm() {
                 <div className="flex items-center gap-3 text-sm text-slate-400">
                   <LoadingSpinner size="sm" />
                   <span>
-                    {currentSection ? `Writing: ${currentSection}` : "Starting generation..."}
+                    {revising
+                      ? `Fact-check found ${revisionClaimCount} unsupported claim${revisionClaimCount === 1 ? "" : "s"} — revising…`
+                      : currentSection
+                      ? `Writing: ${currentSection}`
+                      : "Starting generation..."}
                   </span>
                 </div>
               )}
@@ -614,6 +651,18 @@ function NewReportForm() {
                   </div>
                 )}
               </div>
+
+              {!generating && revisionResult === "accepted" && (
+                <div className="flex items-center gap-2 text-xs text-green-400">
+                  <CheckCircle size={14} />
+                  <span>Revised — unsupported claims were corrected.</span>
+                </div>
+              )}
+              {!generating && revisionResult === "rejected" && (
+                <p className="text-xs text-slate-500">
+                  Fact-check revision did not improve grounding — original report kept.
+                </p>
+              )}
 
               {citationConfidence && <CitationConfidenceCard confidence={citationConfidence} />}
 
