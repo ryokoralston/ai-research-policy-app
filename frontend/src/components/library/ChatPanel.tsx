@@ -40,6 +40,24 @@ interface ChatPanelProps {
 }
 
 /**
+ * Fallback label for a tool name this panel doesn't special-case above —
+ * covers any tool from a connected MCP server (backend/services/mcp_bridge.py
+ * prefixes every MCP tool name "mcp__{server}__{tool}"). Strips the prefix
+ * and server segment and turns underscores into spaces, e.g.
+ * "mcp__policy_library__read_document" -> "Using MCP tool: read document".
+ * Anything else falls back to a generic "Running <name>…" label.
+ */
+function fallbackToolLabel(toolName: string): string {
+  if (toolName.startsWith("mcp__")) {
+    const rest = toolName.slice("mcp__".length);
+    const sep = rest.indexOf("__");
+    const bareName = sep === -1 ? rest : rest.slice(sep + 2);
+    return `Using MCP tool: ${bareName.replace(/_/g, " ")}`;
+  }
+  return `Running ${toolName}…`;
+}
+
+/**
  * Label shown the instant a tool call starts (the "tool_pending" SSE event),
  * before its arguments have finished streaming in. No input values are
  * available yet, so this is a shorter, generic version of the per-tool
@@ -60,7 +78,7 @@ function pendingToolLabel(toolName: string): string {
     case "str_replace_based_edit_tool":
       return "Working on draft files…";
     default:
-      return `Running ${toolName}…`;
+      return fallbackToolLabel(toolName);
   }
 }
 
@@ -206,7 +224,7 @@ export default function ChatPanel({
             } else if (toolName === "str_replace_based_edit_tool") {
               label = textEditorToolLabel(toolInput);
             } else {
-              label = `Running ${toolName}…`;
+              label = fallbackToolLabel(toolName);
             }
             setToolStatus(label);
           } else if (event === "token") {

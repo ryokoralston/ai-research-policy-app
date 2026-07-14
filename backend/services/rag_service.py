@@ -18,6 +18,7 @@ from services.anthropic_client import (
 from services.reminder_tools import REMINDER_TOOLS, execute_reminder_tool
 from services.text_editor_tool import TEXT_EDITOR_TOOL, TEXT_EDITOR_TOOL_NAME, execute_text_editor_tool
 from services.query_router import route_query, guidance_for
+from services.mcp_bridge import get_mcp_tool_defs, is_mcp_tool, call_mcp_tool
 
 
 # Prompt used to turn an uploaded image into a searchable text document for
@@ -420,6 +421,13 @@ async def answer_question(
     # contiguous by construction, but max() is safer than trusting that invariant).
     next_citation_index = max((c["index"] for c in ordered_citations), default=0)
 
+    # Tools from any MCP servers registered in the repo-root .mcp.json (see
+    # services/mcp_bridge.py) — the same registration Claude Code itself
+    # uses. Resolved once per turn here so both the system prompt (which
+    # only mentions MCP tools when there are any) and the tools list below
+    # see the same list.
+    mcp_tool_defs = await get_mcp_tool_defs()
+
     async def execute_tool(name: str, tool_input: dict) -> str:
         """Run a tool call requested by Claude and return the result as a string.
 
@@ -471,6 +479,8 @@ async def answer_question(
 
         if name == TEXT_EDITOR_TOOL_NAME:
             return await execute_text_editor_tool(tool_input)
+        if is_mcp_tool(name):
+            return await call_mcp_tool(name, tool_input)
         raise ValueError(f"Unknown tool: {name}")
 
     # Build system prompt: describe the tool and citation requirements
@@ -529,6 +539,21 @@ async def answer_question(
     # injected instructions hiding inside them.
     system = f"{system}\n\n{UNTRUSTED_CONTENT_GUARD}"
 
+    # Only mention MCP tools when at least one is actually available this
+    # turn — when mcp_tool_defs is empty (no servers configured, or every
+    # server failed to connect), system must stay byte-identical to the
+    # pre-MCP-bridge prompt.
+    if mcp_tool_defs:
+        system = (
+            f"{system}\n\n"
+            "You also have tools from connected MCP servers (names prefixed mcp__). "
+            "Use mcp__policy_library__read_document when the user asks about an entire "
+            "document rather than a specific fact, and mcp__policy_library__list_documents "
+            "when asked what is in the library. Chunk-level search_documents remains the "
+            "right tool for targeted questions, and its [N] citations only apply to search "
+            "results — do not fabricate [N] citations for MCP tool output."
+        )
+
     # Build messages: chat history + the bare question (no pre-stuffed context)
     messages = list(chat_history or [])
     messages.append({"role": "user", "content": question})
@@ -560,7 +585,7 @@ async def answer_question(
     async for event_type, payload in stream_chat_with_tools(
         messages,
         system=system,
-        tools=[SEARCH_DOCUMENTS_TOOL, *REMINDER_TOOLS, TEXT_EDITOR_TOOL, WEB_SEARCH_TOOL],
+        tools=[SEARCH_DOCUMENTS_TOOL, *REMINDER_TOOLS, TEXT_EDITOR_TOOL, WEB_SEARCH_TOOL, *mcp_tool_defs],
         tool_executor=execute_tool,
         temperature=0.3,
     ):
