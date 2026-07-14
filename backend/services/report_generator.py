@@ -397,6 +397,7 @@ def _extract_word_limit(custom_instructions: str | None) -> int | None:
     if not custom_instructions:
         return None
     patterns = [
+        r'limit\w*\s+(?:\w+\s+){0,3}?to\s*(\d+)\s*words?',
         r'(\d+)\s*words?\s*(?:or\s*(?:less|fewer)|以下|以内|max|maximum)',
         r'(?:under|within|max|maximum|at\s*most)\s*(\d+)\s*words?',
         r'(\d+)\s*words?\s*(?:total|以下|以内)',

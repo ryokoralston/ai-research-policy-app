@@ -29,6 +29,11 @@ def test_english_patterns():
     assert _extract_word_limit("max 150 words please") == 150
     assert _extract_word_limit("at most 500 words") == 500
     assert _extract_word_limit("1000 words total") == 1000
+    assert _extract_word_limit("Limit the report to 250 words.") == 250
+    assert _extract_word_limit("limit to 500 words") == 500
+    assert _extract_word_limit("Limit the executive brief to 300 words") == 300
+    # "limit" without a word count must not match
+    assert _extract_word_limit("the limit of my patience") is None
 
 
 def test_japanese_patterns():
