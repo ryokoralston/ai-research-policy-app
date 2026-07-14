@@ -175,6 +175,47 @@ def test_fetch_doc_unknown_id_raises_value_error():
     assert raised, "expected ValueError for an unknown doc_id"
 
 
+# ── Prompts ───────────────────────────────────────────────────────────────
+
+def test_prompts_registered():
+    prompts = {p.name: p for p in mcp_server.mcp._prompt_manager.list_prompts()}
+    assert set(prompts) == {"summarize_document", "policy_brief"}, set(prompts)
+
+    summarize = prompts["summarize_document"]
+    assert summarize.description and summarize.description.strip()
+    arg_names = {a.name for a in (summarize.arguments or [])}
+    assert arg_names == {"doc_id"}, arg_names
+    assert all(a.required for a in summarize.arguments), summarize.arguments
+
+    brief = prompts["policy_brief"]
+    assert brief.description and brief.description.strip()
+    arg_names = {a.name for a in (brief.arguments or [])}
+    assert arg_names == {"topic"}, arg_names
+    assert all(a.required for a in brief.arguments), brief.arguments
+
+
+def test_summarize_document_prompt_mentions_doc_id_and_read_document():
+    messages = mcp_server.summarize_document_prompt("some-doc-id")
+    assert isinstance(messages, list) and len(messages) == 1, messages
+
+    message = messages[0]
+    assert message.role == "user", message.role
+    text = message.content.text
+    assert "some-doc-id" in text, text
+    assert "read_document" in text, text
+
+
+def test_policy_brief_prompt_mentions_topic_and_search_library():
+    messages = mcp_server.policy_brief_prompt("AI liability")
+    assert isinstance(messages, list) and len(messages) == 1, messages
+
+    message = messages[0]
+    assert message.role == "user", message.role
+    text = message.content.text
+    assert "AI liability" in text, text
+    assert "search_library" in text, text
+
+
 # ── search_library (slow: loads the embedding model) ────────────────────────
 
 def test_search_library_returns_numbered_results_with_doc_ids():
@@ -238,6 +279,9 @@ if __name__ == "__main__":
     _run("list_docs contains live doc id with expected shape", test_list_docs_contains_live_doc_id_with_expected_shape)
     _run("fetch_doc matches read_document tool", test_fetch_doc_matches_read_document_tool)
     _run("fetch_doc unknown id raises ValueError", test_fetch_doc_unknown_id_raises_value_error)
+    _run("prompts registered", test_prompts_registered)
+    _run("summarize_document_prompt mentions doc_id and read_document", test_summarize_document_prompt_mentions_doc_id_and_read_document)
+    _run("policy_brief_prompt mentions topic and search_library", test_policy_brief_prompt_mentions_topic_and_search_library)
     _run("search_library empty-results message path", test_search_library_empty_results_message)
     # Slowest last: loads the embedding model (+ reranker on first retrieve).
     _run("search_library returns numbered results with doc_ids", test_search_library_returns_numbered_results_with_doc_ids)

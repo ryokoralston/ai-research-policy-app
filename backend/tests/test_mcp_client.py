@@ -192,6 +192,56 @@ def test_read_resource_document_unknown_id_raises_mcp_error():
     assert "no-such-id" in str(raised), raised
 
 
+# ── prompts: summarize_document, policy_brief ────────────────────────────────
+#
+# MCPClient has no prompt helpers yet (client-side prompt support is a later
+# lesson) — exercised here through client.session() directly, the same
+# pattern used for docs://documents before the resources lesson added
+# list_resources()/read_resource() to MCPClient itself.
+
+def test_session_list_prompts_includes_both_prompts_with_arguments():
+    async def _do(client):
+        return await client.session().list_prompts()
+
+    result = _with_client(_do)
+    prompts = {p.name: p for p in result.prompts}
+    assert {"summarize_document", "policy_brief"} <= set(prompts), prompts
+
+    summarize = prompts["summarize_document"]
+    assert summarize.description and summarize.description.strip()
+    summarize_args = {a.name: a for a in (summarize.arguments or [])}
+    assert set(summarize_args) == {"doc_id"}, summarize_args
+    assert summarize_args["doc_id"].required, summarize_args
+
+    brief = prompts["policy_brief"]
+    assert brief.description and brief.description.strip()
+    brief_args = {a.name: a for a in (brief.arguments or [])}
+    assert set(brief_args) == {"topic"}, brief_args
+    assert brief_args["topic"].required, brief_args
+
+
+def test_session_get_prompt_summarize_document_returns_user_message():
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter(Document.status == "indexed").first()
+        assert doc is not None, "expected at least one indexed document in the dev DB"
+        doc_id = doc.id
+    finally:
+        db.close()
+
+    async def _do(client):
+        return await client.session().get_prompt("summarize_document", {"doc_id": doc_id})
+
+    result = _with_client(_do)
+    assert len(result.messages) == 1, result.messages
+
+    message = result.messages[0]
+    assert message.role == "user", message.role
+    assert isinstance(message.content, types.TextContent), message.content
+    assert doc_id in message.content.text, (doc_id, message.content.text[:300])
+    assert "read_document" in message.content.text, message.content.text[:300]
+
+
 # ── session() before connect ─────────────────────────────────────────────
 
 def test_session_before_connect_raises_connection_error():
@@ -231,6 +281,8 @@ if __name__ == "__main__":
     _run("read_resource docs://documents returns JSON list with live doc id", test_read_resource_documents_returns_json_list_with_live_doc_id)
     _run("read_resource docs://documents/{id} returns text with title", test_read_resource_document_by_id_returns_text_with_title)
     _run("read_resource docs://documents/{unknown id} raises McpError", test_read_resource_document_unknown_id_raises_mcp_error)
+    _run("session().list_prompts() includes both prompts with arguments", test_session_list_prompts_includes_both_prompts_with_arguments)
+    _run("session().get_prompt(summarize_document) returns user message", test_session_get_prompt_summarize_document_returns_user_message)
     _run("session() before connect raises ConnectionError", test_session_before_connect_raises_connection_error)
 
     total = len(_PASSED) + len(_FAILED)
