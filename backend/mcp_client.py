@@ -15,8 +15,8 @@ Run directly:
     cd backend && ./venv/bin/python mcp_client.py
 
 This connects to mcp_server.py over stdio, lists its tools, calls
-list_documents() to sanity-check the round trip end to end, and reads its
-docs://documents resources.
+list_documents() to sanity-check the round trip end to end, reads its
+docs://documents resources, and exercises its prompts.
 """
 import asyncio
 import contextlib
@@ -149,6 +149,14 @@ class MCPClient:
             return resource.text
         raise ValueError(f"Unsupported resource content type: {type(resource).__name__}")
 
+    async def list_prompts(self) -> list[types.Prompt]:
+        result = await self.session().list_prompts()
+        return result.prompts
+
+    async def get_prompt(self, prompt_name: str, args: dict[str, str]) -> list[types.PromptMessage]:
+        result = await self.session().get_prompt(prompt_name, args)
+        return result.messages
+
 
 async def main():
     server_script = os.path.join(_BACKEND_DIR, "mcp_server.py")
@@ -183,6 +191,20 @@ async def main():
             doc_text = await client.read_resource(f"docs://documents/{first['id']}")
             for line in doc_text.splitlines()[:2]:
                 print(f"  {line}")
+
+            print("\nListing prompts...\n")
+            prompts = await client.list_prompts()
+            for prompt in prompts:
+                first_line = (prompt.description or "").strip().splitlines()[0] if prompt.description else ""
+                print(f"  - {prompt.name}: {first_line}")
+
+            if prompts:
+                print(f"\nGetting prompt 'summarize_document' with first doc...\n")
+                messages = await client.get_prompt("summarize_document", {"doc_id": first["id"]})
+                print(f"  message count: {len(messages)}")
+                print(f"  first message role: {messages[0].role}")
+                for line in messages[0].content.text.splitlines()[:2]:
+                    print(f"  {line}")
 
 
 if __name__ == "__main__":
