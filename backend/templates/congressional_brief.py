@@ -19,6 +19,7 @@ CONGRESSIONAL_BRIEF_SECTIONS = [
             "(2) why it matters for policy now, (3) 2-3 top recommendations. "
             "Make every sentence count."
         ),
+        "summarize_body": True,
     },
     {
         "key": "background",

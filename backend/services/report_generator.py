@@ -70,11 +70,30 @@ async def generate_report_stream(
         source_material=source_material,
     )
 
-    # ── Generate sections one by one ─────────────────────────────────────────
-    all_sections: list[dict] = []
-    full_content_parts: list[str] = []
+    # ── Generate sections: body first, "summarize_body" sections last ────────
+    # A summary section (e.g. congressional_brief's executive_summary,
+    # policy_memo's bluf) is supposed to distill the report it leads — but a
+    # naive top-to-bottom loop generates it FIRST, from raw source material,
+    # before any body section exists to summarize. previous_sections also only
+    # ever carries the last 2 sections truncated to 500 chars, so even a later
+    # section never sees a full body. Fix: partition into body sections and
+    # deferred ("summarize_body": True) sections, preserving template order
+    # within each group. Generate every body section exactly as before
+    # (previous_sections continuity untouched, and deferred sections never
+    # enter that continuity). Only once the full body exists, generate each
+    # deferred section from the complete assembled body via
+    # _build_summary_section_prompt. SSE events therefore stream in
+    # GENERATION order (deferred last), but canonical_parts/full_content and
+    # each ReportSection.order_index use the section's index in
+    # template["sections"] — i.e. display/document order, summary first.
+    canonical_sections = list(enumerate(template["sections"]))
+    body_sections = [(i, s) for i, s in canonical_sections if not s.get("summarize_body")]
+    deferred_sections = [(i, s) for i, s in canonical_sections if s.get("summarize_body")]
 
-    for i, section_def in enumerate(template["sections"]):
+    all_sections: list[dict] = []  # body sections only, in generation order — previous_sections continuity
+    canonical_parts: list[str | None] = [None] * len(template["sections"])
+
+    for canonical_index, section_def in body_sections:
         section_key = section_def["key"]
         section_title = section_def["title"]
 
@@ -84,7 +103,7 @@ async def generate_report_stream(
             section_def=section_def,
             custom_instructions=request.custom_instructions,
             previous_sections=all_sections,
-            word_budget=word_budgets[i] if word_budgets else None,
+            word_budget=word_budgets[canonical_index] if word_budgets else None,
         )
 
         section_content = ""
@@ -100,25 +119,78 @@ async def generate_report_stream(
         # Strip internal metadata lines (e.g. SCORES_JSON) before saving
         section_content = _strip_scores_json_lines(section_content)
 
-        # Save section to DB
+        # Save section to DB — order_index is the section's canonical
+        # template position, not its generation order.
         section_record = ReportSection(
             id=str(uuid.uuid4()),
             report_id=report_id,
             section_key=section_key,
             title=section_title,
             content=section_content,
-            order_index=len(all_sections),
+            order_index=canonical_index,
         )
         db.add(section_record)
         db.commit()
 
         all_sections.append({"key": section_key, "title": section_title, "content": section_content})
-        full_content_parts.append(f"## {section_title}\n\n{section_content}")
+        canonical_parts[canonical_index] = f"## {section_title}\n\n{section_content}"
 
         yield sse_event("section_end", {"section": section_key, "word_count": len(section_content.split())})
 
+    # Full assembled body (canonical order) — this is what deferred
+    # "summarize_body" sections below are asked to faithfully distill.
+    report_body_markdown = "\n\n---\n\n".join(
+        canonical_parts[i] for i, _ in body_sections
+    )
+
+    for canonical_index, section_def in deferred_sections:
+        section_key = section_def["key"]
+        section_title = section_def["title"]
+
+        yield sse_event("section_start", {"section": section_key, "title": section_title})
+
+        prompt = _build_summary_section_prompt(
+            section_def=section_def,
+            report_body=report_body_markdown,
+            custom_instructions=request.custom_instructions,
+            word_budget=word_budgets[canonical_index] if word_budgets else None,
+        )
+
+        section_content = ""
+        async for kind, token in stream_text_with_thinking(
+            prompt, system=system_prompt, cached_context=shared_context, usage_log_tag="report-section",
+        ):
+            if kind == "thinking":
+                yield sse_event("thinking", {"text": token, "section": section_key})
+                continue
+            section_content += token
+            yield sse_event("token", {"text": token, "section": section_key})
+
+        section_content = _strip_scores_json_lines(section_content)
+
+        # Note: deferred sections are intentionally NOT appended to
+        # `all_sections` — body generation is already complete, and later
+        # deferred sections (if any) must not see this one's content either,
+        # keeping "previous_sections never contains a summary" invariant.
+        section_record = ReportSection(
+            id=str(uuid.uuid4()),
+            report_id=report_id,
+            section_key=section_key,
+            title=section_title,
+            content=section_content,
+            order_index=canonical_index,
+        )
+        db.add(section_record)
+        db.commit()
+
+        canonical_parts[canonical_index] = f"## {section_title}\n\n{section_content}"
+
+        yield sse_event("section_end", {"section": section_key, "word_count": len(section_content.split())})
+
+    total_sections_generated = len(body_sections) + len(deferred_sections)
+
     # ── Finalize report ───────────────────────────────────────────────────────
-    full_content = f"# {request.title}\n\n" + "\n\n---\n\n".join(full_content_parts)
+    full_content = f"# {request.title}\n\n" + "\n\n---\n\n".join(canonical_parts)
 
     # Citation/grounding verification: one extra LLM-as-judge call checking whether
     # full_content is actually supported by source_material. Skipped if there's no
@@ -185,7 +257,7 @@ async def generate_report_stream(
     yield sse_event("complete", {
         "report_id": report_id,
         "word_count": word_count,
-        "sections": len(all_sections),
+        "sections": total_sections_generated,
         "citation_confidence": final_grade,
         "event_type": "complete",
     })
@@ -468,6 +540,29 @@ def _build_single_pass_shared_context(source_material: str) -> str:
     return f"<source_material>\n{source_material[:8000]}\n</source_material>\n\n"
 
 
+def _word_budget_note(word_budget: int | None) -> str:
+    """Shared word-budget suffix used by both _build_section_prompt and
+    _build_summary_section_prompt. Factored out so the two prompt builders
+    stay in sync without duplicating the wording; _build_section_prompt's
+    output bytes are unchanged by this extraction (see
+    test_report_word_limits.test_concatenated_shared_and_section_prompt_matches_pre_split_text)."""
+    return (
+        f"\n\n⚠️ WORD LIMIT: Write this section in {word_budget} words or fewer. "
+        f"This overrides any word count in the instructions above."
+        if word_budget else ""
+    )
+
+
+def _custom_constraints_note(custom_instructions: str | None) -> str:
+    """Shared MANDATORY USER CONSTRAINTS suffix used by both _build_section_prompt
+    and _build_summary_section_prompt. See _word_budget_note for why this is
+    factored out."""
+    return (
+        f"\n\n⚠️ MANDATORY USER CONSTRAINTS (override all other instructions): {custom_instructions}"
+        if custom_instructions else ""
+    )
+
+
 def _build_section_prompt(
     section_def: dict,
     custom_instructions: str | None,
@@ -477,24 +572,17 @@ def _build_section_prompt(
     """Per-section remainder of the prompt: previous_sections grows and
     section_def/word_budget vary every call, so this is sent as the varying
     `prompt` argument alongside the shared, cached context built by
-    _build_shared_context (see generate_report_stream)."""
+    _build_shared_context (see generate_report_stream).
+
+    previous_sections must never contain a "summarize_body" section (e.g.
+    executive_summary, BLUF) — those are generated after every body section,
+    in a separate deferred pass (see generate_report_stream), so a body
+    section can never end up "building on" a summary of itself."""
     prev_context = ""
     if previous_sections:
         prev_context = "\n\nPrevious sections already written:\n" + "\n\n".join(
             f"### {s['title']}\n{s['content'][:500]}..." for s in previous_sections[-2:]
         )
-
-    # If a word budget is calculated, override the section word count directly
-    word_budget_note = (
-        f"\n\n⚠️ WORD LIMIT: Write this section in {word_budget} words or fewer. "
-        f"This overrides any word count in the instructions above."
-        if word_budget else ""
-    )
-
-    custom_override = (
-        f"\n\n⚠️ MANDATORY USER CONSTRAINTS (override all other instructions): {custom_instructions}"
-        if custom_instructions else ""
-    )
 
     return (
         f"{prev_context}\n\n"
@@ -502,6 +590,34 @@ def _build_section_prompt(
         f"Instructions: {section_def['instructions']}\n\n"
         f"Write ONLY the section content in Markdown (no section header — it will be added automatically). "
         f"Do not repeat information already covered in previous sections."
-        f"{word_budget_note}"
-        f"{custom_override}"
+        f"{_word_budget_note(word_budget)}"
+        f"{_custom_constraints_note(custom_instructions)}"
+    )
+
+
+def _build_summary_section_prompt(
+    section_def: dict,
+    report_body: str,
+    custom_instructions: str | None,
+    word_budget: int | None = None,
+) -> str:
+    """Prompt for a "summarize_body" section (e.g. executive_summary, BLUF).
+
+    Unlike _build_section_prompt, this is used only for sections generated in
+    the deferred pass of generate_report_stream, AFTER every body section
+    already exists — so the summary can be a faithful distillation of the
+    actual report rather than an independent pass over raw source material
+    written before the report it claims to summarize exists. `report_body` is
+    the full assembled body markdown (canonical template order), not a
+    truncated preview — unlike _build_section_prompt's previous_sections,
+    which only keeps the last 2 sections at 500 chars each."""
+    return (
+        f"The complete report body has already been written and is provided below.\n\n"
+        f"<report_body>\n{report_body}\n</report_body>\n\n"
+        f"Now write the '{section_def['title']}' section as a faithful distillation of the report body above. "
+        f"Do not introduce any claim, statistic, or recommendation that does not appear in the report body above. "
+        f"Instructions: {section_def['instructions']}\n\n"
+        f"Write ONLY the section content in Markdown (no section header — it will be added automatically)."
+        f"{_word_budget_note(word_budget)}"
+        f"{_custom_constraints_note(custom_instructions)}"
     )

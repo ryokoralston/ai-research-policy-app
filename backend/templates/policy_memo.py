@@ -24,6 +24,7 @@ POLICY_MEMO_SECTIONS = [
             "State the single most important recommendation or conclusion in 40-60 words. "
             "This is what the reader should remember if they read nothing else."
         ),
+        "summarize_body": True,
     },
     {
         "key": "background",
