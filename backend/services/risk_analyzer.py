@@ -13,7 +13,7 @@ from schemas import AnalysisStartRequest
 from services.anthropic_client import generate_json, stream_text_with_thinking, sse_event, UNTRUSTED_CONTENT_GUARD
 from services.citation_verifier import verify_grounding
 from services.research_agent import run_research_agent
-from templates import TEMPLATES
+from templates import TEMPLATES, RISK_DIMENSIONS
 
 import asyncio
 
@@ -52,6 +52,80 @@ def _build_section_prompt(section_title: str, instructions: str) -> str:
         f"Instructions: {instructions}\n\n"
         f"Write ONLY the section content in Markdown (no header)."
     )
+
+
+def _build_dimension_prompt(dimension: dict) -> str:
+    """Prompt for ONE risk dimension's parallel analysis call (see
+    _analyze_dimension / run_risk_analysis). The subject/analysis-type/
+    research-material framing is NOT repeated here — it lives in
+    shared_context, passed separately as `cached_context` to
+    stream_text_with_thinking, so this string only ever varies by dimension.
+
+    Mentions exactly one dimension's title — never any of the other five —
+    so the 6 parallel calls stay independent and don't bleed into each
+    other's output. Requests the exact output format
+    run_risk_analysis expects when assembling section_content:
+        ### {title}
+        Score: X/10 (brief justification)
+        {2-3 sentence analysis}
+    """
+    criteria_lines = "\n".join(f"- {c}" for c in dimension["criteria"])
+    return (
+        f"Assess ONLY the following single risk dimension for the subject "
+        f"described above. Do not discuss, list, or mention any other risk "
+        f"dimension.\n\n"
+        f"Dimension: **{dimension['title']}** {dimension['scale']}\n\n"
+        f"Consider these factors in your analysis:\n{criteria_lines}\n\n"
+        f"Respond in exactly this format, with no preamble and no other "
+        f"headers:\n"
+        f"### {dimension['title']}\n"
+        f"Score: X/10 (brief justification)\n"
+        f"{{2-3 sentence analysis}}"
+    )
+
+
+async def _analyze_dimension(
+    dimension: dict, section_system: str, shared_context: str,
+) -> tuple[str, str, str]:
+    """Run one risk dimension's parallel analysis call, fully buffering both
+    the thinking and text streams before returning — the caller in
+    run_risk_analysis emits each dimension's buffered output as a single
+    SSE thinking/token event once this task resolves (see the awaited-in-
+    canonical-order loop there).
+
+    Returns (dimension_key, thinking_text, content_text).
+
+    On any exception (API error, timeout, malformed stream, ...) logs a
+    warning and returns a short English placeholder for content with empty
+    thinking, instead of propagating — this task runs concurrently with 5
+    siblings via asyncio.create_task, and one dimension failing must not
+    sink the other five or the section as a whole.
+    """
+    prompt = _build_dimension_prompt(dimension)
+    thinking_text = ""
+    content_text = ""
+    try:
+        async for kind, token in stream_text_with_thinking(
+            prompt, system=section_system, cached_context=shared_context,
+            usage_log_tag="risk-dimension",
+        ):
+            if kind == "thinking":
+                thinking_text += token
+            else:
+                content_text += token
+    except Exception:
+        logger.warning(
+            "Risk dimension analysis failed for dimension=%r — using placeholder",
+            dimension["key"],
+            exc_info=True,
+        )
+        return (
+            dimension["key"],
+            "",
+            f"### {dimension['title']}\n"
+            f"*(Analysis unavailable — this dimension could not be evaluated.)*",
+        )
+    return (dimension["key"], thinking_text, content_text)
 
 
 def _strip_duplicate_heading(content: str, section_title: str = "") -> str:
@@ -127,23 +201,61 @@ async def run_risk_analysis(
 
         yield sse_event("section_start", {"section": section_key, "title": section_title})
 
-        prompt = _build_section_prompt(section_title, section_def["instructions"])
-
-        section_content = ""
         # temperature=0.3 (logical/reproducible output for risk analysis) is no
         # longer passed here — adaptive thinking rejects a non-default
         # temperature (400 from the API). Thinking is on by default now, which
         # gives its own consistency benefit for this reasoning-heavy section.
         # System guard: research_material is untrusted — treat it as data only.
         section_system = template["system"] + "\n\n" + UNTRUSTED_CONTENT_GUARD
-        async for kind, token in stream_text_with_thinking(
-            prompt, system=section_system, cached_context=shared_context, usage_log_tag="risk-section",
-        ):
-            if kind == "thinking":
-                yield sse_event("thinking", {"text": token, "section": section_key})
-                continue
-            section_content += token
-            yield sse_event("token", {"text": token, "section": section_key})
+
+        section_content = ""
+        if section_key == "risk_dimensions":
+            # Parallel path: 6 independent per-dimension calls (see
+            # _build_dimension_prompt / _analyze_dimension) instead of one
+            # call cramming all 6 dimensions into a single prompt.
+            #
+            # Cache-ordering note: this launch happens after the
+            # subject_profile section above has already made a
+            # stream_text_with_thinking call against this same
+            # shared_context, so the ephemeral cache_control write on
+            # shared_context is already warm by the time these 6 tasks
+            # start — they land as cache READS, not competing cache
+            # writes. Moving this section earlier in the loop (or removing
+            # subject_profile) would have all 6 tasks race to write the
+            # same cache entry instead of reading an existing one.
+            yield sse_event("status", {"message": "Analyzing 6 risk dimensions in parallel..."})
+
+            tasks = [
+                asyncio.create_task(_analyze_dimension(dimension, section_system, shared_context))
+                for dimension in RISK_DIMENSIONS
+            ]
+            # Await in RISK_DIMENSIONS (canonical) order. The tasks above are
+            # already scheduled and running concurrently via
+            # asyncio.create_task — this loop only gates the ORDER in which
+            # results are emitted/assembled, not when the underlying work
+            # happens, so an earlier-listed dimension that resolves late
+            # still doesn't block later dimensions from finishing, it just
+            # delays their emission.
+            for i, task in enumerate(tasks):
+                _, thinking_text, content_text = await task
+                if thinking_text:
+                    yield sse_event("thinking", {"text": thinking_text, "section": section_key})
+                # Separate consecutive dimension blocks with "\n\n" in both
+                # the emitted token and the accumulated section_content, so
+                # the assembled markdown matches what was streamed.
+                block = content_text if i == 0 else "\n\n" + content_text
+                section_content += block
+                yield sse_event("token", {"text": block, "section": section_key})
+        else:
+            prompt = _build_section_prompt(section_title, section_def["instructions"])
+            async for kind, token in stream_text_with_thinking(
+                prompt, system=section_system, cached_context=shared_context, usage_log_tag="risk-section",
+            ):
+                if kind == "thinking":
+                    yield sse_event("thinking", {"text": token, "section": section_key})
+                    continue
+                section_content += token
+                yield sse_event("token", {"text": token, "section": section_key})
 
         # Extract scores using prefill + stop sequences (structured data technique).
         # A separate generate_text() call gets clean JSON with no surrounding text,
