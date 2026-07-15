@@ -107,6 +107,21 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 
+@app.middleware("http")
+async def security_headers(request, call_next):
+    """Baseline hardening headers on every response. No Content-Security-Policy
+    here (unlike the frontend) — FastAPI's own /docs and /redoc pages load
+    their Swagger/ReDoc assets from a CDN, so a restrictive CSP would break
+    them; this API doesn't otherwise render browsable HTML for CSP to protect."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    return response
+
+
 # Auth + health are public; everything else requires a valid bearer token
 # (enforced only when APP_PASSWORD is configured — see services/auth.py).
 app.include_router(auth_router)
