@@ -451,6 +451,10 @@ async def answer_question(
     # contiguous by construction, but max() is safer than trusting that invariant).
     next_citation_index = max((c["index"] for c in ordered_citations), default=0)
 
+    # Track which draft-workspace files have been viewed this turn,
+    # to enforce read-before-write on create.
+    viewed_workspace_paths: set[str] = set()
+
     # Tools from any MCP servers registered in the repo-root .mcp.json (see
     # services/mcp_bridge.py) — the same registration Claude Code itself
     # uses. Resolved once per turn here so both the system prompt (which
@@ -514,7 +518,7 @@ async def answer_question(
             return f"<source_documents>\n{context}\n</source_documents>"
 
         if name == TEXT_EDITOR_TOOL_NAME:
-            return await execute_text_editor_tool(tool_input)
+            return await execute_text_editor_tool(tool_input, viewed_paths=viewed_workspace_paths)
         if is_mcp_tool(name):
             return await call_mcp_tool(name, tool_input)
         raise ValueError(f"Unknown tool: {name}")
@@ -544,7 +548,7 @@ async def answer_question(
         "target datetime, and finally call set_reminder — never compute dates yourself. "
         "You also have a draft workspace: use the text editor tool to create and revise draft files "
         "(memos, briefs, notes) when the user asks you to draft, save, or edit a document — refer to "
-        "files by simple relative names like 'briefing.md'."
+        "files by simple relative names like 'briefing.md'. Before modifying or overwriting an existing draft, view it first; after your final edit, view the file once more to verify the result before reporting it done."
     )
     system = (
         f"{custom_system}\n\n"
@@ -568,7 +572,7 @@ async def answer_question(
         "never compute dates yourself. "
         "You also have a draft workspace: use the text editor tool to create and revise draft files "
         "(memos, briefs, notes) when the user asks you to draft, save, or edit a document — refer to "
-        "files by simple relative names like 'briefing.md'."
+        "files by simple relative names like 'briefing.md'. Before modifying or overwriting an existing draft, view it first; after your final edit, view the file once more to verify the result before reporting it done."
         if custom_system else default_system
     )
     # The retrieved chunks are untrusted document content — guard against any

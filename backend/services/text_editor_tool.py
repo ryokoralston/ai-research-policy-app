@@ -16,6 +16,9 @@ Security: `path`/`name` values arriving here are untrusted model output.
 Every command resolves its path through resolve_workspace_path(), which
 confines the result inside WORKSPACE_DIR (see docstring below) before any
 file is opened.
+
+Read-before-write guard: the `create` command enforces that an existing file
+may only be overwritten if it was `view`ed earlier in the same chat turn.
 """
 import os
 from pathlib import Path
@@ -101,7 +104,7 @@ def _check_size(content: str) -> str | None:
 
 # ── Command handlers ────────────────────────────────────────────────────────
 
-def _view(tool_input: dict, root: Path) -> str:
+def _view(tool_input: dict, root: Path, *, viewed_paths: set[str] | None = None) -> str:
     raw_path = tool_input.get("path")
     if not raw_path:
         return "Error: 'path' is required."
@@ -125,10 +128,15 @@ def _view(tool_input: dict, root: Path) -> str:
         numbered = _numbered_lines(text, tool_input.get("view_range"))
     except ValueError as exc:
         return f"Error: {exc}"
+
+    # Record the viewed file path if a viewed_paths set was provided
+    if viewed_paths is not None:
+        viewed_paths.add(str(target))
+
     return f"{_rel(target, root)}:\n{numbered}"
 
 
-def _create(tool_input: dict, root: Path) -> str:
+def _create(tool_input: dict, root: Path, *, viewed_paths: set[str] | None = None) -> str:
     raw_path = tool_input.get("path")
     if not raw_path:
         return "Error: 'path' is required."
@@ -144,6 +152,12 @@ def _create(tool_input: dict, root: Path) -> str:
         target = resolve_workspace_path(raw_path, str(root))
     except ValueError:
         return "Error: path escapes the workspace"
+
+    # Read-before-write guard: if target exists and was not viewed, reject
+    if target.is_file() and str(target) not in (viewed_paths or set()):
+        existing_text = target.read_text(encoding="utf-8", errors="replace")
+        line_count = existing_text.count("\n") + 1 if existing_text else 0
+        return f"Error: file '{_rel(target, root)}' already exists ({line_count} lines). View it first to confirm you want to overwrite it, or use str_replace to edit it in place."
 
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(file_text, encoding="utf-8")
@@ -239,11 +253,20 @@ _HANDLERS = {
 }
 
 
-async def execute_text_editor_tool(tool_input: dict, workspace_dir: str | None = None) -> str:
+async def execute_text_editor_tool(tool_input: dict, workspace_dir: str | None = None, *, viewed_paths: set[str] | None = None) -> str:
     """Execute one str_replace_based_edit_tool call and return the result string.
 
     workspace_dir overrides WORKSPACE_DIR (used by tests to run against a
     tempfile.mkdtemp() sandbox instead of the real backend/workspace/ dir).
+
+    viewed_paths (keyword-only, optional): a set to track which file paths have been
+    viewed during this chat turn. When provided to view commands, the path is added
+    to the set on success (file views only, not directory listings or errors). When
+    provided to create commands, it enforces read-before-write: an existing file can
+    only be overwritten if its path is already in the set. When None (the default),
+    the guard applies (no files can be overwritten) but no tracking occurs — this
+    preserves backward compatibility for standalone callers that don't pass viewed_paths.
+
     Async to match the tool_executor(name, input) -> str contract expected by
     anthropic_client.stream_chat_with_tools, even though every handler here is
     plain synchronous file I/O (same pattern as reminder_tools._sync_handler).
@@ -255,6 +278,12 @@ async def execute_text_editor_tool(tool_input: dict, workspace_dir: str | None =
     root = _ensure_dir(Path(workspace_dir) if workspace_dir else Path(WORKSPACE_DIR))
     handler = _HANDLERS[command]
     try:
-        return handler(tool_input, root)
+        # Special-case view and create to pass viewed_paths; other handlers ignore it
+        if command == "view":
+            return _view(tool_input, root, viewed_paths=viewed_paths)
+        elif command == "create":
+            return _create(tool_input, root, viewed_paths=viewed_paths)
+        else:
+            return handler(tool_input, root)
     except Exception as exc:  # genuinely unexpected internal failure
         return f"Error: unexpected failure executing '{command}': {exc}"

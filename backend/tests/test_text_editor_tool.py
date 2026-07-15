@@ -59,11 +59,33 @@ def test_create_then_view_roundtrip(ws):
 
 
 def test_create_overwrite_allowed(ws):
-    _exec({"command": "create", "path": "a.txt", "file_text": "first"}, ws)
-    result = _exec({"command": "create", "path": "a.txt", "file_text": "second"}, ws)
+    """Overwrite is allowed after viewing with the same viewed_paths set."""
+    viewed = set()
+    # Create initial file
+    asyncio.run(execute_text_editor_tool(
+        {"command": "create", "path": "a.txt", "file_text": "first"},
+        workspace_dir=ws
+    ))
+    # View it (adds to viewed)
+    view_result = asyncio.run(execute_text_editor_tool(
+        {"command": "view", "path": "a.txt"},
+        workspace_dir=ws,
+        viewed_paths=viewed
+    ))
+    assert "a.txt:" in view_result, repr(view_result)
+    # Now overwrite (should succeed)
+    result = asyncio.run(execute_text_editor_tool(
+        {"command": "create", "path": "a.txt", "file_text": "second"},
+        workspace_dir=ws,
+        viewed_paths=viewed
+    ))
     assert "Created workspace file 'a.txt'" in result, repr(result)
-    viewed = _exec({"command": "view", "path": "a.txt"}, ws)
-    assert "second" in viewed and "first" not in viewed, repr(viewed)
+    # Verify content
+    final_view = asyncio.run(execute_text_editor_tool(
+        {"command": "view", "path": "a.txt"},
+        workspace_dir=ws,
+    ))
+    assert "second" in final_view and "first" not in final_view, repr(final_view)
 
 
 # ── view_range ─────────────────────────────────────────────────────────────────
@@ -199,6 +221,134 @@ def test_create_file_too_large_rejected(ws):
     assert "Error: file not found" in result2, repr(result2)
 
 
+# ── read-before-write guard (viewed_paths) ───────────────────────────────────
+
+def test_create_new_file_with_viewed_paths_succeeds(ws):
+    """(a) create on a NEW file with viewed_paths=set() → succeeds."""
+    result = asyncio.run(execute_text_editor_tool(
+        {"command": "create", "path": "new.md", "file_text": "content"},
+        workspace_dir=ws,
+        viewed_paths=set()
+    ))
+    assert "Created workspace file 'new.md'" in result, repr(result)
+
+
+def test_create_existing_file_with_empty_viewed_paths_errors(ws):
+    """(b) create on an EXISTING file with viewed_paths=set() → error with 'View it first'."""
+    # Create initial file
+    asyncio.run(execute_text_editor_tool(
+        {"command": "create", "path": "existing.md", "file_text": "original\nlines"},
+        workspace_dir=ws
+    ))
+    # Try to overwrite with empty viewed set
+    result = asyncio.run(execute_text_editor_tool(
+        {"command": "create", "path": "existing.md", "file_text": "new content"},
+        workspace_dir=ws,
+        viewed_paths=set()
+    ))
+    assert result.startswith("Error:"), repr(result)
+    assert "View it first" in result, repr(result)
+    assert "2 lines" in result, repr(result)  # counts existing file's lines
+
+
+def test_view_then_create_succeeds(ws):
+    """(c) view the file (passing the same set), then create → succeeds (overwrites)."""
+    viewed = set()
+    # Create initial file
+    asyncio.run(execute_text_editor_tool(
+        {"command": "create", "path": "draft.md", "file_text": "original"},
+        workspace_dir=ws
+    ))
+    # View it (adds to viewed)
+    view_result = asyncio.run(execute_text_editor_tool(
+        {"command": "view", "path": "draft.md"},
+        workspace_dir=ws,
+        viewed_paths=viewed
+    ))
+    assert "draft.md:" in view_result, repr(view_result)
+    assert len(viewed) == 1, f"viewed set should have 1 entry, got {viewed}"
+    # Now create/overwrite (should succeed)
+    create_result = asyncio.run(execute_text_editor_tool(
+        {"command": "create", "path": "draft.md", "file_text": "updated content"},
+        workspace_dir=ws,
+        viewed_paths=viewed
+    ))
+    assert "Created workspace file 'draft.md'" in create_result, repr(create_result)
+    # Verify content changed
+    view_after = asyncio.run(execute_text_editor_tool(
+        {"command": "view", "path": "draft.md"},
+        workspace_dir=ws,
+    ))
+    assert "updated content" in view_after, repr(view_after)
+    assert "original" not in view_after, repr(view_after)
+
+
+def test_fresh_empty_set_still_blocks_overwrite(ws):
+    """(d) a FRESH empty set (simulating a new turn) → create on existing errors again."""
+    # Create initial file
+    asyncio.run(execute_text_editor_tool(
+        {"command": "create", "path": "file.md", "file_text": "first"},
+        workspace_dir=ws
+    ))
+    # Try with a fresh empty set (new turn)
+    result = asyncio.run(execute_text_editor_tool(
+        {"command": "create", "path": "file.md", "file_text": "second"},
+        workspace_dir=ws,
+        viewed_paths=set()  # Fresh empty set
+    ))
+    assert result.startswith("Error:"), repr(result)
+    assert "View it first" in result, repr(result)
+
+
+def test_viewed_paths_none_blocks_overwrite_and_view_works(ws):
+    """(e) viewed_paths=None → create on existing errors, view doesn't crash."""
+    # Create initial file
+    asyncio.run(execute_text_editor_tool(
+        {"command": "create", "path": "test.md", "file_text": "content"},
+        workspace_dir=ws
+    ))
+    # View with None (no tracking)
+    view_result = asyncio.run(execute_text_editor_tool(
+        {"command": "view", "path": "test.md"},
+        workspace_dir=ws,
+        viewed_paths=None
+    ))
+    assert "test.md:" in view_result, repr(view_result)
+    # Try to create/overwrite with None (should error)
+    create_result = asyncio.run(execute_text_editor_tool(
+        {"command": "create", "path": "test.md", "file_text": "new"},
+        workspace_dir=ws,
+        viewed_paths=None
+    ))
+    assert create_result.startswith("Error:"), repr(create_result)
+    assert "View it first" in create_result, repr(create_result)
+
+
+def test_directory_view_not_added_to_viewed_paths(ws):
+    """(f) directory view does NOT add to viewed_paths; failed view does NOT add."""
+    viewed = set()
+    # Create a file and then view the directory
+    asyncio.run(execute_text_editor_tool(
+        {"command": "create", "path": "file.md", "file_text": "content"},
+        workspace_dir=ws
+    ))
+    dir_result = asyncio.run(execute_text_editor_tool(
+        {"command": "view", "path": "."},
+        workspace_dir=ws,
+        viewed_paths=viewed
+    ))
+    assert "Directory listing" in dir_result, repr(dir_result)
+    assert len(viewed) == 0, f"viewing directory should not add to viewed_paths, got {viewed}"
+    # View a missing file (error case)
+    missing_result = asyncio.run(execute_text_editor_tool(
+        {"command": "view", "path": "missing.md"},
+        workspace_dir=ws,
+        viewed_paths=viewed
+    ))
+    assert "Error: file not found" in missing_result, repr(missing_result)
+    assert len(viewed) == 0, f"failed file view should not add to viewed_paths, got {viewed}"
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -222,6 +372,12 @@ if __name__ == "__main__":
     _run("unknown command -> error", test_unknown_command_error)
     _run("undo_edit -> unsupported error", test_undo_edit_not_supported)
     _run("create: file too large rejected", test_create_file_too_large_rejected)
+    _run("read-before-write: (a) create new file with viewed_paths=set()", test_create_new_file_with_viewed_paths_succeeds)
+    _run("read-before-write: (b) create existing with viewed_paths=set() errors", test_create_existing_file_with_empty_viewed_paths_errors)
+    _run("read-before-write: (c) view then create succeeds", test_view_then_create_succeeds)
+    _run("read-before-write: (d) fresh empty set blocks overwrite", test_fresh_empty_set_still_blocks_overwrite)
+    _run("read-before-write: (e) viewed_paths=None blocks & view works", test_viewed_paths_none_blocks_overwrite_and_view_works)
+    _run("read-before-write: (f) directory & failed view not tracked", test_directory_view_not_added_to_viewed_paths)
 
     total = len(_PASSED) + len(_FAILED)
     print(f"\n{'=' * 50}")
