@@ -1,4 +1,4 @@
-fastapi==0.115.0
+fastapi==0.139.0
 uvicorn[standard]==0.32.0
 anthropic==0.111.0
 openai>=1.50.0
@@ -8,23 +8,51 @@ pydantic==2.11.10
 pydantic-settings==2.7.0
 # mcp requires pydantic>=2.11 (>=2.7.2 as declared, but its AnyUrl schema
 # actually needs pydantic-core features only present from 2.11 on — 2.10.0
-# raises RuntimeError at import). Pinned starlette/sse-starlette below keep
-# mcp's install from dragging starlette past fastapi's <0.39.0 ceiling.
+# raises RuntimeError at import). fastapi>=0.139 dropped its old starlette
+# ceiling (was <0.39.0, forcing the starlette/sse-starlette pins below to sit
+# far behind their own latest secure releases — see PYSEC-2026-161 and
+# friends) so starlette/sse-starlette can now track current releases too.
 mcp>=1.8.0
-starlette==0.38.6
-sse-starlette==2.1.3
+starlette==1.3.1
+sse-starlette==3.4.5
 chromadb==0.6.0
 sentence-transformers==3.3.1
-pypdf==5.1.0
-pdfplumber==0.11.4
-python-multipart==0.0.17
+# transformers is capped at <5.0.0 by sentence-transformers==3.3.1's own
+# pin; PYSEC-2025-217 and PYSEC-2026-2290 have no fix in the 4.x line
+# (4.57.6 is the latest 4.x release) — only fixed at 5.0.0/5.3.0. Bumping
+# sentence-transformers to unlock transformers 5.x is a bigger, riskier
+# change (different embedding output could invalidate the existing ChromaDB
+# index) — tracked separately, not done in this pass.
+# torch is unpinned by sentence-transformers (torch>=1.11.0) but was
+# resolving to a vulnerable version (PYSEC-2026-139, CVE-2025-3000) purely
+# because the venv was built before the fix shipped; pin explicitly so a
+# fresh install can't regress to an old cached wheel.
+torch==2.13.0
+# 0.11.4 -> 0.11.10 also carries pdfminer.six from a vulnerable pin
+# (PYSEC-2026-1761/1762) to 20260107 and raises pdfplumber's own Pillow floor.
+pdfplumber==0.11.10
+python-multipart==0.0.32
 httpx==0.28.0
-python-dotenv==1.0.1
+python-dotenv==1.2.2
 aiofiles==24.1.0
 fpdf2==2.8.7
 apscheduler==3.10.4
-aiosmtplib==3.0.1
+# 3.0.1 -> 5.1.2 (PYSEC-2026-2338): only the stable aiosmtplib.send()
+# convenience call is used (services/digest_service.py), unchanged across
+# aiosmtplib's major versions.
+aiosmtplib==5.1.2
 pytz==2024.2
 beautifulsoup4==4.12.3
 youtube-transcript-api==1.2.4
-cryptography==46.0.5
+# GHSA-537c-gmf6-5ccf, PYSEC-2026-35/36 — directly used for Fernet
+# (services/secret_crypto.py, services/auth.py), whose API is stable
+# across this range.
+cryptography==49.0.0
+
+# --- Explicit floors on transitive deps flagged by pip-audit so a fresh
+# install can't resolve back to an old cached wheel; none of these are
+# imported directly by this project. ---
+requests>=2.34.2          # PYSEC-2026-2275
+urllib3>=2.7.0             # PYSEC-2026-141/142
+Pillow>=12.3.0              # PYSEC-2026-165/2250..2257/2874/3451..3453 — processes uploaded images (services/ingestion.py vision path)
+idna>=3.15                  # PYSEC-2026-215 — hostname parsing, relevant to the SSRF-guard fetch path (services/ingestion.py)

@@ -49,7 +49,7 @@ def get_analysis(analysis_id: str, db: Session = Depends(get_db)):
 @router.get("/{analysis_id}/export")
 def export_analysis(
     analysis_id: str,
-    format: str = Query(default="txt", regex="^(txt|pdf)$"),
+    format: str = Query(default="txt", pattern="^(txt|pdf)$"),
     db: Session = Depends(get_db),
 ):
     analysis = db.query(RiskAnalysis).filter(RiskAnalysis.id == analysis_id).first()

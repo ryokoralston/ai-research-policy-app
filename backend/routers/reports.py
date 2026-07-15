@@ -113,7 +113,7 @@ def update_report(report_id: str, request: ReportUpdateRequest, db: Session = De
 @router.get("/{report_id}/export")
 def export_report(
     report_id: str,
-    format: str = Query(default="txt", regex="^(txt|pdf)$"),
+    format: str = Query(default="txt", pattern="^(txt|pdf)$"),
     db: Session = Depends(get_db),
 ):
     report = db.query(Report).filter(Report.id == report_id).first()
