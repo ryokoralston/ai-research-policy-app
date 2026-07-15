@@ -216,6 +216,29 @@ def _get_openai_client(ai_settings: dict):
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+def _generate_text_user_content(prompt: str, cached_prefix: str | None) -> str | list[dict]:
+    """Pure construction of the user-message `content` for generate_text's
+    cached_prefix parameter — mirrors _thinking_message_content's block
+    shape (see that function's docstring for the rationale).
+
+    cached_prefix=None (default, unchanged behavior): returns the plain
+    prompt string.
+
+    cached_prefix is set: returns two text blocks — the shared/reusable
+    cached_prefix first, carrying an ephemeral cache_control breakpoint, and
+    the per-call prompt second (uncached).
+
+    Factored out so the block-shape logic is unit-testable without a live
+    API call, same pattern as _thinking_message_content.
+    """
+    if cached_prefix is None:
+        return prompt
+    return [
+        {"type": "text", "text": cached_prefix, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": prompt},
+    ]
+
+
 async def generate_text(
     prompt: str,
     system: str = "",
@@ -224,6 +247,7 @@ async def generate_text(
     temperature: float = 1.0,
     prefill: str = "",
     stop_sequences: list[str] | None = None,
+    cached_prefix: str | None = None,
 ) -> str:
     """Non-streaming text generation. Returns full response text.
 
@@ -239,16 +263,26 @@ async def generate_text(
                     The stop string itself is NOT included in the output.
                     Combine with prefill to extract clean structured data:
                       prefill='```json\\n', stop_sequences=['\\n```']
+
+    cached_prefix: optional large, reusable text (e.g. a document shared
+                   across many per-chunk calls, as in rag/contextualizer.py)
+                   placed ahead of `prompt` in its own cache_control
+                   breakpoint — see _generate_text_user_content for the exact
+                   block shape. Anthropic path only; on the OpenAI path
+                   (no cache_control support in this module) cached_prefix is
+                   simply concatenated ahead of prompt text with no cache
+                   semantics, same documented tradeoff as
+                   stream_text_with_thinking's cached_context. Default None
+                   leaves every existing call path byte-identical.
     """
     ai_settings = _load_ai_settings()
     model = model or ai_settings["fast_model"]
 
-    # Build messages, optionally appending a prefill assistant turn
-    messages: list[dict] = [{"role": "user", "content": prompt}]
-    if prefill:
-        messages.append({"role": "assistant", "content": prefill})
-
     if _is_openai(model):
+        effective_prompt = f"{cached_prefix}\n\n{prompt}" if cached_prefix else prompt
+        messages: list[dict] = [{"role": "user", "content": effective_prompt}]
+        if prefill:
+            messages.append({"role": "assistant", "content": prefill})
         client = _get_openai_client(ai_settings)
         oai_messages = []
         if system:
@@ -261,6 +295,11 @@ async def generate_text(
             messages=oai_messages,
         )
         return response.choices[0].message.content or ""
+
+    # Build messages, optionally appending a prefill assistant turn
+    messages: list[dict] = [{"role": "user", "content": _generate_text_user_content(prompt, cached_prefix)}]
+    if prefill:
+        messages.append({"role": "assistant", "content": prefill})
 
     client = _get_anthropic_client(ai_settings)
     kwargs: dict = {

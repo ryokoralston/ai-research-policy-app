@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     max_search_results: int = 10
     cors_origins: str = "http://localhost:3000"
 
+    # Contextual Retrieval (Anthropic technique): generate a short situating
+    # context per chunk at index time and prepend it for embedding/BM25
+    # matching. See rag/contextualizer.py. Off switch for cost/latency —
+    # when False, indexing behaves exactly as before this feature shipped.
+    contextual_retrieval_enabled: bool = True
+
     # Daily digest email settings
     # Gmail app password: https://myaccount.google.com/apppasswords
     digest_email_to: str = ""

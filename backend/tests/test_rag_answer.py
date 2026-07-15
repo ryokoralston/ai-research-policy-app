@@ -35,10 +35,11 @@ import rag.retriever as retriever_module
 import services.rag_service as rag_service
 
 
-def _chunk(chunk_id, doc_id, content, page=3, section="Findings"):
+def _chunk(chunk_id, doc_id, content, page=3, section="Findings", context=""):
     return RetrievedChunk(
         chunk_id=chunk_id, doc_id=doc_id, content=content,
         page_number=page, section_header=section, score=0.9, chunk_index=0,
+        context=context,
     )
 
 
@@ -162,6 +163,26 @@ def test_citation_index_stable_across_followup_search():
     assert by_id == {"c1": 1, "c2": 2, "c3": 3}, by_id
 
 
+def test_context_line_included_when_present_omitted_when_absent():
+    """Contextual Retrieval (rag/contextualizer.py): a "[Context: ...]" line
+    follows the [N] header only when chunk.context is non-empty; the
+    citation snippet stays the original content either way."""
+    chunks = [
+        _chunk("c1", "doc-titled", "First passage.", context="Situates c1 in the doc."),
+        _chunk("c2", "doc-untitled", "Second passage.", page=1, section="Intro"),  # no context
+    ]
+    events, tool_result = _run_answer(chunks)
+
+    assert "[1] [EU AI Act Analysis, p.3, sec: Findings]\n[Context: Situates c1 in the doc.]\nFirst passage." in tool_result
+    assert "[2] [notes.txt, p.1, sec: Intro]\nSecond passage." in tool_result
+    assert "[Context:" not in tool_result.split("[2]", 1)[1]
+
+    complete = [e for e in events if e.startswith("event: complete")][0]
+    payload = json.loads(complete.split("data: ", 1)[1].strip())
+    # Citation snippet is original content only — never the context.
+    assert payload["citations"][0]["snippet"] == "First passage."
+
+
 def test_no_results_message():
     events, tool_result = _run_answer([])
     assert tool_result == "No relevant content found in the document library for this query."
@@ -189,6 +210,7 @@ if __name__ == "__main__":
     _run("context format with batched titles", test_context_format_with_batched_titles)
     _run("citations deduped by chunk_id", test_citations_deduped_by_chunk_id)
     _run("citation index stable across follow-up search", test_citation_index_stable_across_followup_search)
+    _run("context line included when present, omitted when absent", test_context_line_included_when_present_omitted_when_absent)
     _run("no-results message", test_no_results_message)
 
     total = len(_PASSED) + len(_FAILED)

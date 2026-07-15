@@ -8,6 +8,7 @@ Run from the backend directory:
     ./venv/bin/python -m tests.test_lexical_index
 """
 import os
+import sqlite3
 import sys
 import tempfile
 
@@ -173,6 +174,132 @@ def test_clear_and_count():
         idx_cleanup(path)
 
 
+# ── Schema v2: display/match/context split ──────────────────────────────────
+
+def test_add_chunks_display_and_context_split():
+    """content (matched) can differ from display_content (returned) and
+    carries a separate context — the Contextual Retrieval schema (see
+    rag/contextualizer.py / rag/lexical_index.py's _ensure_schema)."""
+    path = _tmp_index_path()
+    try:
+        idx = LexicalIndex(db_path=path)
+        idx.add_chunks(
+            chunk_ids=["c1"],
+            documents=["situating context here\n\noriginal chunk text about INC-2023"],
+            metadatas=[_meta()],
+            display_documents=["original chunk text about INC-2023"],
+            contexts=["situating context here"],
+        )
+        results = idx.search("INC-2023", n_results=10)
+        assert len(results) == 1, results
+        # Returned content is the DISPLAY text, not the combined match text.
+        assert results[0].content == "original chunk text about INC-2023", results
+        assert results[0].context == "situating context here", results
+
+        # A term that only appears in the context (not the display text)
+        # still matches, because `content` (matched) includes it.
+        by_context_term = idx.search("situating", n_results=10)
+        assert len(by_context_term) == 1, by_context_term
+    finally:
+        idx_cleanup(path)
+
+
+def test_add_chunks_without_display_or_context_defaults_backward_compatible():
+    """Callers that don't pass display_documents/contexts (pre-Contextual-
+    Retrieval call sites) get the old behavior exactly: content==documents,
+    context=='' — this is what makes the new optional params backward
+    compatible."""
+    path = _tmp_index_path()
+    try:
+        idx = LexicalIndex(db_path=path)
+        idx.add_chunks(
+            chunk_ids=["c1"],
+            documents=["plain chunk text"],
+            metadatas=[_meta()],
+        )
+        results = idx.search("plain", n_results=10)
+        assert len(results) == 1, results
+        assert results[0].content == "plain chunk text", results
+        assert results[0].context == "", results
+    finally:
+        idx_cleanup(path)
+
+
+# ── Legacy chunk_fts -> chunk_fts2 migration ─────────────────────────────────
+
+def test_legacy_chunk_fts_migrates_to_v2_with_zero_data_loss():
+    """A user restarting the app before any Contextual-Retrieval backfill
+    must keep working: rows in a pre-existing legacy chunk_fts table are
+    copied into chunk_fts2 (display_content=content, context='') and the
+    legacy table is dropped, all inside LexicalIndex.__init__."""
+    path = _tmp_index_path()
+    try:
+        # Build the legacy schema by hand, bypassing LexicalIndex entirely,
+        # to simulate a pre-Contextual-Retrieval on-disk index.
+        conn = sqlite3.connect(path)
+        conn.execute(
+            "CREATE VIRTUAL TABLE chunk_fts USING fts5("
+            "content, chunk_id UNINDEXED, doc_id UNINDEXED, "
+            "page_number UNINDEXED, section_header UNINDEXED, "
+            "chunk_index UNINDEXED)"
+        )
+        conn.execute(
+            "INSERT INTO chunk_fts (content, chunk_id, doc_id, page_number, "
+            "section_header, chunk_index) VALUES (?, ?, ?, ?, ?, ?)",
+            ("legacy incident report INC-9999", "legacy-c1", "doc-legacy", 2, "Intro", 0),
+        )
+        conn.commit()
+        conn.close()
+
+        idx = LexicalIndex(db_path=path)  # __init__ -> _ensure_schema migrates + drops legacy
+
+        # Legacy table is gone; chunk_fts2 has the migrated row.
+        conn = sqlite3.connect(path)
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        conn.close()
+        assert "chunk_fts" not in tables, tables
+        assert "chunk_fts2" in tables, tables
+
+        assert idx.count() == 1
+        results = idx.search("INC-9999", n_results=10)
+        assert len(results) == 1, results
+        assert results[0].chunk_id == "legacy-c1"
+        assert results[0].doc_id == "doc-legacy"
+        assert results[0].content == "legacy incident report INC-9999", results
+        assert results[0].context == "", "migrated legacy rows have no context"
+        assert results[0].page_number == 2
+        assert results[0].section_header == "Intro"
+    finally:
+        idx_cleanup(path)
+
+
+def test_migration_runs_once_second_init_is_a_noop():
+    """A second LexicalIndex() against the same path (legacy already
+    migrated/dropped) must not error and must not duplicate rows."""
+    path = _tmp_index_path()
+    try:
+        conn = sqlite3.connect(path)
+        conn.execute(
+            "CREATE VIRTUAL TABLE chunk_fts USING fts5("
+            "content, chunk_id UNINDEXED, doc_id UNINDEXED, "
+            "page_number UNINDEXED, section_header UNINDEXED, "
+            "chunk_index UNINDEXED)"
+        )
+        conn.execute(
+            "INSERT INTO chunk_fts (content, chunk_id, doc_id, page_number, "
+            "section_header, chunk_index) VALUES (?, ?, ?, ?, ?, ?)",
+            ("one legacy row", "c1", "doc-a", 1, "", 0),
+        )
+        conn.commit()
+        conn.close()
+
+        LexicalIndex(db_path=path)
+        idx2 = LexicalIndex(db_path=path)  # second init: no legacy table left
+        assert idx2.count() == 1
+    finally:
+        idx_cleanup(path)
+
+
 # ── cleanup helper ────────────────────────────────────────────────────────────
 
 def idx_cleanup(path: str) -> None:
@@ -205,6 +332,10 @@ if __name__ == "__main__":
     _run("doc_ids filter restricts results", test_doc_ids_filter_restricts_results)
     _run("delete_document removes its chunks", test_delete_document_removes_its_chunks)
     _run("clear() and count()", test_clear_and_count)
+    _run("add_chunks display/context split", test_add_chunks_display_and_context_split)
+    _run("add_chunks without display/context defaults backward compatible", test_add_chunks_without_display_or_context_defaults_backward_compatible)
+    _run("legacy chunk_fts migrates to v2 with zero data loss", test_legacy_chunk_fts_migrates_to_v2_with_zero_data_loss)
+    _run("migration runs once, second init is a no-op", test_migration_runs_once_second_init_is_a_noop)
 
     total = len(_PASSED) + len(_FAILED)
     print(f"\n{'=' * 50}")

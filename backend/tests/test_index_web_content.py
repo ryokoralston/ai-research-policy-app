@@ -69,6 +69,29 @@ class _FakeVectorStore:
         }
 
 
+class _FakeLexicalIndex:
+    """Stands in for the real LexicalIndex — previously NOT faked here, so
+    _embed_and_store wrote live rows into the developer's real
+    backend/data/bm25.db on every run of this file. See test_index_document.py
+    for the same fix."""
+    last_add = None
+
+    def add_chunks(self, chunk_ids, documents, metadatas, display_documents=None, contexts=None):
+        _FakeLexicalIndex.last_add = {
+            "chunk_ids": chunk_ids,
+            "documents": documents,
+            "metadatas": metadatas,
+            "display_documents": display_documents,
+            "contexts": contexts,
+        }
+
+
+async def _fake_contextualize_chunks_empty(full_text, chunk_texts, concurrency=4):
+    """Default fake: Contextual Retrieval no-op, matching this file's
+    pre-feature assertions. No live API/DB call."""
+    return [""] * len(chunk_texts)
+
+
 def _make_db():
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
@@ -90,15 +113,22 @@ def _seed_doc(db) -> str:
     return doc_id
 
 
-def _run_index(db, doc_id, content, embedding_cls=_FakeEmbeddingService):
-    orig_embed, orig_vs = rag_service.EmbeddingService, rag_service.VectorStore
+def _run_index(db, doc_id, content, embedding_cls=_FakeEmbeddingService, contextualize_fake=_fake_contextualize_chunks_empty):
+    orig_embed, orig_vs, orig_lex, orig_ctx = (
+        rag_service.EmbeddingService, rag_service.VectorStore,
+        rag_service.LexicalIndex, rag_service.contextualize_chunks,
+    )
     rag_service.EmbeddingService = embedding_cls
     rag_service.VectorStore = _FakeVectorStore
+    rag_service.LexicalIndex = _FakeLexicalIndex
+    rag_service.contextualize_chunks = contextualize_fake
     _FakeVectorStore.last_add = None
+    _FakeLexicalIndex.last_add = None
     try:
         asyncio.run(rag_service.index_web_content(doc_id, content, db))
     finally:
         rag_service.EmbeddingService, rag_service.VectorStore = orig_embed, orig_vs
+        rag_service.LexicalIndex, rag_service.contextualize_chunks = orig_lex, orig_ctx
 
 
 def _long_content() -> str:
@@ -164,6 +194,37 @@ def test_empty_content_marks_indexed_without_chunks():
     db.close()
 
 
+def test_contextual_retrieval_combines_text_preserves_display():
+    """Same contract as test_index_document.py's equivalent test: combined
+    (context + content) text goes to embeddings/lexical match text, while
+    Chroma documents / lexical display_documents stay original content."""
+    db = _make_db()
+    doc_id = _seed_doc(db)
+
+    async def fake_ctx(full_text, chunk_texts, concurrency=4):
+        return [f"ctx-{i}" for i in range(len(chunk_texts))]
+
+    _run_index(db, doc_id, _long_content(), contextualize_fake=fake_ctx)
+
+    chunks = (
+        db.query(DocumentChunk)
+        .filter(DocumentChunk.document_id == doc_id)
+        .order_by(DocumentChunk.chunk_index)
+        .all()
+    )
+    vs_add = _FakeVectorStore.last_add
+    lex_add = _FakeLexicalIndex.last_add
+    expected_contexts = [f"ctx-{i}" for i in range(len(chunks))]
+
+    assert vs_add["documents"] == [c.content for c in chunks]
+    assert [m["context"] for m in vs_add["metadatas"]] == expected_contexts
+    assert lex_add["documents"] == [
+        f"{ctx}\n\n{c.content}" for ctx, c in zip(expected_contexts, chunks)
+    ]
+    assert lex_add["display_documents"] == [c.content for c in chunks]
+    db.close()
+
+
 def test_embedding_failure_marks_error():
     db = _make_db()
     doc_id = _seed_doc(db)
@@ -198,6 +259,7 @@ if __name__ == "__main__":
     _run("long content uses standard chunker", test_long_content_uses_standard_chunker)
     _run("short content falls back to single chunk", test_short_content_falls_back_to_single_chunk)
     _run("empty content marks indexed without chunks", test_empty_content_marks_indexed_without_chunks)
+    _run("contextual retrieval combines text, preserves display", test_contextual_retrieval_combines_text_preserves_display)
     _run("embedding failure marks error", test_embedding_failure_marks_error)
 
     total = len(_PASSED) + len(_FAILED)

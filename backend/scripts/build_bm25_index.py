@@ -20,7 +20,9 @@ if _BACKEND_DIR not in sys.path:
 
 from database import SessionLocal
 from models import DocumentChunk
+from rag.contextualizer import combine
 from rag.lexical_index import LexicalIndex
+from rag.vector_store import VectorStore
 
 BATCH_SIZE = 500
 
@@ -40,6 +42,17 @@ def build() -> None:
         print("No document chunks found in the database. Nothing to index.")
         return
 
+    # Contexts live only in Chroma metadata (SQLite stores original content
+    # only), so pull them from there before rebuilding — otherwise a rebuild
+    # after a contextualize_reindex backfill would silently drop every
+    # context from the lexical index's match text. Same preservation
+    # approach as scripts/reindex_embeddings.py.
+    try:
+        contexts_by_id = VectorStore().get_contexts()
+    except Exception as exc:
+        print(f"Could not read contexts from ChromaDB ({exc}); indexing without contexts.")
+        contexts_by_id = {}
+
     lexical = LexicalIndex()
 
     print(f"Rebuilding BM25 index from {len(chunks)} chunks")
@@ -53,9 +66,13 @@ def build() -> None:
     for batch_num, i in enumerate(range(0, len(chunks), BATCH_SIZE), start=1):
         batch = chunks[i:i + BATCH_SIZE]
 
+        batch_ids = [c.chroma_id or c.id for c in batch]
+        batch_contexts = [contexts_by_id.get(cid, "") for cid in batch_ids]
         lexical.add_chunks(
-            chunk_ids=[c.chroma_id or c.id for c in batch],
-            documents=[c.content for c in batch],
+            chunk_ids=batch_ids,
+            documents=[combine(ctx, c.content) for ctx, c in zip(batch_contexts, batch)],
+            display_documents=[c.content for c in batch],
+            contexts=batch_contexts,
             metadatas=[
                 {
                     "doc_id": c.document_id,

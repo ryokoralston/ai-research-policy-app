@@ -11,6 +11,7 @@ cross-encoder reranks the merged result.
 from functools import lru_cache
 from typing import Any
 
+from rag.contextualizer import combine
 from rag.lexical_index import LexicalIndex
 from rag.vector_store import VectorStore, RetrievedChunk
 from services.embedding_service import EmbeddingService
@@ -115,7 +116,10 @@ class Retriever:
         # load is not cached, so it is retried on the next query)
         try:
             reranker = _load_reranker()
-            pairs = [(question, c.content) for c in fused]
+            # combine(context, content): the situating context (Contextual
+            # Retrieval — see rag/contextualizer.py) is real signal for the
+            # cross-encoder, same as it is for embedding/BM25 matching.
+            pairs = [(question, combine(c.context, c.content)) for c in fused]
             scores = reranker.predict(pairs)
             ranked = sorted(zip(fused, scores), key=lambda x: x[1], reverse=True)
             top = [chunk for chunk, _ in ranked[:top_k]]

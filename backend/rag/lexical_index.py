@@ -46,14 +46,40 @@ class LexicalIndex:
         return sqlite3.connect(self._db_path)
 
     def _ensure_schema(self) -> None:
+        """Create (or migrate to) schema v2: chunk_fts2 adds display_content
+        and context columns on top of the original chunk_fts columns, so the
+        text FTS5 matches on (`content`, now the Contextual-Retrieval
+        combined match text — see rag/contextualizer.py) can differ from the
+        text shown to users (`display_content`, the original chunk text —
+        citation snippets must never leak AI-generated situating context).
+
+        If a legacy chunk_fts table exists (pre-Contextual-Retrieval
+        deployments), its rows are copied into chunk_fts2 (display_content =
+        content, context = '') and the legacy table is dropped — a user
+        restarting the app before any backfill runs must keep working with
+        zero data loss. Runs once: after migration chunk_fts no longer
+        exists, so later __init__ calls see only chunk_fts2 and no-op here.
+        """
         conn = self._connect()
         try:
             conn.execute(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5("
-                "content, chunk_id UNINDEXED, doc_id UNINDEXED, "
+                "CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts2 USING fts5("
+                "content, display_content UNINDEXED, context UNINDEXED, "
+                "chunk_id UNINDEXED, doc_id UNINDEXED, "
                 "page_number UNINDEXED, section_header UNINDEXED, "
                 "chunk_index UNINDEXED)"
             )
+            legacy_exists = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='chunk_fts'"
+            ).fetchone()
+            if legacy_exists:
+                conn.execute(
+                    "INSERT INTO chunk_fts2 (content, display_content, context, "
+                    "chunk_id, doc_id, page_number, section_header, chunk_index) "
+                    "SELECT content, content, '', chunk_id, doc_id, page_number, "
+                    "section_header, chunk_index FROM chunk_fts"
+                )
+                conn.execute("DROP TABLE chunk_fts")
             conn.commit()
         finally:
             conn.close()
@@ -63,26 +89,48 @@ class LexicalIndex:
         chunk_ids: list[str],
         documents: list[str],
         metadatas: list[dict],
+        display_documents: list[str] | None = None,
+        contexts: list[str] | None = None,
     ) -> None:
         """Add chunks to the index. Same argument meaning as
         VectorStore.add_chunks, minus embeddings (lexical search needs no
-        vector representation)."""
+        vector representation).
+
+        documents: the text FTS5 matches against — for Contextual Retrieval
+                   callers this is combine(context, original_content), for
+                   pre-feature callers it's just the original content.
+        display_documents: text returned to callers as RetrievedChunk.content
+                   (citation snippets etc.) — defaults to `documents` when
+                   omitted, preserving old callers' behavior byte-for-byte.
+        contexts: the situating context alone, stored so callers can display
+                   it separately (rag_service's "[Context: ...]" line) —
+                   defaults to "" per chunk when omitted.
+        """
+        if display_documents is None:
+            display_documents = documents
+        if contexts is None:
+            contexts = [""] * len(chunk_ids)
         rows = [
             (
                 doc,
+                display,
+                context,
                 chunk_id,
                 meta.get("doc_id", ""),
                 meta.get("page_number"),
                 meta.get("section_header", ""),
                 meta.get("chunk_index", 0),
             )
-            for chunk_id, doc, meta in zip(chunk_ids, documents, metadatas)
+            for chunk_id, doc, display, context, meta in zip(
+                chunk_ids, documents, display_documents, contexts, metadatas
+            )
         ]
         conn = self._connect()
         try:
             conn.executemany(
-                "INSERT INTO chunk_fts (content, chunk_id, doc_id, page_number, "
-                "section_header, chunk_index) VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO chunk_fts2 (content, display_content, context, chunk_id, "
+                "doc_id, page_number, section_header, chunk_index) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
             conn.commit()
@@ -124,9 +172,9 @@ class LexicalIndex:
             return []
 
         sql = (
-            "SELECT chunk_id, doc_id, content, page_number, section_header, "
-            "chunk_index, bm25(chunk_fts) AS rank "
-            "FROM chunk_fts WHERE chunk_fts MATCH ?"
+            "SELECT chunk_id, doc_id, display_content, page_number, section_header, "
+            "chunk_index, context, bm25(chunk_fts2) AS rank "
+            "FROM chunk_fts2 WHERE chunk_fts2 MATCH ?"
         )
         params: list = [match_query]
 
@@ -145,11 +193,11 @@ class LexicalIndex:
             conn.close()
 
         chunks = []
-        for chunk_id, doc_id, content, page_number, section_header, chunk_index, rank in rows:
+        for chunk_id, doc_id, display_content, page_number, section_header, chunk_index, context, rank in rows:
             chunks.append(RetrievedChunk(
                 chunk_id=chunk_id,
                 doc_id=doc_id,
-                content=content,
+                content=display_content,
                 page_number=page_number,
                 section_header=section_header,
                 # FTS5's bm25() is lower-is-better (and negative); negate so
@@ -157,13 +205,14 @@ class LexicalIndex:
                 # more relevant.
                 score=-rank,
                 chunk_index=chunk_index,
+                context=context or "",
             ))
         return chunks
 
     def delete_document(self, doc_id: str) -> None:
         conn = self._connect()
         try:
-            conn.execute("DELETE FROM chunk_fts WHERE doc_id = ?", (doc_id,))
+            conn.execute("DELETE FROM chunk_fts2 WHERE doc_id = ?", (doc_id,))
             conn.commit()
         finally:
             conn.close()
@@ -171,7 +220,7 @@ class LexicalIndex:
     def count(self) -> int:
         conn = self._connect()
         try:
-            row = conn.execute("SELECT COUNT(*) FROM chunk_fts").fetchone()
+            row = conn.execute("SELECT COUNT(*) FROM chunk_fts2").fetchone()
             return row[0] if row else 0
         finally:
             conn.close()
@@ -181,7 +230,7 @@ class LexicalIndex:
         make reruns idempotent)."""
         conn = self._connect()
         try:
-            conn.execute("DELETE FROM chunk_fts")
+            conn.execute("DELETE FROM chunk_fts2")
             conn.commit()
         finally:
             conn.close()

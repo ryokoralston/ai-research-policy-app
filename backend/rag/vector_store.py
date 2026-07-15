@@ -15,6 +15,12 @@ class RetrievedChunk:
     section_header: str | None
     score: float
     chunk_index: int = 0  # position within the document (for reading order)
+    # AI-generated situating context (Contextual Retrieval — see
+    # rag/contextualizer.py). "" when the feature is off or generation
+    # failed for this chunk. Never part of `content` (the citation/display
+    # contract) — surfaced separately so callers can show it alongside the
+    # excerpt (see rag_service.py's "[Context: ...]" line).
+    context: str = ""
 
 
 class VectorStore:
@@ -81,6 +87,7 @@ class VectorStore:
                 section_header=meta.get("section_header"),
                 score=1.0 - dist,  # cosine: distance → similarity
                 chunk_index=meta.get("chunk_index", 0),
+                context=meta.get("context") or "",
             ))
         return chunks
 
@@ -91,6 +98,22 @@ class VectorStore:
 
     def count(self) -> int:
         return self._collection.count()
+
+    def get_contexts(self) -> dict[str, str]:
+        """Map every chunk_id currently in the collection to its stored
+        "context" metadata (Contextual Retrieval — see
+        rag/contextualizer.py). Missing/empty context maps to "".
+
+        Used by scripts/reindex_embeddings.py to preserve contexts across a
+        from-scratch re-embed (that script re-embeds raw DocumentChunk
+        content and would otherwise silently drop any already-generated
+        contexts when it clears and rewrites the collection).
+        """
+        existing = self._collection.get(include=["metadatas"])
+        return {
+            chunk_id: (meta.get("context") or "")
+            for chunk_id, meta in zip(existing["ids"], existing["metadatas"])
+        }
 
     def clear(self) -> None:
         """Delete all entries in this collection (used by the reindex script

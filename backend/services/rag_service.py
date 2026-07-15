@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from models import Document, DocumentChunk
 from rag.chunker import chunk_pdf, chunk_html, chunk_plain_text, TextChunk, _approx_tokens
+from rag.contextualizer import contextualize_chunks, combine
 from rag.lexical_index import LexicalIndex
 from rag.vector_store import VectorStore
 from services.embedding_service import EmbeddingService
@@ -128,13 +129,14 @@ def _within_fallback_guards(file_size: int, page_count: int) -> bool:
     return file_size <= MAX_FALLBACK_FILE_BYTES and page_count <= MAX_FALLBACK_PAGES
 
 
-def _embed_and_store(
+async def _embed_and_store(
     doc: Document,
     chunks: list[TextChunk],
     db: Session,
     *,
     page_count: int | None = None,
     word_count: int | None = None,
+    full_text: str,
 ) -> None:
     """Embed chunks, write them to ChromaDB + SQLite, and mark the document indexed.
 
@@ -146,6 +148,18 @@ def _embed_and_store(
     rag/vector_store.py's query side — keeping it in one place means the two
     can no longer drift apart.
 
+    full_text: the whole document's text (both callers already hold it),
+    used by contextualize_chunks (Contextual Retrieval — see
+    rag/contextualizer.py) to generate a short situating context per chunk.
+    Embeddings and the lexical index's match text are computed on
+    combine(context, chunk.content); the ORIGINAL chunk.content is what's
+    stored as Chroma's `documents` / the lexical index's display text — the
+    citation/display contract must never leak AI-generated context. When the
+    feature is off (or every chunk's context generation failed), every
+    context is "" and combine(...) returns chunk.content unchanged, so the
+    embedded/matched text is byte-identical to pre-feature behavior; only
+    the harmless "context": "" Chroma metadata key differs.
+
     Deliberately does NOT catch exceptions: the two callers have different
     failure policies (index_document marks status=error and re-raises;
     index_web_content marks status=error and swallows, since it runs as a
@@ -156,7 +170,9 @@ def _embed_and_store(
     lexical = LexicalIndex()
 
     texts = [c.content for c in chunks]
-    embeddings = embed_service.embed_texts(texts)
+    contexts = await contextualize_chunks(full_text, texts)
+    combined = [combine(ctx, text) for ctx, text in zip(contexts, texts)]
+    embeddings = embed_service.embed_texts(combined)
 
     chunk_ids = []
     db_chunks = []
@@ -180,11 +196,14 @@ def _embed_and_store(
             "page_number": c.page_number,
             "section_header": c.section_header or "",
             "chunk_index": c.chunk_index,
+            "context": ctx,
         }
-        for c in chunks
+        for c, ctx in zip(chunks, contexts)
     ]
 
-    # Batch add to ChromaDB
+    # Batch add to ChromaDB. `documents` stays the ORIGINAL chunk text (the
+    # citation/display contract) — the combined (context + content) text was
+    # only needed to compute `embeddings` above.
     vs.add_chunks(
         chunk_ids=chunk_ids,
         embeddings=embeddings,
@@ -192,12 +211,15 @@ def _embed_and_store(
         metadatas=metadatas,
     )
 
-    # Mirror into the lexical (BM25) index with the same ids/texts/metadata
-    # so exact-term search stays in sync with semantic search.
+    # Mirror into the lexical (BM25) index: match text is `combined` (so
+    # exact-term search benefits from the situating context too), display
+    # text stays the original content, same display/match split as above.
     lexical.add_chunks(
         chunk_ids=chunk_ids,
-        documents=texts,
+        documents=combined,
         metadatas=metadatas,
+        display_documents=texts,
+        contexts=contexts,
     )
 
     db.bulk_save_objects(db_chunks)
@@ -254,7 +276,14 @@ async def index_document(doc_id: str, db: Session) -> None:
             db.commit()
             return
 
-        _embed_and_store(doc, chunks, db, page_count=page_count, word_count=word_count)
+        # Full-document text for Contextual Retrieval's per-chunk situating
+        # context (rag/contextualizer.py) — the join of already-chunked
+        # content rather than re-reading the source file, so it's uniform
+        # across every branch above (raw text, HTML-extracted text,
+        # vision-transcribed PDF/image text) with no extra variable to carry
+        # through each of them.
+        full_text = "\n\n".join(c.content for c in chunks)
+        await _embed_and_store(doc, chunks, db, page_count=page_count, word_count=word_count, full_text=full_text)
 
     except Exception as e:
         doc.status = "error"
@@ -299,7 +328,8 @@ async def index_web_content(doc_id: str, content: str, db: Session) -> None:
             db.commit()
             return
 
-        _embed_and_store(doc, chunks, db, word_count=word_count)
+        full_text = "\n\n".join(c.content for c in chunks)
+        await _embed_and_store(doc, chunks, db, word_count=word_count, full_text=full_text)
     except Exception:
         # Background task — record the failure on the document instead of raising
         doc.status = "error"
@@ -470,10 +500,16 @@ async def answer_question(
                         "title": doc_title,
                         "snippet": chunk.content[:200],
                     })
-                context_parts.append(
+                header = (
                     f"[{citation_index[chunk.chunk_id]}] [{doc_title}, p.{chunk.page_number}, "
-                    f"sec: {chunk.section_header}]\n{chunk.content}"
+                    f"sec: {chunk.section_header}]"
                 )
+                # Situating context (Contextual Retrieval — rag/contextualizer.py)
+                # is real signal for Claude too, when present; the citation
+                # snippet above (chunk.content[:200]) stays original text only.
+                if chunk.context:
+                    header = f"{header}\n[Context: {chunk.context}]"
+                context_parts.append(f"{header}\n{chunk.content}")
             context = "\n\n---\n\n".join(context_parts)
             return f"<source_documents>\n{context}\n</source_documents>"
 
