@@ -344,7 +344,7 @@ async def run_eval():
     print(f"{'='*60}")
     print(f"  Prompt Eval: Research Synthesis Quality  ({PROMPT_VERSION})")
     print(f"  Dataset size: {len(TEST_DATASET)} test cases")
-    print(f"  Grader: Claude (model-based / LLM-as-judge)")
+    print("  Grader: Claude (model-based / LLM-as-judge)")
     print(f"{'='*60}")
 
     # Grade all cases concurrently, bounded like the notebook's ThreadPoolExecutor

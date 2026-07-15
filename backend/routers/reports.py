@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse, Response
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Report, ReportSection
+from models import Report
 from schemas import (
     ReportGenerateRequest, ReportResponse, ReportDetail, ReportUpdateRequest, ReportDraftRequest
 )

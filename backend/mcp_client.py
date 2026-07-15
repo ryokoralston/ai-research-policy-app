@@ -199,7 +199,7 @@ async def main():
                 print(f"  - {prompt.name}: {first_line}")
 
             if prompts:
-                print(f"\nGetting prompt 'summarize_document' with first doc...\n")
+                print("\nGetting prompt 'summarize_document' with first doc...\n")
                 messages = await client.get_prompt("summarize_document", {"doc_id": first["id"]})
                 print(f"  message count: {len(messages)}")
                 print(f"  first message role: {messages[0].role}")

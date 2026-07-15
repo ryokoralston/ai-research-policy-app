@@ -375,7 +375,7 @@ async def run_example_comparison(use_generated: bool = False):
     base_avg = sum(r["combined_score"] for r in base) / len(base)
     prod_avg = sum(r["combined_score"] for r in prod) / len(prod)
     print(f"\n{'='*60}")
-    print(f"  Providing Examples — A/B result")
+    print("  Providing Examples — A/B result")
     print(f"  v2 (no example)   : {base_avg:.1f} / 10")
     print(f"  v3 (with example) : {prod_avg:.1f} / 10   (delta {prod_avg - base_avg:+.1f})")
     print(f"{'='*60}")

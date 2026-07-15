@@ -1,14 +1,13 @@
 import asyncio
 import json
 import uuid
-from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models.debate import Debate, DebateArgument
+from models.debate import Debate
 from schemas.debate import DebateStartRequest, DebateResponse, DebateDetail
 from templates.personas import PERSONAS
 from utils.sse import queue_event_stream, sse_event
