@@ -214,12 +214,66 @@ export const api = {
   },
 
   auth: {
-    status: () => request<{ auth_required: boolean }>("/api/auth/status"),
-    login: (password: string) =>
-      request<{ token: string; auth_required: boolean; expires_in?: number }>(
-        "/api/auth/login",
-        { method: "POST", body: JSON.stringify({ password }) }
+    status: () => request<{ setup_required: boolean }>("/api/auth/status"),
+    bootstrap: (email: string, password: string) =>
+      request<{ token: string; expires_in: number }>("/api/auth/bootstrap", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      }),
+    login: (email: string, password: string) =>
+      request<{ token: string; expires_in: number }>("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      }),
+    me: () => request<{ id: string; email: string; role: "admin" | "member" }>("/api/auth/me"),
+    changePassword: (currentPassword: string, newPassword: string) =>
+      request<{ ok: boolean }>("/api/auth/me/password", {
+        method: "POST",
+        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+      }),
+  },
+
+  users: {
+    list: () =>
+      request<
+        {
+          id: string;
+          email: string;
+          role: "admin" | "member";
+          is_active: boolean;
+          created_at: string;
+          last_login_at: string | null;
+        }[]
+      >("/api/users/"),
+    create: (body: { email: string; password: string; role: "admin" | "member" }) =>
+      request<{ id: string; email: string; role: string; is_active: boolean }>("/api/users/", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    update: (
+      id: string,
+      body: { role?: "admin" | "member"; is_active?: boolean; new_password?: string }
+    ) =>
+      request<{ id: string; email: string; role: string; is_active: boolean }>(
+        `/api/users/${id}`,
+        { method: "PATCH", body: JSON.stringify(body) }
       ),
+  },
+
+  auditLog: {
+    list: (limit = 50, before?: string) =>
+      request<
+        {
+          id: string;
+          actor_email: string | null;
+          action: string;
+          resource_type: string | null;
+          resource_id: string | null;
+          detail: string | null;
+          ip_address: string | null;
+          created_at: string;
+        }[]
+      >(`/api/audit-log/?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ""}`),
   },
 
   datalab: {

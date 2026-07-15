@@ -14,10 +14,9 @@ class Settings(BaseSettings):
     voyage_api_key: str = ""
     voyage_embedding_model: str = "voyage-3-large"
 
-    # App login. When set, all /api routes require a bearer token obtained from
-    # POST /api/auth/login. When empty, auth is disabled (local-dev convenience)
-    # and a warning is logged at startup.
-    app_password: str = ""
+    # App login: per-user accounts (services/auth.py, models/user.py). Every
+    # /api route requires a bearer token obtained from POST /api/auth/login
+    # (or the one-time /api/auth/bootstrap on a fresh, user-less deploy).
     session_ttl_hours: int = 12
 
     database_url: str = "sqlite:///./data/research.db"

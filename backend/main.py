@@ -16,7 +16,9 @@ from routers.settings import router as settings_router
 from routers.auth import router as auth_router
 from routers.reminders import router as reminders_router
 from routers.workspace import router as workspace_router
-from services.auth import auth_enabled, require_auth
+from routers.users import router as users_router
+from routers.audit_log import router as audit_log_router
+from services.auth import get_current_user, require_admin
 from services.digest_service import send_digest
 
 logger = logging.getLogger(__name__)
@@ -78,12 +80,6 @@ async def lifespan(app: FastAPI):
         digest_tz,
     )
 
-    if not auth_enabled():
-        logger.warning(
-            "AUTH DISABLED — every /api route is publicly accessible. "
-            "Set APP_PASSWORD to require login before deploying."
-        )
-
     yield
 
     # Shutdown
@@ -123,10 +119,12 @@ async def security_headers(request, call_next):
 
 
 # Auth + health are public; everything else requires a valid bearer token
-# (enforced only when APP_PASSWORD is configured — see services/auth.py).
+# (see services/auth.py — auth is always required, no shared-password
+# escape hatch; a fresh deploy with no users yet uses the one-time
+# /api/auth/bootstrap flow instead).
 app.include_router(auth_router)
 
-_protected = [Depends(require_auth)]
+_protected = [Depends(get_current_user)]
 app.include_router(research.router, dependencies=_protected)
 app.include_router(documents.router, dependencies=_protected)
 app.include_router(reports.router, dependencies=_protected)
@@ -137,6 +135,10 @@ app.include_router(digest_router, dependencies=_protected)
 app.include_router(settings_router, dependencies=_protected)
 app.include_router(reminders_router, dependencies=_protected)
 app.include_router(workspace_router, dependencies=_protected)
+
+_admin_only = [Depends(require_admin)]
+app.include_router(users_router, dependencies=_admin_only)
+app.include_router(audit_log_router, dependencies=_admin_only)
 
 
 @app.get("/health")

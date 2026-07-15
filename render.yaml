@@ -23,10 +23,6 @@ services:
         sync: false
       - key: CORS_ORIGINS
         sync: false
-      # Shared login password. REQUIRED for a public deployment — without it the
-      # API is open to anyone. Users log in at /api/auth/login to get a token.
-      - key: APP_PASSWORD
-        sync: false
       # Optional: urlsafe-base64 Fernet key for encrypting stored secrets at rest.
       # If unset, a key file is auto-generated on the mounted /data disk.
       # Generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"

@@ -1,26 +1,30 @@
 """
-Lightweight single-password auth for the whole API.
+Per-user auth for the whole API.
 
-A user logs in with the shared APP_PASSWORD and receives an opaque bearer token
-(a Fernet token with a built-in timestamp, signed by the same key used for
-secret encryption). Protected routes validate the token via ``require_auth``.
+A user logs in with their email + password and receives an opaque bearer
+token (a Fernet token with a built-in timestamp, signed by the same key
+used for secret encryption, encrypting a small JSON payload identifying the
+user). Protected routes resolve the acting user via ``get_current_user``;
+admin-only routes additionally require ``require_admin``.
 
-Auth is enforced only when ``APP_PASSWORD`` is configured. When it is empty,
-``require_auth`` is a no-op so local development keeps working unauthenticated
-(main.py logs a warning at startup in that case).
+Auth is always required — there is no shared-password/no-auth escape hatch
+(that model was retired in favor of real accounts). A brand-new deployment
+with an empty users table is handled by the one-time bootstrap flow in
+routers/auth.py, not by disabling auth here.
 """
 from __future__ import annotations
 
-import hmac
+import json
 import time
 
-from fastapi import Header, HTTPException, Request, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from cryptography.fernet import InvalidToken
+from sqlalchemy.orm import Session
 
 from config import get_settings
+from database import get_db
+from models.user import User
 from services.secret_crypto import _fernet
-
-_TOKEN_PLAINTEXT = b"authenticated"
 
 # Per-IP failed-login throttle. In-memory only — fine for this app's single-
 # instance Render deployment; a restart or a second instance would reset the
@@ -28,18 +32,6 @@ _TOKEN_PLAINTEXT = b"authenticated"
 _LOGIN_ATTEMPT_WINDOW_SECONDS = 300  # 5 minutes
 _LOGIN_MAX_ATTEMPTS = 5
 _login_failures: dict[str, list[float]] = {}
-
-
-def auth_enabled() -> bool:
-    return bool(get_settings().app_password)
-
-
-def check_password(password: str) -> bool:
-    """Constant-time comparison against the configured password."""
-    expected = get_settings().app_password
-    if not expected:
-        return False
-    return hmac.compare_digest(password, expected)
 
 
 def client_ip(request: Request) -> str:
@@ -79,37 +71,57 @@ def clear_login_failures(ip: str) -> None:
     _login_failures.pop(ip, None)
 
 
-def create_token() -> str:
-    """Issue a signed, time-stamped bearer token."""
-    return _fernet().encrypt(_TOKEN_PLAINTEXT).decode()
+def create_token(user: User) -> str:
+    """Issue a signed, time-stamped bearer token identifying `user`."""
+    payload = json.dumps({"uid": user.id}).encode("utf-8")
+    return _fernet().encrypt(payload).decode()
 
 
-def verify_token(token: str) -> bool:
-    """Return True if the token is valid and not older than the session TTL."""
+def verify_token(token: str) -> str | None:
+    """Return the encoded user id if `token` is valid and not older than the
+    session TTL, else None. Also rejects tokens from before this app's
+    per-user-accounts migration (those encrypted a fixed plaintext, not JSON)
+    — decrypts fine but fails json.loads, which is treated the same as any
+    other invalid token."""
     ttl = get_settings().session_ttl_hours * 3600
     try:
         data = _fernet().decrypt(token.encode(), ttl=ttl)
     except InvalidToken:
-        return False
-    return data == _TOKEN_PLAINTEXT
+        return None
+    try:
+        payload = json.loads(data)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    uid = payload.get("uid")
+    return uid if isinstance(uid, str) else None
 
 
-async def require_auth(authorization: str | None = Header(default=None)) -> None:
-    """FastAPI dependency: enforce a valid bearer token on protected routes."""
-    if not auth_enabled():
-        return  # auth disabled — allow through
-
+async def get_current_user(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> User:
+    """FastAPI dependency: resolve and return the acting user, or 401."""
+    unauthorized = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Missing or invalid credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
     if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing or malformed Authorization header",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise unauthorized
 
     token = authorization.split(" ", 1)[1].strip()
-    if not verify_token(token):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    uid = verify_token(token)
+    if not uid:
+        raise unauthorized
+
+    user = db.get(User, uid)
+    if user is None or not user.is_active:
+        raise unauthorized
+    return user
+
+
+async def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    """FastAPI dependency: like get_current_user, but 403s non-admins."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return current_user

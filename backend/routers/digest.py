@@ -15,11 +15,14 @@ from typing import Any
 import pytz
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from database import get_db, get_or_init_digest_settings
+from models.user import User
+from services import audit_log
+from services.auth import client_ip, get_current_user
 from services.digest_service import send_digest
 from utils.masking import MASK, mask_secret
 
@@ -88,27 +91,42 @@ async def get_settings_endpoint(db: Session = Depends(get_db)) -> dict[str, Any]
 @router.put("/settings")
 async def save_settings_endpoint(
     body: DigestSettingsIn,
+    request: Request,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """Save digest settings to DB and reschedule the job if hour/timezone changed."""
     ds = get_or_init_digest_settings(db)
 
-    if body.email_to is not None:
+    changed: list[str] = []
+    if body.email_to is not None and body.email_to != ds.email_to:
+        changed.append("email_to")
         ds.email_to = body.email_to
-    if body.email_from is not None:
+    if body.email_from is not None and body.email_from != ds.email_from:
+        changed.append("email_from")
         ds.email_from = body.email_from
     # Only update the password when a real new value is sent — ignore empty
     # strings and the masked sentinel echoed back by the frontend.
     if body.smtp_password and body.smtp_password != MASK:
+        changed.append("smtp_password")
         ds.smtp_password = body.smtp_password
-    if body.topics is not None:
+    if body.topics is not None and body.topics != ds.topics:
+        changed.append("topics")
         ds.topics = body.topics
-    if body.timezone is not None:
+    if body.timezone is not None and body.timezone != ds.timezone:
+        changed.append("timezone")
         ds.timezone = body.timezone
-    if body.send_hour is not None:
+    if body.send_hour is not None and body.send_hour != ds.send_hour:
+        changed.append("send_hour")
         ds.send_hour = body.send_hour
 
     ds.updated_at = datetime.utcnow()
+
+    if changed:
+        audit_log.record(db, user=current_user, action="settings.digest_settings.update",
+                          resource_type="digest_settings", detail=f"updated: {', '.join(changed)}",
+                          ip_address=client_ip(request))
+
     db.commit()
     db.refresh(ds)
 

@@ -48,6 +48,7 @@ youtube-transcript-api==1.2.4
 # (services/secret_crypto.py, services/auth.py), whose API is stable
 # across this range.
 cryptography==49.0.0
+bcrypt==5.0.0
 
 # --- Explicit floors on transitive deps flagged by pip-audit so a fresh
 # install can't resolve back to an old cached wheel; none of these are

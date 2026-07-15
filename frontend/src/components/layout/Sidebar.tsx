@@ -17,9 +17,12 @@ import {
   PanelLeftOpen,
   LogOut,
   FlaskConical,
+  UserCog,
+  History,
 } from "lucide-react";
 import ThemeToggle from "./ThemeToggle";
 import { getToken, clearToken } from "@/lib/api";
+import { useCurrentUser } from "./UserContext";
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -33,6 +36,11 @@ const NAV_ITEMS = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
+const ADMIN_NAV_ITEMS = [
+  { href: "/users", label: "Users", icon: UserCog },
+  { href: "/activity-log", label: "Activity Log", icon: History },
+];
+
 interface SidebarProps {
   collapsed: boolean;
   onToggle: () => void;
@@ -42,6 +50,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [hasToken, setHasToken] = useState(false);
+  const user = useCurrentUser();
 
   // Read the token after mount to avoid a hydration mismatch.
   useEffect(() => {
@@ -52,6 +61,8 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
     clearToken();
     router.replace("/login");
   };
+
+  const navItems = user?.role === "admin" ? [...NAV_ITEMS, ...ADMIN_NAV_ITEMS] : NAV_ITEMS;
 
   return (
     <aside
@@ -86,7 +97,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
 
       {/* Navigation */}
       <nav className="flex-1 p-2 space-y-1">
-        {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
+        {navItems.map(({ href, label, icon: Icon }) => {
           const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
           return (
             <Link
@@ -132,6 +143,11 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
         ) : (
           <>
             <ThemeToggle />
+            {user && (
+              <p className="text-xs text-slate-500 px-1 truncate" title={user.email}>
+                {user.email}
+              </p>
+            )}
             {hasToken && (
               <button
                 onClick={handleLogout}

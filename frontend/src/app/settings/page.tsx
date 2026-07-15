@@ -22,6 +22,12 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
 
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordBanner, setPasswordBanner] = useState<string | null>(null);
+
   useEffect(() => {
     api.settings.getModels().then((data) => {
       setMainModel(data.main_model);
@@ -52,6 +58,29 @@ export default function SettingsPage() {
       setTimeout(() => setBanner(null), 4000);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleChangePassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (newPassword !== confirmPassword) {
+      setPasswordBanner("Error: new passwords do not match.");
+      setTimeout(() => setPasswordBanner(null), 4000);
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      await api.auth.changePassword(currentPassword, newPassword);
+      setPasswordBanner("Password changed successfully.");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setTimeout(() => setPasswordBanner(null), 2500);
+    } catch (err) {
+      setPasswordBanner(`Error: ${err instanceof Error ? err.message : "Failed to change password"}`);
+      setTimeout(() => setPasswordBanner(null), 4000);
+    } finally {
+      setChangingPassword(false);
     }
   }
 
@@ -185,6 +214,76 @@ export default function SettingsPage() {
           className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-medium text-sm py-2.5 rounded-md transition-colors"
         >
           {saving ? "Saving…" : "Save Settings"}
+        </button>
+      </form>
+
+      {passwordBanner && (
+        <div
+          className={`mt-8 mb-2 px-4 py-3 rounded-md text-sm font-medium ${
+            passwordBanner.startsWith("Error")
+              ? "bg-red-900/40 text-red-300 border border-red-700"
+              : "bg-green-900/40 text-green-300 border border-green-700"
+          }`}
+        >
+          {passwordBanner}
+        </div>
+      )}
+
+      <form onSubmit={handleChangePassword} className="space-y-6 mt-8">
+        <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-4">
+          <h2 className="text-sm font-semibold text-slate-200 uppercase tracking-wide">
+            Change Password
+          </h2>
+
+          <div>
+            <label htmlFor="current_password" className="block text-sm font-medium text-slate-300 mb-1">
+              Current password
+            </label>
+            <input
+              id="current_password"
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              autoComplete="current-password"
+              className="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="new_password" className="block text-sm font-medium text-slate-300 mb-1">
+              New password
+            </label>
+            <input
+              id="new_password"
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              autoComplete="new-password"
+              className="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="confirm_new_password" className="block text-sm font-medium text-slate-300 mb-1">
+              Confirm new password
+            </label>
+            <input
+              id="confirm_new_password"
+              type="password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              autoComplete="new-password"
+              className="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          disabled={changingPassword || !currentPassword || !newPassword || !confirmPassword}
+          className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium text-sm py-2.5 rounded-md transition-colors"
+        >
+          {changingPassword ? "Changing…" : "Change Password"}
         </button>
       </form>
     </div>

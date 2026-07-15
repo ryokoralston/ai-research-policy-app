@@ -33,7 +33,7 @@ def get_db():
 
 def init_db():
     # Import all models so Base knows about them
-    from models import document, report, research_session, debate, digest_settings, model_settings, reminder  # noqa: F401
+    from models import document, report, research_session, debate, digest_settings, model_settings, reminder, user, audit_log  # noqa: F401
     Base.metadata.create_all(bind=engine)
     encrypt_legacy_secrets()
     normalize_legacy_report_status()

@@ -29,7 +29,11 @@ from sqlalchemy.pool import StaticPool
 from database import Base, get_db
 from models import model_settings as _ms_models  # noqa: F401 — register tables
 from models import digest_settings as _ds_models  # noqa: F401 — register tables
+from models.user import User
+from services.auth import get_current_user
 from utils.masking import MASK, mask_secret
+
+_FAKE_ADMIN = User(id="test-admin", email="admin@example.com", password_hash="x", role="admin")
 
 
 def _make_client_and_db():
@@ -46,6 +50,7 @@ def _make_client_and_db():
     app.include_router(settings_router)
     app.include_router(digest_router)
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: _FAKE_ADMIN
     return TestClient(app), db
 
 
