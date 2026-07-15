@@ -7,11 +7,19 @@ GET  /api/auth/status  – whether auth is required (so the UI knows to show log
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 
 from config import get_settings
-from services.auth import auth_enabled, check_password, create_token
+from services.auth import (
+    auth_enabled,
+    check_login_rate_limit,
+    check_password,
+    clear_login_failures,
+    client_ip,
+    create_token,
+    record_login_failure,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -26,17 +34,22 @@ async def auth_status() -> dict:
 
 
 @router.post("/login")
-async def login(body: LoginIn) -> dict:
+async def login(body: LoginIn, request: Request) -> dict:
     if not auth_enabled():
         # Auth disabled — hand back an empty token so the UI flow is uniform.
         return {"token": "", "auth_required": False}
 
+    ip = client_ip(request)
+    check_login_rate_limit(ip)  # raises 429 if this IP is currently throttled
+
     if not check_password(body.password):
+        record_login_failure(ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect password",
         )
 
+    clear_login_failures(ip)
     return {
         "token": create_token(),
         "auth_required": True,

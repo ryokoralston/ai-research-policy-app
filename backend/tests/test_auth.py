@@ -72,6 +72,47 @@ def test_require_auth_noop_when_disabled():
         auth.auth_enabled = original
 
 
+def test_login_rate_limit_blocks_after_max_attempts():
+    ip = "203.0.113.1"
+    auth.clear_login_failures(ip)
+    try:
+        for _ in range(auth._LOGIN_MAX_ATTEMPTS):
+            auth.check_login_rate_limit(ip)  # must not raise yet
+            auth.record_login_failure(ip)
+
+        try:
+            auth.check_login_rate_limit(ip)
+            raise AssertionError("expected 429 after max failed attempts")
+        except HTTPException as exc:
+            assert exc.status_code == 429, exc.status_code
+            assert "Retry-After" in exc.headers
+    finally:
+        auth.clear_login_failures(ip)
+
+
+def test_login_rate_limit_resets_on_success():
+    ip = "203.0.113.2"
+    auth.clear_login_failures(ip)
+    try:
+        for _ in range(auth._LOGIN_MAX_ATTEMPTS):
+            auth.record_login_failure(ip)
+        auth.clear_login_failures(ip)  # simulates a successful login
+        auth.check_login_rate_limit(ip)  # must not raise — budget reset
+    finally:
+        auth.clear_login_failures(ip)
+
+
+def test_login_rate_limit_window_expiry():
+    ip = "203.0.113.3"
+    auth.clear_login_failures(ip)
+    try:
+        old = time.monotonic() - auth._LOGIN_ATTEMPT_WINDOW_SECONDS - 1
+        auth._login_failures[ip] = [old] * auth._LOGIN_MAX_ATTEMPTS
+        auth.check_login_rate_limit(ip)  # stale attempts fall outside window — must not raise
+    finally:
+        auth.clear_login_failures(ip)
+
+
 # ── Test runner ───────────────────────────────────────────────────────────────
 
 _PASSED: list[str] = []
@@ -97,6 +138,9 @@ if __name__ == "__main__":
     _run("require_auth rejects bad headers", test_require_auth_rejects_missing_and_bad_headers)
     _run("require_auth accepts valid token", test_require_auth_accepts_valid_token)
     _run("require_auth no-op when disabled", test_require_auth_noop_when_disabled)
+    _run("login rate limit blocks after max attempts", test_login_rate_limit_blocks_after_max_attempts)
+    _run("login rate limit resets on success", test_login_rate_limit_resets_on_success)
+    _run("login rate limit window expiry", test_login_rate_limit_window_expiry)
 
     total = len(_PASSED) + len(_FAILED)
     print(f"\n{'=' * 50}")

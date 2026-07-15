@@ -30,7 +30,7 @@ from typing import AsyncIterator
 from sqlalchemy.orm import Session
 
 from models import Document, DocumentChunk
-from services.anthropic_client import sse_event, _load_ai_settings, _get_anthropic_client, _block_get
+from services.anthropic_client import sse_event, _load_ai_settings, _get_anthropic_client, _block_get, UNTRUSTED_CONTENT_GUARD
 from services.rag_service import SCANNED_PDF_MARKER
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,7 @@ SYSTEM_PROMPT = (
     "Ground every claim in a specific passage of the document as you write, so each "
     "sentence can be attributed to the part of the document it came from. "
     "If the document does not contain the answer, say so explicitly rather than guessing."
+    "\n\n" + UNTRUSTED_CONTENT_GUARD
 )
 
 
