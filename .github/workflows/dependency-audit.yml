@@ -26,8 +26,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Upgrade pip
-        run: pip install --upgrade pip
+      - name: Upgrade pip and setuptools
+        # setuptools isn't in requirements.txt (it's bundled build tooling,
+        # not a project dependency) but pip-audit still flags whatever
+        # version the runner's Python install shipped with, so it needs its
+        # own explicit upgrade here.
+        run: pip install --upgrade pip setuptools
       - name: Install backend dependencies
         run: pip install -r backend/requirements.txt
       - name: Install pip-audit
