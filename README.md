@@ -111,6 +111,41 @@ Copy `backend/.env.example` to `backend/.env` and fill in the values below.
 
 > To generate a Gmail app password, go to **Google Account → Security → 2-Step Verification → App passwords**.
 
+## Secret Key Rotation (for ownership transfer)
+
+`SECRET_ENCRYPTION_KEY` (see `services/secret_crypto.py`) encrypts stored API
+keys and the digest SMTP password at rest, and signs login tokens. It can
+**never** be swapped in place — flipping the env var without re-encrypting
+first leaves every existing secret permanently undecryptable (see the
+warning in `.env.example`).
+
+When transferring ownership of this app to a new party, don't hand over the
+existing key indefinitely — generate a new one for the incoming owner and
+rotate to it:
+
+1. Find the current key. If `SECRET_ENCRYPTION_KEY` is set as an env var, it's
+   right there. If it isn't, the app auto-generated one on first run and
+   persisted it to `<data dir>/.secret_key` (on Render: open a Shell on the
+   service and `cat /data/.secret_key`).
+2. Generate a new key: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+3. Dry-run the rotation first (writes nothing):
+   ```
+   cd backend && ./venv/bin/python -m scripts.rotate_secret_key --old-key <current> --new-key <new>
+   ```
+4. Review the output, then apply it:
+   ```
+   ./venv/bin/python -m scripts.rotate_secret_key --old-key <current> --new-key <new> --apply
+   ```
+5. Set `SECRET_ENCRYPTION_KEY` to the new value wherever the app runs (e.g.
+   Render's Environment tab) and restart it. Everyone currently logged in
+   will need to log in again — expected, not a bug.
+6. Hand the new key to the incoming owner through a secure channel (a shared
+   password manager entry, not chat/email in plaintext), and set it as an
+   explicit env var rather than leaving it to auto-generate onto disk —
+   an env var survives infrastructure changes (redeploys, disk swaps) more
+   reliably than a file on a persistent disk that might not always be as
+   persistent as expected.
+
 ## License
 
 MIT
