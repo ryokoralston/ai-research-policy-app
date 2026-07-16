@@ -26,10 +26,35 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Upgrade pip
+        run: pip install --upgrade pip
       - name: Install backend dependencies
         run: pip install -r backend/requirements.txt
+      - name: Install pip-audit
+        run: pip install pip-audit
       - name: Run pip-audit
-        run: pipx run pip-audit --strict --progress-spinner=off
+        # No `pipx run` here on purpose: that spins up its own isolated venv
+        # containing only pip-audit itself, so it audits an empty environment
+        # instead of the project's dependencies (always reports "no known
+        # vulnerabilities found" regardless of what's actually pinned).
+        # Running plain `pip-audit` in this same environment, right after
+        # installing the project's requirements.txt into it, audits what's
+        # actually installed.
+        #
+        # --ignore-vuln: transformers is capped at <5.0.0 by
+        # sentence-transformers==3.3.1's own pin (see requirements.txt) —
+        # these 4 have no fix in the 4.x line, and unlocking 5.x risks
+        # changing embedding output and invalidating the existing ChromaDB
+        # index, so it's a deliberate, documented, separate follow-up rather
+        # than something to fix here. Ignored explicitly so this check stays
+        # a useful signal for *new* vulnerabilities instead of being
+        # permanently red over a known one.
+        run: |
+          pip-audit --strict --progress-spinner=off \
+            --ignore-vuln PYSEC-2025-217 \
+            --ignore-vuln PYSEC-2026-2290 \
+            --ignore-vuln PYSEC-2026-2288 \
+            --ignore-vuln PYSEC-2026-2289
 
   npm-audit:
     runs-on: ubuntu-latest
