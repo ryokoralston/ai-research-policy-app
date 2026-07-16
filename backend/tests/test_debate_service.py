@@ -11,7 +11,14 @@ Covers: consensus extraction succeeds → consensus_json saved + "consensus"
 SSE event fires + present in "complete" payload; consensus extraction raises
 → debate still completes and synthesis still saves (consensus_json stays
 None, no "consensus" event, complete payload's consensus is null) — the
-resilience behavior required by this feature.
+resilience behavior required by this feature. Also covers the bounded
+"extra round" evaluator-optimizer extension: a genuinely-split first-pass
+consensus triggers exactly one extra debate round + re-synthesis +
+re-extraction, and a failure on that second extraction keeps the original
+first-pass synthesis/consensus rather than nulling them out. Plus direct
+input/output tests for the pure helpers (_consensus_divergence_score,
+_select_most_contested_claim) that decide whether/where the extra round
+fires.
 
 Run from the backend directory:
     ./venv/bin/python -m tests.test_debate_service
@@ -40,10 +47,37 @@ import services.debate_service as debate_service
 
 _PERSONA_KEYS = ["safety_researcher", "tech_ceo"]
 
+# Both personas agree here — divergence_score is 0.0, so this claim set must
+# NOT trigger the bounded extra round (see CONSENSUS_DIVERGENCE_THRESHOLD in
+# debate_service.py). Kept non-divergent on purpose so
+# test_consensus_success_saved_and_events_fire continues to exercise ONLY the
+# baseline (non-extra-round) path, as originally intended — the extra-round
+# path has its own dedicated tests below.
 _FAKE_CONSENSUS = {
     "claims": [
         {"claim": "Regulation should precede deployment",
+         "stances": {"safety_researcher": "agree", "tech_ceo": "agree"}},
+    ]
+}
+
+# A genuinely split claim set: one persona agrees, the other disagrees, on
+# the debate's only extracted claim — 1/1 claims split, divergence_score is
+# 1.0, well above CONSENSUS_DIVERGENCE_THRESHOLD (0.5). Used by the
+# extra-round tests below.
+_FAKE_CONSENSUS_SPLIT = {
+    "claims": [
+        {"claim": "Regulation should precede deployment",
          "stances": {"safety_researcher": "agree", "tech_ceo": "disagree"}},
+    ]
+}
+
+# The claim set returned by a *second* extract_consensus call (post-extra-
+# round) that converged — used to verify the final saved/emitted consensus
+# reflects the second call, not the first.
+_FAKE_CONSENSUS_CONVERGED = {
+    "claims": [
+        {"claim": "Export controls need international coordination",
+         "stances": {"safety_researcher": "agree", "tech_ceo": "agree"}},
     ]
 }
 
@@ -149,6 +183,139 @@ def test_consensus_failure_does_not_block_completion():
     db.close()
 
 
+def test_extra_round_runs_on_genuine_divergence():
+    """First extract_consensus call returns a genuinely-split claim set (see
+    _FAKE_CONSENSUS_SPLIT) — this must trigger the bounded extra round: a 5th
+    debate round targeted at the contested claim, a re-synthesis, and a
+    second extract_consensus call whose result supersedes the first."""
+    call_count = [0]
+
+    async def fake_extract(history, synthesis, persona_keys):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return dict(_FAKE_CONSENSUS_SPLIT)
+        return dict(_FAKE_CONSENSUS_CONVERGED)
+
+    debate, events, db = _run_debate_with_patches(fake_extract)
+
+    assert call_count[0] == 2, "extract_consensus must be called exactly twice"
+
+    assert debate.status == "complete"
+    assert debate.synthesis, "synthesis must still save"
+    assert debate.consensus_json is not None
+    # Final saved consensus reflects the SECOND call's result, not the first.
+    assert json.loads(debate.consensus_json) == _FAKE_CONSENSUS_CONVERGED
+
+    round5_args = (
+        db.query(DebateArgument)
+        .filter(DebateArgument.debate_id == debate.id, DebateArgument.round_number == 5)
+        .all()
+    )
+    assert len(round5_args) == len(_PERSONA_KEYS), "extra round must save one argument per persona"
+
+    round_start_5 = [
+        e for e in events
+        if e.startswith("event: round_start") and '"round": 5' in e
+    ]
+    assert len(round_start_5) == 1, "a round_start event for round 5 must fire"
+
+    resynthesis_events = [e for e in events if e.startswith("event: resynthesis_start")]
+    assert len(resynthesis_events) == 1, "resynthesis_start must fire before the extra round's synthesis"
+
+    complete_events = [e for e in events if e.startswith("event: complete")]
+    assert len(complete_events) == 1
+    assert "Export controls need international coordination" in complete_events[0]
+    assert "Regulation should precede deployment" not in complete_events[0]
+    db.close()
+
+
+def test_extra_round_second_consensus_call_fails_keeps_original():
+    """If the first pass is genuinely split (triggering the extra round) but
+    the SECOND extract_consensus call raises, the debate must still complete
+    with the ORIGINAL (first-pass) synthesis and consensus kept — not null,
+    not crashed. Same graceful-degradation posture as a first-pass failure."""
+    call_count = [0]
+
+    async def flaky_extract(history, synthesis, persona_keys):
+        call_count[0] += 1
+        if call_count[0] == 1:
+            return dict(_FAKE_CONSENSUS_SPLIT)
+        raise RuntimeError("judge model unavailable on second pass")
+
+    debate, events, db = _run_debate_with_patches(flaky_extract)
+
+    assert call_count[0] == 2
+
+    assert debate.status == "complete", "debate must still complete when the second consensus call fails"
+    assert debate.synthesis, "synthesis must still save"
+    assert debate.consensus_json is not None
+    assert json.loads(debate.consensus_json) == _FAKE_CONSENSUS_SPLIT, (
+        "must keep the ORIGINAL first-pass consensus, not null it out"
+    )
+
+    complete_events = [e for e in events if e.startswith("event: complete")]
+    assert len(complete_events) == 1
+    assert "Regulation should precede deployment" in complete_events[0]
+
+    assert not any(e.startswith("event: error") for e in events), "failure must not surface as a debate error"
+    db.close()
+
+
+def test_divergence_score_pure_helper():
+    assert debate_service._consensus_divergence_score([]) == 0.0
+
+    no_split = [
+        {"claim": "A", "stances": {"x": "agree", "y": "agree"}},
+        {"claim": "B", "stances": {"x": "mixed", "y": "mixed"}},
+    ]
+    assert debate_service._consensus_divergence_score(no_split) == 0.0
+
+    one_split = [
+        {"claim": "A", "stances": {"x": "agree", "y": "disagree"}},
+        {"claim": "B", "stances": {"x": "agree", "y": "agree"}},
+    ]
+    assert debate_service._consensus_divergence_score(one_split) == 0.5
+
+    all_split = [
+        {"claim": "A", "stances": {"x": "agree", "y": "disagree"}},
+        {"claim": "B", "stances": {"x": "disagree", "y": "agree", "z": "mixed"}},
+    ]
+    assert debate_service._consensus_divergence_score(all_split) == 1.0
+
+    # "mixed" stances alone (no actual agree/disagree pair) must not count as
+    # a split, per consensus_meter.py's docstring: mixed is the neutral
+    # fallback for personas that never addressed a claim.
+    only_mixed = [{"claim": "A", "stances": {"x": "mixed", "y": "mixed"}}]
+    assert debate_service._consensus_divergence_score(only_mixed) == 0.0
+
+
+def test_select_most_contested_claim_pure_helper():
+    assert debate_service._select_most_contested_claim([]) is None
+
+    no_qualifying = [
+        {"claim": "A", "stances": {"x": "agree", "y": "agree"}},
+        {"claim": "B", "stances": {"x": "mixed", "y": "mixed"}},
+    ]
+    assert debate_service._select_most_contested_claim(no_qualifying) is None
+
+    single = [
+        {"claim": "A", "stances": {"x": "agree", "y": "disagree"}},
+        {"claim": "B", "stances": {"x": "agree", "y": "agree"}},
+    ]
+    result = debate_service._select_most_contested_claim(single)
+    assert result is not None and result["claim"] == "A"
+
+    # "B" is more evenly split (2 agree / 2 disagree, min=2) than "A" (3
+    # agree / 1 disagree, min=1) — the most EVEN split must win, not the one
+    # with more total votes.
+    multi = [
+        {"claim": "A", "stances": {"p1": "agree", "p2": "agree", "p3": "agree", "p4": "disagree"}},
+        {"claim": "B", "stances": {"p1": "agree", "p2": "agree", "p3": "disagree", "p4": "disagree"}},
+    ]
+    result = debate_service._select_most_contested_claim(multi)
+    assert result is not None and result["claim"] == "B"
+
+
 # ── Test runner ───────────────────────────────────────────────────────────────
 
 _PASSED: list[str] = []
@@ -170,6 +337,10 @@ if __name__ == "__main__":
 
     _run("consensus success saved and events fire", test_consensus_success_saved_and_events_fire)
     _run("consensus failure does not block completion", test_consensus_failure_does_not_block_completion)
+    _run("extra round runs on genuine divergence", test_extra_round_runs_on_genuine_divergence)
+    _run("extra round second consensus call fails keeps original", test_extra_round_second_consensus_call_fails_keeps_original)
+    _run("divergence score pure helper", test_divergence_score_pure_helper)
+    _run("select most contested claim pure helper", test_select_most_contested_claim_pure_helper)
 
     total = len(_PASSED) + len(_FAILED)
     print(f"\n{'=' * 50}")

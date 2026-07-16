@@ -41,6 +41,7 @@ const ROUNDS = [
   { num: 2, name: "Key Concerns" },
   { num: 3, name: "Cross-Response" },
   { num: 4, name: "Policy Recommendations" },
+  { num: 5, name: "Addressing the Core Disagreement" },
 ];
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -224,6 +225,13 @@ export default function DebatePage() {
             });
           } else if (event === "synthesis_start") {
             setDebate((prev) => ({ ...prev, currentPersona: "moderator" }));
+          } else if (event === "resynthesis_start") {
+            // A brand-new synthesis is about to stream, replacing the first
+            // one (the extra round targeting the most contested claim) —
+            // reset so the "token" handler doesn't concatenate old + new
+            // text. Mirrors research_agent.py's resynthesis_start handling
+            // in research/page.tsx for the same reason.
+            setDebate((prev) => ({ ...prev, synthesis: "", currentPersona: "moderator" }));
           } else if (event === "consensus") {
             const claims = (d.claims as ConsensusClaim[]) ?? [];
             setDebate((prev) => ({ ...prev, consensus: claims }));
