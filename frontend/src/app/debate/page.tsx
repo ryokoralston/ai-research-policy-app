@@ -301,6 +301,8 @@ export default function DebatePage() {
   };
 
   const handleDeletePast = async (id: string, e: React.MouseEvent) => {
+    // Without this, the click would bubble up to the row's own onClick
+    // (handleLoadPast) since this button sits inside that row.
     e.stopPropagation();
     await authFetch(`${BASE_URL}/api/debate/${id}`, { method: "DELETE" });
     setPastDebates((prev) => prev.filter((d) => d.id !== id));
@@ -342,10 +344,22 @@ export default function DebatePage() {
             <p className="text-xs text-slate-600 p-2">No debates yet.</p>
           )}
           {pastDebates.map((d) => (
-            <button
+            // Not a <button>: it contains the delete <button> below, and
+            // <button> cannot nest a <button> (invalid HTML, causes a React
+            // hydration error). role="button" + onKeyDown keeps this row
+            // keyboard-accessible without relying on native button behavior.
+            <div
               key={d.id}
+              role="button"
+              tabIndex={0}
               onClick={() => handleLoadPast(d.id)}
-              className="w-full text-left px-2 py-2 rounded-md hover:bg-slate-800 transition-colors group"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  handleLoadPast(d.id);
+                }
+              }}
+              className="w-full text-left px-2 py-2 rounded-md hover:bg-slate-800 transition-colors group cursor-pointer"
             >
               <p className="text-xs text-slate-300 line-clamp-2 leading-snug">{d.topic}</p>
               <div className="flex items-center justify-between mt-1">
@@ -359,7 +373,7 @@ export default function DebatePage() {
                   ×
                 </button>
               </div>
-            </button>
+            </div>
           ))}
         </div>
       </aside>
