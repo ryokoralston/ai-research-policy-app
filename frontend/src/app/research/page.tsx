@@ -90,6 +90,19 @@ export default function ResearchPage() {
           setPhase("synthesizing");
           setStatusMsg("Synthesizing findings...");
           setSynthesis((prev) => prev + (d.text as string));
+        } else if (event === "resynthesis_start") {
+          // A brand-new synthesis is about to stream, replacing the previous
+          // one — reset so synthesis_token doesn't concatenate old + new text.
+          setSynthesis("");
+          setPhase("synthesizing");
+          setStatusMsg("Found evidence gaps — researching further...");
+        } else if (event === "gap_queries") {
+          const gapQueries = (d.queries as string[]) || [];
+          setStatusMsg(`Researching ${gapQueries.length} evidence gap(s)...`);
+          setPhase("searching");
+        } else if (event === "gaps_closed") {
+          // No-op for now: the next event (either another resynthesis_start
+          // or complete) will update phase/status. Nothing to show here.
         } else if (event === "complete") {
           setPhase("done");
           setStatusMsg("Research complete");
