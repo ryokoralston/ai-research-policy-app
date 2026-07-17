@@ -2,6 +2,10 @@
 
 A web application for AI policy research, powered by Claude (Anthropic) and Tavily. Research, analyze, and generate reports — all in one place.
 
+## Executive Summary
+
+This project demonstrates how bounded, self-correcting AI agent loops can produce policy-grade research outputs — congressional briefings, policy memos, and risk assessments — with fact-checking built into the pipeline itself. By combining live web research, multi-persona debate simulation, and automated evidence-gap detection, the system closes coverage and grounding gaps before a human ever reviews the output. This reduces the manual fact-checking burden on policy analysts and supports faster, more defensible decisions in fast-moving technology policy work.
+
 ## Screenshots
 
 | Dashboard | Research Agent |
