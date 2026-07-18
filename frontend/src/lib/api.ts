@@ -2,6 +2,38 @@ import type { ResearchSession, Document, Report, RiskAnalysis } from "./types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// ── Personas (Multi-Persona Debate: built-in + admin-created custom) ───────
+// Shape returned by GET /api/personas/ — see backend/routers/personas.py +
+// services/persona_service.get_all_personas. Uniform across built-in and
+// custom personas.
+export interface PersonaApi {
+  key: string;
+  name: string;
+  title: string;
+  initials: string;
+  system: string;
+  bio: string;
+  color: string;      // Tailwind bg-* class
+  text_color: string; // Tailwind text-* class
+  is_custom: boolean;
+}
+
+// Shape returned by GET/POST/PUT /api/admin/personas/ — backend/routers/admin_personas.py.
+export interface CustomPersonaApi {
+  key: string;
+  name: string;
+  title: string;
+  initials: string;
+  color: string;
+  text_color: string;
+  priorities: string;
+  style: string;
+  created_by: string;
+  created_at: string | null;
+  updated_at: string | null;
+  is_custom: true;
+}
+
 // ── Auth token ──────────────────────────────────────────────────────────────
 const TOKEN_KEY = "auth_token";
 
@@ -258,6 +290,32 @@ export const api = {
         `/api/users/${id}`,
         { method: "PATCH", body: JSON.stringify(body) }
       ),
+  },
+
+  personas: {
+    // GET /api/personas/ — open to any authenticated user (built-in + custom,
+    // uniformly shaped; see backend/routers/personas.py). Response shape
+    // documented on PersonaApi below.
+    list: () => request<PersonaApi[]>("/api/personas/"),
+    // Admin-only custom-persona management — backend/routers/admin_personas.py.
+    // adminList (unlike list above) returns full editable fields
+    // (priorities/style), so the admin edit form can be pre-filled.
+    adminList: () => request<CustomPersonaApi[]>("/api/admin/personas/"),
+    create: (body: { name: string; title: string; initials: string; priorities: string; style: string }) =>
+      request<CustomPersonaApi>("/api/admin/personas/", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    update: (
+      key: string,
+      body: { name: string; title: string; initials: string; priorities: string; style: string }
+    ) =>
+      request<CustomPersonaApi>(`/api/admin/personas/${key}`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }),
+    delete: (key: string) =>
+      request<{ deleted: string }>(`/api/admin/personas/${key}`, { method: "DELETE" }),
   },
 
   auditLog: {

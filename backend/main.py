@@ -18,6 +18,8 @@ from routers.reminders import router as reminders_router
 from routers.workspace import router as workspace_router
 from routers.users import router as users_router
 from routers.audit_log import router as audit_log_router
+from routers.personas import router as personas_router
+from routers.admin_personas import router as admin_personas_router
 from services.auth import get_current_user, require_admin
 from services.digest_service import send_digest
 
@@ -135,10 +137,12 @@ app.include_router(digest_router, dependencies=_protected)
 app.include_router(settings_router, dependencies=_protected)
 app.include_router(reminders_router, dependencies=_protected)
 app.include_router(workspace_router, dependencies=_protected)
+app.include_router(personas_router, dependencies=_protected)
 
 _admin_only = [Depends(require_admin)]
 app.include_router(users_router, dependencies=_admin_only)
 app.include_router(audit_log_router, dependencies=_admin_only)
+app.include_router(admin_personas_router, dependencies=_admin_only)
 
 
 @app.get("/health")

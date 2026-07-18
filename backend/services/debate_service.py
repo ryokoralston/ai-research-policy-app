@@ -18,7 +18,8 @@ import uuid
 from datetime import datetime
 
 from services.anthropic_client import stream_text, sse_event
-from templates.personas import PERSONAS, MODERATOR_SYSTEM, ROUNDS
+from services.persona_service import get_all_personas
+from templates.personas import MODERATOR_SYSTEM, ROUNDS
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +153,7 @@ async def _run_round(
     round_instructions: str,
     topic: str,
     persona_keys: list[str],
+    personas: dict[str, dict],
     history: list[dict],
     debate_id: str,
     db,
@@ -162,6 +164,10 @@ async def _run_round(
     turn, streams a response, and has it saved as a DebateArgument row and
     appended to `history` (mutated in place). Emits round_start, per-persona
     persona_start/token/persona_end, and round_end SSE events.
+
+    `personas` is the merged built-in + custom persona dict (see
+    services.persona_service.get_all_personas), resolved once by the caller
+    (run_debate) rather than re-queried per round/persona.
 
     Extracted out of run_debate's fixed-4-round loop so both the `for
     round_num, round_name, round_instructions in ROUNDS:` loop and the
@@ -176,7 +182,7 @@ async def _run_round(
     await queue.put(sse_event("round_start", {"round": round_num, "round_name": round_name}))
 
     for persona_key in persona_keys:
-        persona = PERSONAS[persona_key]
+        persona = personas[persona_key]
         await queue.put(sse_event("persona_start", {
             "persona_key": persona_key,
             "persona_name": persona["name"],
@@ -254,13 +260,18 @@ async def run_debate(
         debate.status = "running"
         db.commit()
 
+        # Resolved once per debate (not per round/persona) — merges the 10
+        # built-in PERSONAS with any admin-created custom_personas rows so
+        # _run_round can resolve either kind of persona_key identically.
+        personas = get_all_personas(db)
+
         history: list[dict] = []
         order_index = 0
 
         for round_num, round_name, round_instructions in ROUNDS:
             order_index = await _run_round(
                 round_num, round_name, round_instructions,
-                topic, persona_keys, history, debate_id, db, queue, order_index,
+                topic, persona_keys, personas, history, debate_id, db, queue, order_index,
             )
 
         # Synthesis
@@ -313,7 +324,7 @@ async def run_debate(
                     )
                     order_index = await _run_round(
                         5, "Addressing the Core Disagreement", extra_instructions,
-                        topic, persona_keys, history, debate_id, db, queue, order_index,
+                        topic, persona_keys, personas, history, debate_id, db, queue, order_index,
                     )
 
                     # A brand-new synthesis is about to stream, superseding the

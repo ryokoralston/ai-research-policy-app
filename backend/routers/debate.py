@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.debate import Debate
 from schemas.debate import DebateStartRequest, DebateResponse, DebateDetail
-from templates.personas import PERSONAS
+from services.persona_service import get_all_personas
 from utils.sse import queue_event_stream, sse_event
 
 router = APIRouter(prefix="/api/debate", tags=["debate"])
@@ -29,12 +29,25 @@ async def start_debate(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    # Validate and resolve persona keys
+    # Validate and resolve persona keys — checked against the merged
+    # built-in + custom persona dict, not the static PERSONAS import, so
+    # custom persona keys are accepted (DEFAULT_PERSONA_ORDER, the fallback
+    # "no keys specified" roster, intentionally still only lists the 10
+    # built-ins — custom personas must be explicitly selected, never
+    # included by default).
     if request.persona_keys:
-        invalid = [k for k in request.persona_keys if k not in PERSONAS]
+        all_personas = get_all_personas(db)
+        invalid = [k for k in request.persona_keys if k not in all_personas]
         if invalid:
             raise HTTPException(status_code=400, detail=f"Unknown persona keys: {invalid}")
+        # Built-ins requested are ordered canonically (DEFAULT_PERSONA_ORDER);
+        # anything requested that isn't in that fixed list — i.e. any custom
+        # persona key — is appended afterward, in the order the caller sent
+        # it. Filtering solely through DEFAULT_PERSONA_ORDER (as before custom
+        # personas existed) would silently drop every custom key here, since
+        # none of them can ever appear in that built-ins-only list.
         persona_keys = [k for k in DEFAULT_PERSONA_ORDER if k in request.persona_keys]
+        persona_keys += [k for k in request.persona_keys if k not in DEFAULT_PERSONA_ORDER]
     else:
         persona_keys = DEFAULT_PERSONA_ORDER
 

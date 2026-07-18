@@ -1,40 +1,46 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Users, Download, ChevronDown, ChevronRight, Loader2, FileText } from "lucide-react";
-import { authFetch, consumeSseStream } from "@/lib/api";
+import { authFetch, consumeSseStream, type PersonaApi } from "@/lib/api";
 import { type Argument, buildMarkdown, buildPlainText, downloadBlob, exportAsPdf } from "@/lib/exportDebate";
 import type { ConsensusClaim } from "@/lib/types";
 import ConsensusMeter from "@/components/debate/ConsensusMeter";
+import Badge from "@/components/ui/Badge";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // ── Persona metadata ────────────────────────────────────────────────────────
+// Fetched from GET /api/personas/ (built-in + admin-created custom personas,
+// merged server-side — see backend/services/persona_service.py) rather than
+// hardcoded here, since custom personas can't appear in a static frontend
+// array. camelCase locally (color/textColor) mirrors this file's pre-existing
+// convention; the API itself returns color/text_color (see PersonaApi).
 
 interface PersonaMeta {
   key: string;
   name: string;
   title: string;
   initials: string;
-  color: string;    // Tailwind bg class
+  bio: string;
+  color: string;     // Tailwind bg class
   textColor: string; // Tailwind text class
+  isCustom: boolean;
 }
 
-const PERSONA_LIST: PersonaMeta[] = [
-  { key: "safety_researcher", name: "Dr. Sarah Chen",        title: "AI Safety Researcher",       initials: "SC", color: "bg-violet-600",  textColor: "text-violet-100" },
-  { key: "tech_ceo",          name: "Marcus Webb",            title: "Tech Industry CEO",           initials: "MW", color: "bg-blue-600",    textColor: "text-blue-100"   },
-  { key: "military",          name: "Lt. Gen. Patricia Morrison", title: "National Security Strategist", initials: "PM", color: "bg-slate-600",  textColor: "text-slate-100" },
-  { key: "civil_rights",      name: "Aisha Okonkwo",          title: "Digital Rights Advocate",    initials: "AO", color: "bg-rose-600",    textColor: "text-rose-100"   },
-  { key: "intl_relations",    name: "Prof. Hiroshi Tanaka",   title: "Int'l Relations Scholar",    initials: "HT", color: "bg-teal-600",    textColor: "text-teal-100"   },
-  { key: "economist",         name: "Dr. Elena Vasquez",      title: "Labor Economist",            initials: "EV", color: "bg-amber-600",   textColor: "text-amber-100"  },
-  { key: "ethicist",          name: "Rev. James Callahan",    title: "Ethicist & Philosopher",     initials: "JC", color: "bg-emerald-600", textColor: "text-emerald-100"},
-  { key: "regulator",         name: "Commissioner Robert Kim","title": "Government Regulator",      initials: "RK", color: "bg-orange-600",  textColor: "text-orange-100" },
-  { key: "global_south",      name: "Dr. Priya Patel",        title: "Developing World Advocate",  initials: "PP", color: "bg-cyan-600",    textColor: "text-cyan-100"   },
-  { key: "accelerationist",   name: "Dr. Alex Summers",       title: "AI Accelerationist",         initials: "AS", color: "bg-red-600",     textColor: "text-red-100"    },
-];
-
-const PERSONA_MAP = Object.fromEntries(PERSONA_LIST.map((p) => [p.key, p]));
+function toPersonaMeta(p: PersonaApi): PersonaMeta {
+  return {
+    key: p.key,
+    name: p.name,
+    title: p.title,
+    initials: p.initials,
+    bio: p.bio,
+    color: p.color,
+    textColor: p.text_color,
+    isCustom: p.is_custom,
+  };
+}
 
 const ROUNDS = [
   { num: 1, name: "Opening Positions" },
@@ -91,9 +97,9 @@ async function consumeGetSSE(
 
 export default function DebatePage() {
   const [topic, setTopic] = useState("");
-  const [selectedPersonas, setSelectedPersonas] = useState<Set<string>>(
-    new Set(PERSONA_LIST.map((p) => p.key))
-  );
+  const [personas, setPersonas] = useState<PersonaMeta[]>([]);
+  const [personasLoading, setPersonasLoading] = useState(true);
+  const [selectedPersonas, setSelectedPersonas] = useState<Set<string>>(new Set());
   const [showPersonaSelector, setShowPersonaSelector] = useState(false);
   const [debate, setDebate] = useState<DebateState>({
     debateId: null,
@@ -110,6 +116,28 @@ export default function DebatePage() {
   const abortRef = useRef<AbortController | null>(null);
   const router = useRouter();
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const PERSONA_MAP = useMemo(
+    () => Object.fromEntries(personas.map((p) => [p.key, p])),
+    [personas]
+  );
+  const hasCustomPersonas = useMemo(() => personas.some((p) => p.isCustom), [personas]);
+
+  // Load selectable personas (built-in + custom) on mount. Custom personas
+  // must never be pre-selected by default (only explicit selection adds
+  // them to a debate — see backend/routers/debate.py's DEFAULT_PERSONA_ORDER),
+  // so the initial selection is the built-in subset only.
+  useEffect(() => {
+    authFetch(`${BASE_URL}/api/personas/`)
+      .then((r) => r.json())
+      .then((data: PersonaApi[]) => {
+        const list = data.map(toPersonaMeta);
+        setPersonas(list);
+        setSelectedPersonas(new Set(list.filter((p) => !p.isCustom).map((p) => p.key)));
+      })
+      .catch(() => {})
+      .finally(() => setPersonasLoading(false));
+  }, []);
 
   // Load past debates on mount
   useEffect(() => {
@@ -387,11 +415,16 @@ export default function DebatePage() {
               Multi-Persona Policy Debate
             </h1>
             <p className="text-slate-400 text-sm">
-              10 AI policy experts debate your topic across 4 structured rounds.
+              AI policy experts debate your topic across 4 structured rounds.
             </p>
             <p className="text-slate-500 text-xs mt-1">
               ※ All personas are entirely fictional characters created for debate simulation purposes. Any resemblance to real individuals is coincidental.
             </p>
+            {hasCustomPersonas && (
+              <p className="text-slate-500 text-xs mt-1">
+                ※ Custom personas may be modeled on real individuals within your organization for internal decision-support purposes.
+              </p>
+            )}
           </div>
 
           {/* ── Form ── */}
@@ -432,35 +465,47 @@ export default function DebatePage() {
                 className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors"
               >
                 {showPersonaSelector ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                Personas ({selectedPersonas.size}/{PERSONA_LIST.length} selected)
+                Personas ({selectedPersonas.size}/{personas.length} selected)
               </button>
 
               {showPersonaSelector && (
                 <div className="mt-2">
-                  <p className="text-xs text-slate-600 mb-2 italic">※ All personas below are fictional and do not represent any real individuals or organizations.</p>
-                  <div className="flex flex-wrap gap-2">
-                  {PERSONA_LIST.map((p) => {
-                    const selected = selectedPersonas.has(p.key);
-                    return (
-                      <button
-                        key={p.key}
-                        type="button"
-                        onClick={() => togglePersona(p.key)}
-                        disabled={isRunning}
-                        className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
-                          selected
-                            ? "border-blue-500 bg-blue-600/20 text-blue-300"
-                            : "border-slate-700 bg-slate-900 text-slate-500 hover:text-slate-300"
-                        }`}
-                      >
-                        <span className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold ${p.color} ${p.textColor}`}>
-                          {p.initials[0]}
-                        </span>
-                        {p.name}
-                      </button>
-                    );
-                  })}
-                  </div>
+                  {personasLoading ? (
+                    <p className="text-xs text-slate-500 flex items-center gap-1.5">
+                      <Loader2 size={12} className="animate-spin" /> Loading personas...
+                    </p>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {personas.map((p) => {
+                        const selected = selectedPersonas.has(p.key);
+                        return (
+                          <button
+                            key={p.key}
+                            type="button"
+                            onClick={() => togglePersona(p.key)}
+                            disabled={isRunning}
+                            className={`group text-left flex items-start gap-2.5 rounded-xl border p-3 transition-all ${
+                              selected
+                                ? "border-blue-500 bg-blue-600/10"
+                                : "border-slate-800 bg-slate-900 hover:border-slate-700"
+                            }`}
+                          >
+                            <span className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0 ${p.color} ${p.textColor}`}>
+                              {p.initials}
+                            </span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <p className="text-sm font-medium text-slate-100 leading-tight">{p.name}</p>
+                                {p.isCustom && <Badge variant="blue">Custom</Badge>}
+                              </div>
+                              <p className="text-xs text-slate-500 leading-tight mt-0.5">{p.title}</p>
+                              <p className="text-xs text-slate-400 leading-snug mt-1 line-clamp-2">{p.bio}</p>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

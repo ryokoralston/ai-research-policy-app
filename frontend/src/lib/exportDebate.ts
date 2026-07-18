@@ -129,6 +129,9 @@ export function exportAsPdf(
       "rose-600": "#e11d48", "teal-600": "#0d9488", "amber-600": "#d97706",
       "emerald-600": "#059669", "orange-600": "#ea580c", "cyan-600": "#0891b2",
       "red-600": "#dc2626",
+      // Custom-persona palette (services/persona_service.py's CUSTOM_PALETTE)
+      "indigo-600": "#4f46e5", "pink-600": "#db2777", "lime-600": "#65a30d",
+      "sky-600": "#0284c7", "fuchsia-600": "#c026d3", "yellow-600": "#ca8a04",
     };
     const bgHex = HEX[color] ?? "#475569";
     bodyHtml += `

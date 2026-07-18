@@ -19,6 +19,7 @@ import {
   FlaskConical,
   UserCog,
   History,
+  Drama,
 } from "lucide-react";
 import ThemeToggle from "./ThemeToggle";
 import { getToken, clearToken } from "@/lib/api";
@@ -39,6 +40,7 @@ const NAV_ITEMS = [
 const ADMIN_NAV_ITEMS = [
   { href: "/users", label: "Users", icon: UserCog },
   { href: "/activity-log", label: "Activity Log", icon: History },
+  { href: "/personas", label: "Personas", icon: Drama },
 ];
 
 interface SidebarProps {
