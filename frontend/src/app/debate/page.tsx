@@ -499,7 +499,7 @@ export default function DebatePage() {
                                 {p.isCustom && <Badge variant="blue">Custom</Badge>}
                               </div>
                               <p className="text-xs text-slate-500 leading-tight mt-0.5">{p.title}</p>
-                              <p className="text-xs text-slate-400 leading-snug mt-1 line-clamp-2">{p.bio}</p>
+                              <p className="text-xs text-slate-400 leading-snug mt-1">{p.bio}</p>
                             </div>
                           </button>
                         );

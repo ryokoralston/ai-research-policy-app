@@ -229,7 +229,7 @@ export default function PersonasPage() {
                   <Badge variant="blue">Custom</Badge>
                 </div>
                 <p className="text-xs text-slate-500 mt-0.5">{p.title}</p>
-                <p className="text-xs text-slate-400 mt-1.5 line-clamp-2">{p.priorities}</p>
+                <p className="text-xs text-slate-400 mt-1.5">{p.priorities}</p>
               </div>
               <div className="flex items-center gap-1 flex-shrink-0">
                 <button
