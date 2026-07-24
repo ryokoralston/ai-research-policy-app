@@ -164,7 +164,6 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
                 Sign out
               </button>
             )}
-            <p className="text-xs text-slate-500 px-1">Powered by Claude Opus 4</p>
           </>
         )}
       </div>
