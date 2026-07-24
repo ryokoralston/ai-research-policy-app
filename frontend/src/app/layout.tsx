@@ -9,7 +9,7 @@ import { UserProvider } from "@/components/layout/UserContext";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "AI Policy Research",
+  title: "AI Policy Research Assistant",
   description: "AI Policy Research Assistant",
 };
 

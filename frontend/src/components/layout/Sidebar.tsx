@@ -85,8 +85,9 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           </div>
           {!collapsed && (
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-100 leading-tight">Policy Research</p>
-              <p className="text-xs text-slate-400 leading-tight">AI Assistant</p>
+              <p className="text-sm font-semibold text-slate-100 leading-tight">
+                AI Policy Research Assistant
+              </p>
             </div>
           )}
         </div>
