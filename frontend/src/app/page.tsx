@@ -75,8 +75,12 @@ export default function Dashboard() {
         </p>
       </div>
 
-      {/* Feature grid — uniform cards, sidebar order */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {/* Feature grid — uniform cards, sidebar order.
+          auto-rows-fr equalizes row heights so the last card (alone on its
+          row) matches the rest instead of shrinking to fit. Only from sm up:
+          in single-column there is nothing to align against, and forcing the
+          tallest card's height on every row would just add dead space. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:auto-rows-fr">
         {FEATURES.map(({ href, icon: Icon, title, description, color }) => (
           <Link
             key={href}
