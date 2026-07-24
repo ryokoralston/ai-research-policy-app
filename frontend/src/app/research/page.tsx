@@ -32,6 +32,7 @@ export default function ResearchPage() {
   const [saving, setSaving] = useState(false);
   const [history, setHistory] = useState<ResearchSession[]>([]);
   const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyQuery, setHistoryQuery] = useState("");
   const abortRef = useRef<AbortController | null>(null);
 
   const loadHistory = useCallback(async () => {
@@ -182,6 +183,9 @@ export default function ResearchPage() {
   };
 
   const isRunning = phase === "searching" || phase === "summarizing" || phase === "synthesizing";
+  const filteredHistory = history.filter((s) =>
+    s.query.toLowerCase().includes(historyQuery.trim().toLowerCase())
+  );
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
@@ -343,15 +347,29 @@ export default function ResearchPage() {
           <History size={14} />
           Report Log
         </h2>
+        {!historyLoading && history.length > 0 && (
+          <div className="relative mb-3">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+            <input
+              type="text"
+              value={historyQuery}
+              onChange={(e) => setHistoryQuery(e.target.value)}
+              placeholder="Search log..."
+              className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+        )}
         {historyLoading ? (
           <div className="flex items-center gap-2 text-slate-500 text-sm py-2">
             <LoadingSpinner size="sm" /> Loading...
           </div>
         ) : history.length === 0 ? (
           <p className="text-slate-500 text-sm">No past research sessions yet.</p>
+        ) : filteredHistory.length === 0 ? (
+          <p className="text-slate-500 text-sm">No sessions match &quot;{historyQuery}&quot;.</p>
         ) : (
           <div className="space-y-2 max-h-[70vh] overflow-y-auto pr-1">
-            {history.map((s) => (
+            {filteredHistory.map((s) => (
               <button
                 key={s.id}
                 type="button"
