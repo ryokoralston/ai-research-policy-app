@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Search, FileText, BookOpen, Shield, Users, ArrowRight } from "lucide-react";
+import { Search, FileText, BookOpen, Shield, FlaskConical, Users, Mail, ArrowRight } from "lucide-react";
 
 const QUICK_STARTS = [
   {
@@ -87,10 +87,31 @@ export default function Dashboard() {
         ))}
       </div>
 
+      {/* Data Lab Card — full width */}
+      <Link
+        href="/datalab"
+        className="group block bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-all mb-4"
+      >
+        <div className="flex items-start gap-4">
+          <div className="p-3 rounded-lg bg-teal-600/20 text-teal-400 group-hover:bg-teal-600/30 transition-colors flex-shrink-0">
+            <FlaskConical size={22} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-slate-100 font-semibold">Data Lab</h3>
+              <ArrowRight size={16} className="text-slate-600 group-hover:text-slate-400 transition-colors" />
+            </div>
+            <p className="text-slate-400 text-sm leading-relaxed">
+              Upload a data file and ask Claude to analyze it — code runs in a sandboxed environment and any charts it produces are shown.
+            </p>
+          </div>
+        </div>
+      </Link>
+
       {/* Debate Card — full width */}
       <Link
         href="/debate"
-        className="group block bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-indigo-700/50 hover:bg-slate-900 transition-all mb-10"
+        className="group block bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-indigo-700/50 hover:bg-slate-900 transition-all mb-4"
       >
         <div className="flex items-start gap-4">
           <div className="p-3 rounded-lg bg-indigo-600/20 text-indigo-400 group-hover:bg-indigo-600/30 transition-colors flex-shrink-0">
@@ -116,6 +137,27 @@ export default function Dashboard() {
               ))}
               <span className="text-slate-500 text-xs ml-1">10 personas · 4 rounds</span>
             </div>
+          </div>
+        </div>
+      </Link>
+
+      {/* Daily Digest Card — full width */}
+      <Link
+        href="/digest"
+        className="group block bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-all mb-10"
+      >
+        <div className="flex items-start gap-4">
+          <div className="p-3 rounded-lg bg-cyan-600/20 text-cyan-400 group-hover:bg-cyan-600/30 transition-colors flex-shrink-0">
+            <Mail size={22} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-slate-100 font-semibold">Daily Digest</h3>
+              <ArrowRight size={16} className="text-slate-600 group-hover:text-slate-400 transition-colors" />
+            </div>
+            <p className="text-slate-400 text-sm leading-relaxed">
+              Automated AI policy news delivery — configure topics, schedule, and email recipients.
+            </p>
           </div>
         </div>
       </Link>
