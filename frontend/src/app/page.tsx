@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { Search, FileText, BookOpen, Shield, FlaskConical, Users, Mail, ArrowRight } from "lucide-react";
 
-const QUICK_STARTS = [
+// Ordered to match the sidebar nav.
+const FEATURES = [
   {
     href: "/research",
     icon: Search,
@@ -30,6 +31,27 @@ const QUICK_STARTS = [
     description: "Run a structured AI risk assessment on a technology or policy",
     color: "amber",
   },
+  {
+    href: "/datalab",
+    icon: FlaskConical,
+    title: "Data Lab",
+    description: "Upload a data file and have Claude analyze it in a sandbox, with charts",
+    color: "teal",
+  },
+  {
+    href: "/debate",
+    icon: Users,
+    title: "Policy Debate",
+    description: "Simulate a structured debate among 10 expert personas across 4 rounds",
+    color: "indigo",
+  },
+  {
+    href: "/digest",
+    icon: Mail,
+    title: "Daily Digest",
+    description: "Automated AI policy news delivery on your schedule",
+    color: "cyan",
+  },
 ];
 
 const COLOR_MAP: Record<string, string> = {
@@ -37,48 +59,41 @@ const COLOR_MAP: Record<string, string> = {
   purple: "bg-purple-600/20 text-purple-400 group-hover:bg-purple-600/30",
   green:  "bg-green-600/20 text-green-400 group-hover:bg-green-600/30",
   amber:  "bg-amber-600/20 text-amber-400 group-hover:bg-amber-600/30",
+  teal:   "bg-teal-600/20 text-teal-400 group-hover:bg-teal-600/30",
+  indigo: "bg-indigo-600/20 text-indigo-400 group-hover:bg-indigo-600/30",
+  cyan:   "bg-cyan-600/20 text-cyan-400 group-hover:bg-cyan-600/30",
 };
-
-const DEBATE_PERSONAS = [
-  { initials: "SC", color: "bg-violet-600" },
-  { initials: "MW", color: "bg-blue-600" },
-  { initials: "PM", color: "bg-slate-600" },
-  { initials: "AO", color: "bg-rose-600" },
-  { initials: "HT", color: "bg-teal-600" },
-  { initials: "EV", color: "bg-amber-600" },
-  { initials: "JC", color: "bg-emerald-600" },
-  { initials: "RK", color: "bg-orange-600" },
-  { initials: "PP", color: "bg-cyan-600" },
-  { initials: "AS", color: "bg-red-600" },
-];
 
 export default function Dashboard() {
   return (
     <div className="p-8 max-w-5xl mx-auto">
       {/* Header */}
-      <div className="mb-10">
+      <div className="mb-8">
         <h1 className="text-3xl font-bold text-slate-100 mb-2">AI Policy Research Assistant</h1>
         <p className="text-slate-400 text-lg">
           Conduct expert-quality policy research, generate congressional briefings, and analyze AI risks.
         </p>
       </div>
 
-      {/* Quick Start Cards — 2-column grid */}
-      <div className="grid grid-cols-2 gap-4 mb-4">
-        {QUICK_STARTS.map(({ href, icon: Icon, title, description, color }) => (
+      {/* Feature grid — uniform cards, sidebar order */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {FEATURES.map(({ href, icon: Icon, title, description, color }) => (
           <Link
             key={href}
             href={href}
-            className="group bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-all"
+            className="group bg-slate-900 border border-slate-800 rounded-xl p-5 hover:border-slate-700 transition-all"
           >
             <div className="flex items-start gap-4">
-              <div className={`p-3 rounded-lg transition-colors ${COLOR_MAP[color]}`}>
-                <Icon size={22} />
+              <div className={`p-2.5 rounded-lg transition-colors flex-shrink-0 ${COLOR_MAP[color]}`}>
+                <Icon size={20} />
               </div>
-              <div className="flex-1">
-                <div className="flex items-center justify-between mb-1">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between gap-2 mb-1">
                   <h3 className="text-slate-100 font-semibold">{title}</h3>
-                  <ArrowRight size={16} className="text-slate-600 group-hover:text-slate-400 transition-colors" />
+                  <ArrowRight
+                    size={16}
+                    className="text-slate-600 group-hover:text-slate-400 transition-colors flex-shrink-0"
+                  />
                 </div>
                 <p className="text-slate-400 text-sm leading-relaxed">{description}</p>
               </div>
@@ -87,102 +102,10 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Data Lab Card — full width */}
-      <Link
-        href="/datalab"
-        className="group block bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-all mb-4"
-      >
-        <div className="flex items-start gap-4">
-          <div className="p-3 rounded-lg bg-teal-600/20 text-teal-400 group-hover:bg-teal-600/30 transition-colors flex-shrink-0">
-            <FlaskConical size={22} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="text-slate-100 font-semibold">Data Lab</h3>
-              <ArrowRight size={16} className="text-slate-600 group-hover:text-slate-400 transition-colors" />
-            </div>
-            <p className="text-slate-400 text-sm leading-relaxed">
-              Upload a data file and ask Claude to analyze it — code runs in a sandboxed environment and any charts it produces are shown.
-            </p>
-          </div>
-        </div>
-      </Link>
-
-      {/* Debate Card — full width */}
-      <Link
-        href="/debate"
-        className="group block bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-indigo-700/50 hover:bg-slate-900 transition-all mb-4"
-      >
-        <div className="flex items-start gap-4">
-          <div className="p-3 rounded-lg bg-indigo-600/20 text-indigo-400 group-hover:bg-indigo-600/30 transition-colors flex-shrink-0">
-            <Users size={22} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="text-slate-100 font-semibold">Multi-Persona Policy Debate</h3>
-              <ArrowRight size={16} className="text-slate-600 group-hover:text-slate-400 transition-colors" />
-            </div>
-            <p className="text-slate-400 text-sm leading-relaxed mb-3">
-              Simulate a structured debate among 10 fictional AI policy expert personas across 4 rounds, with a moderator synthesis.
-            </p>
-            {/* Persona avatar strip */}
-            <div className="flex items-center gap-1.5">
-              {DEBATE_PERSONAS.map((p) => (
-                <span
-                  key={p.initials}
-                  className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold text-white flex-shrink-0 ${p.color}`}
-                >
-                  {p.initials}
-                </span>
-              ))}
-              <span className="text-slate-500 text-xs ml-1">10 personas · 4 rounds</span>
-            </div>
-          </div>
-        </div>
-      </Link>
-
-      {/* Daily Digest Card — full width */}
-      <Link
-        href="/digest"
-        className="group block bg-slate-900 border border-slate-800 rounded-xl p-6 hover:border-slate-700 transition-all mb-10"
-      >
-        <div className="flex items-start gap-4">
-          <div className="p-3 rounded-lg bg-cyan-600/20 text-cyan-400 group-hover:bg-cyan-600/30 transition-colors flex-shrink-0">
-            <Mail size={22} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="text-slate-100 font-semibold">Daily Digest</h3>
-              <ArrowRight size={16} className="text-slate-600 group-hover:text-slate-400 transition-colors" />
-            </div>
-            <p className="text-slate-400 text-sm leading-relaxed">
-              Automated AI policy news delivery — configure topics, schedule, and email recipients.
-            </p>
-          </div>
-        </div>
-      </Link>
-
-      {/* About */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-        <h2 className="text-slate-100 font-semibold mb-3">About This Tool</h2>
-        <p className="text-slate-400 text-sm leading-relaxed">
-          This research assistant is designed to support AI policy analysis at the level of a senior researcher.
-          It combines real-time web research via Tavily, document analysis with RAG, and structured report generation
-          using Claude Opus 4. Reports follow structured formats for congressional briefings, policy memos, and risk assessments.
-        </p>
-        <div className="mt-4 grid grid-cols-3 gap-4">
-          {[
-            { label: "Add API Keys", desc: "Configure .env with Anthropic + Tavily keys to enable all features" },
-            { label: "Upload Documents", desc: "Index PDFs from academic papers, hearings, and policy documents" },
-            { label: "Start Researching", desc: "Enter a policy question to begin automated research synthesis" },
-          ].map(({ label, desc }) => (
-            <div key={label} className="bg-slate-800/50 rounded-lg p-4">
-              <p className="text-blue-400 text-xs font-medium mb-1">{label}</p>
-              <p className="text-slate-400 text-xs leading-relaxed">{desc}</p>
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* Footer */}
+      <p className="mt-8 pt-6 border-t border-slate-800 text-xs text-slate-500">
+        Web research via Tavily · Document analysis with RAG · Report generation with Claude
+      </p>
     </div>
   );
 }
