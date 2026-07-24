@@ -26,8 +26,8 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 FAMILY_ORDER = ["fable", "opus", "sonnet", "haiku"]
 
 STATIC_OPENAI_MODELS = [
-    {"group": "OpenAI", "id": "gpt-4o", "label": "GPT-4o"},
-    {"group": "OpenAI", "id": "gpt-4o-mini", "label": "GPT-4o Mini (Fast)"},
+    {"group": "OpenAI", "id": "gpt-4o", "label": "ChatGPT Plus (Smartest)"},
+    {"group": "OpenAI", "id": "gpt-4o-mini", "label": "ChatGPT (Everyday, Fast)"},
 ]
 
 # Used only if the catalog hasn't been populated yet (no Anthropic API key
