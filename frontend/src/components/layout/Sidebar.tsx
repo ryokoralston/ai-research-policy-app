@@ -34,14 +34,15 @@ const NAV_ITEMS = [
   { href: "/datalab", label: "Data Lab", icon: FlaskConical },
   { href: "/debate", label: "Debate", icon: Users },
   { href: "/digest", label: "Daily Digest", icon: Mail },
-  { href: "/settings", label: "Settings", icon: Settings },
 ];
 
 const ADMIN_NAV_ITEMS = [
-  { href: "/users", label: "Users", icon: UserCog },
   { href: "/activity-log", label: "Activity Log", icon: History },
   { href: "/personas", label: "Personas", icon: Drama },
+  { href: "/users", label: "Users", icon: UserCog },
 ];
+
+const SETTINGS_NAV_ITEM = { href: "/settings", label: "Settings", icon: Settings };
 
 interface SidebarProps {
   collapsed: boolean;
@@ -64,7 +65,10 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
     router.replace("/login");
   };
 
-  const navItems = user?.role === "admin" ? [...NAV_ITEMS, ...ADMIN_NAV_ITEMS] : NAV_ITEMS;
+  const navItems =
+    user?.role === "admin"
+      ? [...NAV_ITEMS, ...ADMIN_NAV_ITEMS, SETTINGS_NAV_ITEM]
+      : [...NAV_ITEMS, SETTINGS_NAV_ITEM];
 
   return (
     <aside
