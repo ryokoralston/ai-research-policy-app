@@ -66,7 +66,13 @@ def list_sessions(limit: int = 20, db: Session = Depends(get_db)):
         .limit(limit)
         .all()
     )
-    return sessions
+    responses = []
+    for session in sessions:
+        latest_report = max(session.reports, key=lambda r: r.created_at, default=None)
+        resp = ResearchSessionResponse.model_validate(session)
+        resp.latest_report_id = latest_report.id if latest_report else None
+        responses.append(resp)
+    return responses
 
 
 @router.get("/{session_id}", response_model=ResearchSessionDetail)

@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronRight, Search, Users, FileQuestion, CheckCircle } from "lucide-react";
-import { api, postStream } from "@/lib/api";
+import { api, authFetch, postStream } from "@/lib/api";
 import type { CitationConfidence } from "@/lib/types";
 import { countWords, parseWordRange, wordCountColor } from "@/lib/wordCount";
 import StreamingText from "@/components/ui/StreamingText";
@@ -56,6 +56,7 @@ interface ResearchSession {
   query: string;
   status: string;
   created_at: string;
+  latest_report_id?: string | null;
 }
 
 const SOURCE_OPTIONS: { type: SourceType; icon: React.ElementType; label: string; desc: string }[] = [
@@ -123,7 +124,7 @@ function NewReportForm() {
   useEffect(() => {
     if (sourceType !== "debate") return;
     setDebatesLoading(true);
-    fetch(`${BASE_URL}/api/debate/`)
+    authFetch(`${BASE_URL}/api/debate/`)
       .then((r) => r.json())
       .then((data: DebateOption[]) => {
         setDebates(data.filter((d) => d.status === "complete"));
@@ -136,7 +137,7 @@ function NewReportForm() {
   useEffect(() => {
     if (sourceType !== "research") return;
     setSessionsLoading(true);
-    fetch(`${BASE_URL}/api/research/`)
+    authFetch(`${BASE_URL}/api/research/`)
       .then((r) => r.json())
       .then((data: ResearchSession[]) => {
         setSessions(data.filter((s) => s.status === "complete"));
@@ -345,9 +346,35 @@ function NewReportForm() {
                         }`}
                       >
                         <p className="text-slate-100 text-sm font-medium line-clamp-1">{s.query}</p>
-                        <p className="text-slate-500 text-xs mt-0.5">
-                          {new Date(s.created_at).toLocaleDateString("ja-JP")}
-                        </p>
+                        <div className="flex items-center justify-between mt-0.5">
+                          <p className="text-slate-500 text-xs">
+                            {new Date(s.created_at).toLocaleDateString("ja-JP")}
+                          </p>
+                          {s.latest_report_id && (
+                            <span className="flex items-center gap-2">
+                              <span className="text-[10px] font-medium text-green-400 bg-green-900/30 px-1.5 py-0.5 rounded">
+                                Report ✓
+                              </span>
+                              <span
+                                role="link"
+                                tabIndex={0}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  router.push(`/reports/${s.latest_report_id}`);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.stopPropagation();
+                                    router.push(`/reports/${s.latest_report_id}`);
+                                  }
+                                }}
+                                className="text-[11px] text-blue-400 hover:underline"
+                              >
+                                View →
+                              </span>
+                            </span>
+                          )}
+                        </div>
                       </button>
                     ))}
                   </div>

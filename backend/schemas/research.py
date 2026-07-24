@@ -29,6 +29,7 @@ class ResearchSessionResponse(BaseModel):
     summary: str | None
     created_at: datetime
     completed_at: datetime | None
+    latest_report_id: str | None = None
 
     model_config = {"from_attributes": True}
 
