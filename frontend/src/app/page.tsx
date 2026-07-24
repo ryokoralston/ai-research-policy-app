@@ -101,11 +101,6 @@ export default function Dashboard() {
           </Link>
         ))}
       </div>
-
-      {/* Footer */}
-      <p className="mt-8 pt-6 border-t border-slate-800 text-xs text-slate-500">
-        Web research via Tavily · Document analysis with RAG · Report generation with Claude
-      </p>
     </div>
   );
 }
