@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Search, ExternalLink, FileText, FolderPlus } from "lucide-react";
+import { Search, ExternalLink, FileText, FolderPlus, History } from "lucide-react";
 import { api, authFetch, consumeSseStream } from "@/lib/api";
+import type { ResearchSession } from "@/lib/types";
 import StreamingText from "@/components/ui/StreamingText";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 
@@ -29,7 +30,48 @@ export default function ResearchPage() {
   const [error, setError] = useState<string | null>(null);
   const [savedToLibrary, setSavedToLibrary] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [history, setHistory] = useState<ResearchSession[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
   const abortRef = useRef<AbortController | null>(null);
+
+  const loadHistory = useCallback(async () => {
+    try {
+      const sessions = await api.research.list();
+      setHistory(sessions);
+    } catch {
+      // Non-critical: the log is a convenience view, not the primary flow.
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadHistory();
+  }, [loadHistory]);
+
+  const handleSelectHistory = async (session: ResearchSession) => {
+    if (phase === "searching" || phase === "summarizing" || phase === "synthesizing") return;
+    setError(null);
+    setSessionId(session.id);
+    setSavedToLibrary(false);
+    setPhase(session.status === "error" ? "error" : session.status === "complete" ? "done" : "idle");
+    try {
+      const detail = await api.research.get(session.id);
+      setSources(
+        (detail.results || []).map((r) => ({
+          order: r.result_order,
+          title: r.title || "Untitled",
+          url: r.url,
+          snippet: r.snippet ?? undefined,
+          ai_summary: r.ai_summary ?? undefined,
+        }))
+      );
+      setSynthesis(detail.summary || "");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load session");
+      setPhase("error");
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,9 +148,11 @@ export default function ResearchPage() {
         } else if (event === "complete") {
           setPhase("done");
           setStatusMsg("Research complete");
+          loadHistory();
         } else if (event === "error") {
           setError(d.message as string);
           setPhase("error");
+          loadHistory();
         }
       });
     } catch (err: unknown) {
@@ -140,13 +184,16 @@ export default function ResearchPage() {
   const isRunning = phase === "searching" || phase === "summarizing" || phase === "synthesizing";
 
   return (
-    <div className="p-8 max-w-6xl mx-auto">
+    <div className="p-8 max-w-7xl mx-auto">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-100 mb-1">Research Agent</h1>
         <p className="text-slate-400 text-sm">
           Enter a policy question. The agent will search the web, summarize sources, and synthesize findings.
         </p>
       </div>
+
+      <div className="flex gap-6 items-start">
+      <div className="flex-1 min-w-0">
 
       {/* Search Form */}
       <form onSubmit={handleSubmit} className="mb-8">
@@ -287,6 +334,54 @@ export default function ResearchPage() {
           </div>
         </div>
       )}
+
+      </div>
+
+      {/* Report log */}
+      <aside className="w-72 flex-shrink-0">
+        <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">
+          <History size={14} />
+          Report Log
+        </h2>
+        {historyLoading ? (
+          <div className="flex items-center gap-2 text-slate-500 text-sm py-2">
+            <LoadingSpinner size="sm" /> Loading...
+          </div>
+        ) : history.length === 0 ? (
+          <p className="text-slate-500 text-sm">No past research sessions yet.</p>
+        ) : (
+          <div className="space-y-2 max-h-[70vh] overflow-y-auto pr-1">
+            {history.map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => handleSelectHistory(s)}
+                disabled={isRunning}
+                className={`w-full text-left px-3 py-2.5 rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  sessionId === s.id
+                    ? "border-blue-500 bg-blue-900/20"
+                    : "border-slate-800 bg-slate-900 hover:border-slate-700"
+                }`}
+              >
+                <p className="text-slate-100 text-xs font-medium line-clamp-2 mb-1">{s.query}</p>
+                <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
+                  <span
+                    className={`inline-block w-1.5 h-1.5 rounded-full ${
+                      s.status === "complete"
+                        ? "bg-green-500"
+                        : s.status === "error"
+                        ? "bg-red-500"
+                        : "bg-amber-500"
+                    }`}
+                  />
+                  <span>{new Date(s.created_at).toLocaleDateString("en-US")}</span>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </aside>
+      </div>
     </div>
   );
 }
