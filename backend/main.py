@@ -22,6 +22,7 @@ from routers.personas import router as personas_router
 from routers.admin_personas import router as admin_personas_router
 from services.auth import get_current_user, require_admin
 from services.digest_service import send_digest
+from services.model_catalog import refresh_model_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,12 @@ async def lifespan(app: FastAPI):
         id="daily_digest",
         replace_existing=True,
     )
+    scheduler.add_job(
+        refresh_model_catalog,
+        CronTrigger(hour=3, minute=0, timezone=pytz.timezone("UTC")),
+        id="model_catalog_refresh",
+        replace_existing=True,
+    )
     scheduler.start()
     set_scheduler(scheduler)
     logger.info(
@@ -81,6 +88,12 @@ async def lifespan(app: FastAPI):
         digest_hour,
         digest_tz,
     )
+
+    # Run once at startup so the catalog isn't empty until the first 03:00 UTC tick.
+    try:
+        refresh_model_catalog()
+    except Exception:
+        logger.exception("Initial model catalog refresh failed")
 
     yield
 

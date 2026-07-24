@@ -3,27 +3,19 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 
-const MODELS = [
-  { group: "Anthropic", id: "claude-fable-5", label: "Claude Fable 5" },
-  { group: "Anthropic", id: "claude-opus-5", label: "Claude Opus 5" },
-  { group: "Anthropic", id: "claude-opus-4-8", label: "Claude Opus 4.8" },
-  { group: "Anthropic", id: "claude-opus-4-6", label: "Claude Opus 4.6" },
-  { group: "Anthropic", id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
-  { group: "Anthropic", id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (Fast)" },
-  { group: "OpenAI", id: "gpt-4o", label: "GPT-4o" },
-  { group: "OpenAI", id: "gpt-4o-mini", label: "GPT-4o Mini (Fast)" },
-];
-
-const groups = ["Anthropic", "OpenAI"];
+type ModelOption = { group: string; id: string; label: string };
 
 export default function SettingsPage() {
-  const [mainModel, setMainModel] = useState("claude-opus-4-6");
+  const [mainModel, setMainModel] = useState("claude-opus-5");
   const [fastModel, setFastModel] = useState("claude-haiku-4-5-20251001");
   const [anthropicKey, setAnthropicKey] = useState("");
   const [openaiKey, setOpenaiKey] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [catalogUpdatedAt, setCatalogUpdatedAt] = useState<string | null>(null);
+  const groups = Array.from(new Set(models.map((m) => m.group)));
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -32,12 +24,16 @@ export default function SettingsPage() {
   const [passwordBanner, setPasswordBanner] = useState<string | null>(null);
 
   useEffect(() => {
-    api.settings.getModels().then((data) => {
-      setMainModel(data.main_model);
-      setFastModel(data.fast_model);
-      // Keys come back masked ("***") — don't pre-fill
-      setLoading(false);
-    });
+    Promise.all([api.settings.getModels(), api.settings.getAvailableModels()]).then(
+      ([settingsData, catalogData]) => {
+        setMainModel(settingsData.main_model);
+        setFastModel(settingsData.fast_model);
+        // Keys come back masked ("***") — don't pre-fill
+        setModels(catalogData.models);
+        setCatalogUpdatedAt(catalogData.catalog_updated_at);
+        setLoading(false);
+      }
+    );
   }, []);
 
   async function handleSave(e: React.FormEvent) {
@@ -111,7 +107,7 @@ export default function SettingsPage() {
         >
           {groups.map((g) => (
             <optgroup key={g} label={g}>
-              {MODELS.filter((m) => m.group === g).map((m) => (
+              {models.filter((m) => m.group === g).map((m) => (
                 <option key={m.id} value={m.id}>
                   {m.label}
                 </option>
@@ -169,6 +165,11 @@ export default function SettingsPage() {
             value={fastModel}
             onChange={setFastModel}
           />
+          {catalogUpdatedAt && (
+            <p className="text-xs text-slate-500">
+              Anthropic model list last refreshed {new Date(catalogUpdatedAt).toLocaleString()}
+            </p>
+          )}
         </div>
 
         {/* API Keys */}

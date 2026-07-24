@@ -199,6 +199,11 @@ export const api = {
   },
 
   settings: {
+    getAvailableModels: () =>
+      request<{
+        models: { group: string; id: string; label: string }[];
+        catalog_updated_at: string | null;
+      }>("/api/settings/available-models"),
     getModels: () =>
       request<{
         main_model: string;
