@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 
 const MODELS = [
+  { group: "Anthropic", id: "claude-fable-5", label: "Claude Fable 5" },
+  { group: "Anthropic", id: "claude-opus-4-8", label: "Claude Opus 4.8" },
   { group: "Anthropic", id: "claude-opus-4-6", label: "Claude Opus 4.6" },
   { group: "Anthropic", id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
   { group: "Anthropic", id: "claude-haiku-4-5-20251001", label: "Claude Haiku 4.5 (Fast)" },
