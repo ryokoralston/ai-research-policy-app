@@ -208,6 +208,7 @@ export default function DataLabPage() {
               return <StdoutBlock key={i} content={seg.content} returnCode={seg.returnCode} />;
             }
             return (
+              // eslint-disable-next-line @next/next/no-img-element -- inline base64 chart output with unknown dimensions; not a remote image next/image can optimize
               <img
                 key={i}
                 src={`data:${seg.mediaType};base64,${seg.dataBase64}`}
