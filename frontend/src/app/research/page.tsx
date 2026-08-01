@@ -227,8 +227,10 @@ function ResearchAgent() {
           holding source count and the model picker. Enter submits; there is no
           submit button, so the Stop button below is the only control that appears
           in the row's right slot (while a run is in flight). */}
-      <form onSubmit={handleSubmit} className="mb-8">
-        <div className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 focus-within:border-blue-500 transition-colors">
+      {/* Capped well short of the page width: stretched across the full 7xl
+          container the field read as an oversized banner rather than an input. */}
+      <form onSubmit={handleSubmit} className="mb-8 max-w-4xl">
+        <div className="bg-slate-900 border border-slate-700 rounded-2xl px-3 py-2 focus-within:border-blue-500 transition-colors">
           <input
             type="text"
             value={query}
@@ -246,7 +248,7 @@ function ResearchAgent() {
             // Labels the Enter key as "Send" on mobile keyboards instead of the
             // generic return glyph.
             enterKeyHint="send"
-            className="w-full bg-transparent px-1 py-1.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none disabled:opacity-50"
+            className="w-full bg-transparent px-1 py-1 text-sm text-slate-100 placeholder-slate-500 focus:outline-none disabled:opacity-50"
             disabled={isRunning}
           />
           <div className="flex items-center justify-end gap-3 mt-1.5">

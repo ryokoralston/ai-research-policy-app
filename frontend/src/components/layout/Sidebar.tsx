@@ -9,7 +9,6 @@ import {
   FileText,
   BookOpen,
   Shield,
-  LayoutDashboard,
   Users,
   Mail,
   Settings,
@@ -22,13 +21,12 @@ import {
   Drama,
   MoreHorizontal,
 } from "lucide-react";
-import ThemeToggle from "./ThemeToggle";
+import AccountMenu from "./AccountMenu";
 import { api, getToken, clearToken } from "@/lib/api";
 import type { ResearchSession } from "@/lib/types";
 import { useCurrentUser } from "./UserContext";
 
 const NAV_ITEMS = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/research", label: "Research", icon: Search },
   { href: "/reports", label: "Reports", icon: FileText },
   { href: "/library", label: "Library", icon: BookOpen },
@@ -138,7 +136,9 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
           ? navItems
           : navItems.slice(0, PRIMARY_NAV_COUNT)
         ).map(({ href, label, icon: Icon }) => {
-          const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+          // No entry points at "/" any more (it redirects to /research), so a
+          // prefix match is enough — it also keeps Reports lit on /reports/new.
+          const active = pathname.startsWith(href);
           return (
             <Link
               key={href}
@@ -214,24 +214,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
             </button>
           </>
         ) : (
-          <>
-            <ThemeToggle />
-            {user && (
-              <p className="text-xs text-slate-500 px-1 truncate" title={user.email}>
-                {user.email}
-              </p>
-            )}
-            {hasToken && (
-              <button
-                onClick={handleLogout}
-                className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium
-                           text-slate-400 hover:text-red-400 hover:bg-slate-800 transition-colors"
-              >
-                <LogOut size={16} className="flex-shrink-0" />
-                Sign out
-              </button>
-            )}
-          </>
+          hasToken && <AccountMenu email={user?.email} onSignOut={handleLogout} />
         )}
       </div>
     </aside>

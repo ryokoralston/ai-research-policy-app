@@ -83,6 +83,15 @@ export default function LoginPage() {
           </div>
         </div>
 
+        {/* The only place a first-time visitor learns what this app is: the
+            dashboard that used to explain it is gone, and everything else sits
+            behind the login. */}
+        <p className="text-xs text-slate-500 leading-relaxed border-t border-slate-800 pt-4">
+          Web research and synthesis for AI policy — congressional briefings,
+          policy memos, and structured risk analysis, with every claim traced to
+          a source you can open.
+        </p>
+
         <div>
           <label htmlFor="email" className="block text-xs text-slate-400 mb-1.5">
             Email

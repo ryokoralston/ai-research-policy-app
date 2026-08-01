@@ -1,6 +1,6 @@
 # AI Policy Research Assistant
 
-A web application for AI policy research, powered by Claude (Anthropic) and Tavily. Research, analyze, and generate reports — all in one place.
+Web research and synthesis for AI policy, powered by Claude (Anthropic) and Tavily — congressional briefings, policy memos, and structured risk analysis, with every claim traced to a source you can open.
 
 ## Executive Summary
 
@@ -8,13 +8,13 @@ This project demonstrates how bounded, self-correcting AI agent loops can produc
 
 ## Screenshots
 
-| Dashboard | Research Agent |
+| Research Agent | Document Library |
 |---|---|
-| ![Dashboard](docs/screenshots/dashboard.png) | ![Research](docs/screenshots/research.png) |
+| ![Research](docs/screenshots/research.png) | ![Library](docs/screenshots/library.png) |
 
-| Document Library | Multi-Persona Debate |
-|---|---|
-| ![Library](docs/screenshots/library.png) | ![Debate](docs/screenshots/debate.png) |
+| Multi-Persona Debate |
+|---|
+| ![Debate](docs/screenshots/debate.png) |
 
 ## Features
 
