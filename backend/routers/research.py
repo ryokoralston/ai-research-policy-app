@@ -36,7 +36,7 @@ async def start_research(
     _sse_queues[session.id] = queue
 
     background_tasks.add_task(
-        _run_research, session.id, request.query, request.max_sources, queue
+        _run_research, session.id, request.query, request.max_sources, request.model, queue
     )
     return {"session_id": session.id}
 
@@ -147,7 +147,9 @@ async def _index_web_source(doc_id: str, content: str):
         db.close()
 
 
-async def _run_research(session_id: str, query: str, max_sources: int, queue: asyncio.Queue):
+async def _run_research(
+    session_id: str, query: str, max_sources: int, model: str | None, queue: asyncio.Queue
+):
     """Background task: run the full research pipeline and push SSE events."""
     # Import here to avoid circular deps at module load
     from services.research_agent import run_research_agent
@@ -165,6 +167,7 @@ async def _run_research(session_id: str, query: str, max_sources: int, queue: as
             session_id=session_id,
             query=query,
             max_sources=max_sources,
+            model=model,
             queue=queue,
             db=db,
         )

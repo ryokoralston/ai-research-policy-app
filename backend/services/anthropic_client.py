@@ -78,6 +78,19 @@ def _is_openai(model: str) -> bool:
     return model.startswith(("gpt-", "o1", "o3", "o4"))
 
 
+# Claude 5-generation models (Opus 5, Sonnet 5, Fable 5) and the underlying
+# 4.6+ Opus/Sonnet line reject temperature/top_p/top_k outright (400
+# invalid_request_error). This app's auto-refreshing model catalog (see
+# services/model_catalog.py) always picks the latest model per family, and
+# every current fable/opus/sonnet entry is past that removal point — Haiku
+# is unaffected. See Anthropic's model-migration guide.
+_NO_SAMPLING_PARAMS_FAMILIES = ("fable", "opus", "sonnet")
+
+
+def _supports_sampling_params(model: str) -> bool:
+    return not any(family in model for family in _NO_SAMPLING_PARAMS_FAMILIES)
+
+
 def _block_get(block, key):
     """Read a field off an SDK content-block object or a plain dict, uniformly."""
     if isinstance(block, dict):
@@ -305,9 +318,10 @@ async def generate_text(
     kwargs: dict = {
         "model": model,
         "max_tokens": max_tokens,
-        "temperature": temperature,
         "messages": messages,
     }
+    if _supports_sampling_params(model):
+        kwargs["temperature"] = temperature
     if system:
         kwargs["system"] = system
     if stop_sequences:
@@ -528,9 +542,10 @@ async def stream_text(
     kwargs: dict = {
         "model": model,
         "max_tokens": max_tokens,
-        "temperature": temperature,
         "messages": [{"role": "user", "content": prompt}],
     }
+    if _supports_sampling_params(model):
+        kwargs["temperature"] = temperature
     if system:
         kwargs["system"] = system
     async with client.messages.stream(**kwargs) as stream:
@@ -720,13 +735,14 @@ async def stream_chat(
     kwargs: dict = {
         "model": model,
         "max_tokens": max_tokens,
-        "temperature": temperature,
         "messages": messages,  # full history, alternating user/assistant
         # Cache the conversation prefix so each follow-up turn re-reads the prior
         # history at ~0.1x instead of full price. No-op until the prefix exceeds
         # the model's cache minimum; no effect on output.
         "cache_control": {"type": "ephemeral"},
     }
+    if _supports_sampling_params(model):
+        kwargs["temperature"] = temperature
     if system:
         kwargs["system"] = system
     async with client.messages.stream(**kwargs) as stream:
@@ -813,10 +829,10 @@ async def stream_chat_with_tools(
         async with client.messages.stream(
             model=model,
             max_tokens=max_tokens,
-            temperature=temperature,
             messages=msgs,
             tools=tools,
             cache_control={"type": "ephemeral"},
+            **({"temperature": temperature} if _supports_sampling_params(model) else {}),
             **({"system": system} if system else {}),
         ) as stream:
             async for event in _stream_events(stream):
@@ -910,11 +926,11 @@ async def stream_chat_with_tools(
         async with client.messages.stream(
             model=model,
             max_tokens=max_tokens,
-            temperature=temperature,
             messages=forced_msgs,
             tools=tools,
             tool_choice={"type": "none"},
             cache_control={"type": "ephemeral"},
+            **({"temperature": temperature} if _supports_sampling_params(model) else {}),
             **({"system": system} if system else {}),
         ) as stream:
             async for event in _stream_events(stream):

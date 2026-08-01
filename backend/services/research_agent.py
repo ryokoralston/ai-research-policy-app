@@ -228,6 +228,7 @@ async def run_research_agent(
     max_sources: int,
     queue: asyncio.Queue,
     db: Session,
+    model: str | None = None,
 ) -> None:
     # ── Step 1: Query Decomposition ───────────────────────────────────────────
     await queue.put(sse_event("status", {"message": "Decomposing research query..."}))
@@ -354,7 +355,7 @@ async def run_research_agent(
     full_synthesis = ""
     synthesis_prompt = build_synthesis_prompt(query, summarized)
     # temperature=0.7: 読みやすい文体で総合するため少し高め
-    async for token in stream_text(synthesis_prompt, system=system, temperature=0.7):
+    async for token in stream_text(synthesis_prompt, system=system, model=model, temperature=0.7):
         full_synthesis += token
         await queue.put(sse_event("synthesis_token", {"text": token}))
 
@@ -465,7 +466,7 @@ async def run_research_agent(
 
         resynthesis_prompt = build_synthesis_prompt(query, summarized)
         full_synthesis = ""
-        async for token in stream_text(resynthesis_prompt, system=system, temperature=0.7):
+        async for token in stream_text(resynthesis_prompt, system=system, model=model, temperature=0.7):
             full_synthesis += token
             await queue.put(sse_event("synthesis_token", {"text": token}))
 
