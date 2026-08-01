@@ -19,7 +19,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <ThemeScript />
       </head>
-      <body className={`${inter.className} bg-slate-950 text-slate-100 min-h-screen`}>
+      <body
+        className={`${inter.className} bg-slate-950 text-slate-100 min-h-screen`}
+        suppressHydrationWarning
+      >
         <ThemeProvider>
           <UserProvider>
             <AuthGuard>
