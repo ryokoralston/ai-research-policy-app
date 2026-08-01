@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import { Search, ExternalLink, FileText, FolderPlus, History } from "lucide-react";
+import { Suspense, useState, useRef, useEffect, useCallback } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ExternalLink, FileText, FolderPlus, ArrowUp, Square } from "lucide-react";
 import { api, authFetch, consumeSseStream } from "@/lib/api";
-import type { ResearchSession } from "@/lib/types";
 import StreamingText from "@/components/ui/StreamingText";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
+import ModelPicker, { type ModelOption } from "@/components/ui/ModelPicker";
+import { RESEARCH_UPDATED_EVENT } from "@/components/layout/Sidebar";
 
 type Phase = "idle" | "searching" | "summarizing" | "synthesizing" | "done" | "error";
 
@@ -19,7 +20,18 @@ interface SourceCard {
 }
 
 export default function ResearchPage() {
+  // useSearchParams needs a Suspense boundary in an otherwise static page.
+  return (
+    <Suspense fallback={null}>
+      <ResearchAgent />
+    </Suspense>
+  );
+}
+
+function ResearchAgent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const sessionParam = searchParams.get("session");
   const [query, setQuery] = useState("");
   const [maxSources, setMaxSources] = useState(8);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -30,49 +42,63 @@ export default function ResearchPage() {
   const [error, setError] = useState<string | null>(null);
   const [savedToLibrary, setSavedToLibrary] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [history, setHistory] = useState<ResearchSession[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(true);
-  const [historyQuery, setHistoryQuery] = useState("");
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [selectedModel, setSelectedModel] = useState<string>("");
   const abortRef = useRef<AbortController | null>(null);
 
-  const loadHistory = useCallback(async () => {
-    try {
-      const sessions = await api.research.list();
-      setHistory(sessions);
-    } catch {
-      // Non-critical: the log is a convenience view, not the primary flow.
-    } finally {
-      setHistoryLoading(false);
-    }
+  useEffect(() => {
+    // Session-only override for the synthesis step (see ModelPicker) —
+    // seeded from the account's default main model, but never written back
+    // to Settings. Falls back silently if the catalog fetch fails.
+    Promise.all([api.settings.getAvailableModels(), api.settings.getModels()])
+      .then(([catalog, settings]) => {
+        setModels(catalog.models);
+        setSelectedModel(settings.main_model);
+      })
+      .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    loadHistory();
-  }, [loadHistory]);
+  // Tells the sidebar's Recent list to refetch (see RESEARCH_UPDATED_EVENT).
+  const notifyRecentChanged = useCallback(() => {
+    window.dispatchEvent(new Event(RESEARCH_UPDATED_EVENT));
+  }, []);
 
-  const handleSelectHistory = async (session: ResearchSession) => {
-    if (phase === "searching" || phase === "summarizing" || phase === "synthesizing") return;
+  // Open whichever session the URL names — that's how the sidebar's Recent
+  // list hands a session to this page.
+  useEffect(() => {
+    if (!sessionParam) return;
+    let cancelled = false;
+    // A run already in flight would keep streaming into the view we're about
+    // to replace, so stop it first.
+    abortRef.current?.abort();
     setError(null);
-    setSessionId(session.id);
     setSavedToLibrary(false);
-    setPhase(session.status === "error" ? "error" : session.status === "complete" ? "done" : "idle");
-    try {
-      const detail = await api.research.get(session.id);
-      setSources(
-        (detail.results || []).map((r) => ({
-          order: r.result_order,
-          title: r.title || "Untitled",
-          url: r.url,
-          snippet: r.snippet ?? undefined,
-          ai_summary: r.ai_summary ?? undefined,
-        }))
-      );
-      setSynthesis(detail.summary || "");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load session");
-      setPhase("error");
-    }
-  };
+    setSessionId(sessionParam);
+    (async () => {
+      try {
+        const detail = await api.research.get(sessionParam);
+        if (cancelled) return;
+        setSources(
+          (detail.results || []).map((r) => ({
+            order: r.result_order,
+            title: r.title || "Untitled",
+            url: r.url,
+            snippet: r.snippet ?? undefined,
+            ai_summary: r.ai_summary ?? undefined,
+          }))
+        );
+        setSynthesis(detail.summary || "");
+        setPhase(detail.status === "error" ? "error" : "done");
+      } catch (err) {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load session");
+        setPhase("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionParam]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,7 +120,11 @@ export default function ResearchPage() {
       const res = await authFetch(api.research.startUrl(), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, max_sources: maxSources }),
+        body: JSON.stringify({
+          query,
+          max_sources: maxSources,
+          model: selectedModel || undefined,
+        }),
         signal: abortRef.current.signal,
       });
       const { session_id } = await res.json();
@@ -149,11 +179,11 @@ export default function ResearchPage() {
         } else if (event === "complete") {
           setPhase("done");
           setStatusMsg("Research complete");
-          loadHistory();
+          notifyRecentChanged();
         } else if (event === "error") {
           setError(d.message as string);
           setPhase("error");
-          loadHistory();
+          notifyRecentChanged();
         }
       });
     } catch (err: unknown) {
@@ -183,9 +213,6 @@ export default function ResearchPage() {
   };
 
   const isRunning = phase === "searching" || phase === "summarizing" || phase === "synthesizing";
-  const filteredHistory = history.filter((s) =>
-    s.query.toLowerCase().includes(historyQuery.trim().toLowerCase())
-  );
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
@@ -196,50 +223,88 @@ export default function ResearchPage() {
         </p>
       </div>
 
-      <div className="flex gap-6 items-start">
-      <div className="flex-1 min-w-0">
-
-      {/* Search Form */}
+      {/* Search Form — composer layout: the query field sits above a control row
+          holding source count and the model picker. Enter submits; there is no
+          submit button, so the Stop button below is the only control that appears
+          in the row's right slot (while a run is in flight). */}
       <form onSubmit={handleSubmit} className="mb-8">
-        <div className="flex gap-3">
-          <div className="flex-1 relative">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="e.g. What are the main AI governance risks from autonomous weapons systems?"
-              className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-9 pr-4 py-3 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500"
-              disabled={isRunning}
-            />
-          </div>
-          <select
-            value={maxSources}
-            onChange={(e) => setMaxSources(Number(e.target.value))}
-            className="bg-slate-900 border border-slate-700 rounded-lg px-3 py-3 text-sm text-slate-300 focus:outline-none focus:border-blue-500"
+        <div className="bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 focus-within:border-blue-500 transition-colors">
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              // isComposing guard: while an IME is mid-conversion (Japanese, etc.)
+              // Enter commits the candidate — submitting there would fire on a
+              // half-typed query.
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                handleSubmit(e);
+              }
+            }}
+            placeholder="e.g. What are the main AI governance risks from autonomous weapons systems?"
+            // Labels the Enter key as "Send" on mobile keyboards instead of the
+            // generic return glyph.
+            enterKeyHint="send"
+            className="w-full bg-transparent px-1 py-1.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none disabled:opacity-50"
             disabled={isRunning}
-          >
-            <option value={5}>5 sources</option>
-            <option value={8}>8 sources</option>
-            <option value={12}>12 sources</option>
-          </select>
-          {isRunning ? (
-            <button
-              type="button"
-              onClick={handleStop}
-              className="bg-red-600 hover:bg-red-700 text-white px-5 py-3 rounded-lg text-sm font-medium transition-colors"
-            >
-              Stop
-            </button>
-          ) : (
-            <button
-              type="submit"
-              disabled={!query.trim()}
-              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-5 py-3 rounded-lg text-sm font-medium transition-colors"
-            >
-              Research
-            </button>
-          )}
+          />
+          <div className="flex items-center justify-end gap-3 mt-1.5">
+            {/* Source count and model sit together, right-aligned: both decide how
+                much a run costs and how deep it goes, so proximity should read
+                them as one set (the same pairing Claude's composer uses for model
+                + effort). The left slot is left free — that's where an attachment
+                or tools menu goes in this pattern, and we have none. */}
+            <div className="flex items-center gap-1">
+              {/* bg-slate-900 matches the composer surface (so the control reads as
+                  flat) while still giving the native option list a real background. */}
+              <select
+                value={maxSources}
+                onChange={(e) => setMaxSources(Number(e.target.value))}
+                className="bg-slate-900 rounded-lg px-2 py-1.5 text-xs text-slate-400 hover:bg-slate-800 hover:text-slate-100 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                disabled={isRunning}
+              >
+                <option value={5}>5 sources</option>
+                <option value={8}>8 sources</option>
+                <option value={12}>12 sources</option>
+              </select>
+              {models.length > 0 && (
+                <ModelPicker
+                  models={models}
+                  value={selectedModel}
+                  onChange={setSelectedModel}
+                  disabled={isRunning}
+                />
+              )}
+            </div>
+            {/* One slot that swaps role: send while idle, stop while running.
+                Enter submits too, but the button is what makes the action
+                reachable on touch and to screen readers — Enter alone is not a
+                dependable submit path on mobile or with an IME. */}
+            {isRunning ? (
+              <button
+                type="button"
+                onClick={handleStop}
+                aria-label="Stop research"
+                className="flex items-center justify-center w-8 h-8 rounded-full bg-red-600 hover:bg-red-700 text-white transition-colors"
+              >
+                <Square size={13} fill="currentColor" />
+              </button>
+            ) : (
+              <button
+                type="submit"
+                disabled={!query.trim()}
+                aria-label="Start research"
+                // Dim via opacity rather than swapping to a slate background:
+                // globals.css only re-maps the base color classes for the light
+                // theme, so a `disabled:bg-*` would keep Tailwind's dark default
+                // and the empty state would look active. Opacity is theme-agnostic.
+                className="flex items-center justify-center w-8 h-8 rounded-full bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-30 disabled:hover:bg-blue-600 disabled:cursor-not-allowed transition-all"
+              >
+                <ArrowUp size={16} />
+              </button>
+            )}
+          </div>
         </div>
       </form>
 
@@ -338,68 +403,6 @@ export default function ResearchPage() {
           </div>
         </div>
       )}
-
-      </div>
-
-      {/* Report log */}
-      <aside className="w-72 flex-shrink-0">
-        <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">
-          <History size={14} />
-          Report Log
-        </h2>
-        {!historyLoading && history.length > 0 && (
-          <div className="relative mb-3">
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
-            <input
-              type="text"
-              value={historyQuery}
-              onChange={(e) => setHistoryQuery(e.target.value)}
-              placeholder="Search log..."
-              className="w-full bg-slate-900 border border-slate-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500"
-            />
-          </div>
-        )}
-        {historyLoading ? (
-          <div className="flex items-center gap-2 text-slate-500 text-sm py-2">
-            <LoadingSpinner size="sm" /> Loading...
-          </div>
-        ) : history.length === 0 ? (
-          <p className="text-slate-500 text-sm">No past research sessions yet.</p>
-        ) : filteredHistory.length === 0 ? (
-          <p className="text-slate-500 text-sm">No sessions match &quot;{historyQuery}&quot;.</p>
-        ) : (
-          <div className="space-y-2 max-h-[70vh] overflow-y-auto pr-1">
-            {filteredHistory.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => handleSelectHistory(s)}
-                disabled={isRunning}
-                className={`w-full text-left px-3 py-2.5 rounded-lg border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                  sessionId === s.id
-                    ? "border-blue-500 bg-blue-900/20"
-                    : "border-slate-800 bg-slate-900 hover:border-slate-700"
-                }`}
-              >
-                <p className="text-slate-100 text-xs font-medium line-clamp-2 mb-1">{s.query}</p>
-                <div className="flex items-center gap-1.5 text-[11px] text-slate-500">
-                  <span
-                    className={`inline-block w-1.5 h-1.5 rounded-full ${
-                      s.status === "complete"
-                        ? "bg-green-500"
-                        : s.status === "error"
-                        ? "bg-red-500"
-                        : "bg-amber-500"
-                    }`}
-                  />
-                  <span>{new Date(s.created_at).toLocaleDateString("en-US")}</span>
-                </div>
-              </button>
-            ))}
-          </div>
-        )}
-      </aside>
-      </div>
     </div>
   );
 }
