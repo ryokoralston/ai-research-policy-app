@@ -2,51 +2,14 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { clsx } from "clsx";
-import {
-  Search,
-  FileText,
-  BookOpen,
-  Shield,
-  Users,
-  Mail,
-  Settings,
-  PanelLeftClose,
-  PanelLeftOpen,
-  LogOut,
-  FlaskConical,
-  UserCog,
-  History,
-  Drama,
-  MoreHorizontal,
-} from "lucide-react";
+import { PanelLeftClose, PanelLeftOpen, LogOut, History } from "lucide-react";
 import AccountMenu from "./AccountMenu";
 import { api, getToken, clearToken } from "@/lib/api";
 import type { ResearchSession } from "@/lib/types";
 import { useCurrentUser } from "./UserContext";
-
-const NAV_ITEMS = [
-  { href: "/research", label: "Research", icon: Search },
-  { href: "/reports", label: "Reports", icon: FileText },
-  { href: "/library", label: "Library", icon: BookOpen },
-  { href: "/analysis", label: "Risk Analysis", icon: Shield },
-  { href: "/datalab", label: "Data Lab", icon: FlaskConical },
-  { href: "/debate", label: "Debate", icon: Users },
-  { href: "/digest", label: "Daily Digest", icon: Mail },
-];
-
-const ADMIN_NAV_ITEMS = [
-  { href: "/activity-log", label: "Activity Log", icon: History },
-  { href: "/personas", label: "Personas", icon: Drama },
-  { href: "/users", label: "Users", icon: UserCog },
-];
-
-const SETTINGS_NAV_ITEM = { href: "/settings", label: "Settings", icon: Settings };
-
-// Nav entries shown before the "More" toggle. The rest stay collapsed so the
-// Recent list below gets the remaining height instead of being pushed off.
-const PRIMARY_NAV_COUNT = 5;
+import { NAV_ITEMS, ADMIN_NAV_ITEMS, SETTINGS_NAV_ITEM } from "./navigation";
 
 // Dispatched by the research page when a run finishes, so the Recent list picks
 // up the new session without waiting for a navigation.
@@ -61,7 +24,6 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [hasToken, setHasToken] = useState(false);
-  const [navExpanded, setNavExpanded] = useState(false);
   const [recent, setRecent] = useState<ResearchSession[]>([]);
   const user = useCurrentUser();
 
@@ -92,10 +54,15 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
     router.replace("/login");
   };
 
-  const navItems =
-    user?.role === "admin"
-      ? [...NAV_ITEMS, ...ADMIN_NAV_ITEMS, SETTINGS_NAV_ITEM]
-      : [...NAV_ITEMS, SETTINGS_NAV_ITEM];
+  // Expanded, the sidebar lists the feature pages only — admin tools and
+  // Settings live in the account menu. Collapsed has no account menu (the rail
+  // shows sign-out and expand), so those destinations stay in the icon list to
+  // remain reachable.
+  const collapsedNavItems = [
+    ...NAV_ITEMS,
+    ...(user?.role === "admin" ? ADMIN_NAV_ITEMS : []),
+    SETTINGS_NAV_ITEM,
+  ];
 
   return (
     <aside
@@ -129,13 +96,9 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
         )}
       </div>
 
-      {/* Navigation. Collapsed mode shows every item — the icons are compact
-          enough that the "More" toggle would only add a click. */}
-      <nav className={clsx("p-2 space-y-1", collapsed && "flex-1")}>
-        {(collapsed || navExpanded
-          ? navItems
-          : navItems.slice(0, PRIMARY_NAV_COUNT)
-        ).map(({ href, label, icon: Icon }) => {
+      {/* Navigation */}
+      <nav className={clsx("p-2 space-y-0.5", collapsed && "flex-1")}>
+        {(collapsed ? collapsedNavItems : NAV_ITEMS).map(({ href, label, icon: Icon }) => {
           // No entry points at "/" any more (it redirects to /research), so a
           // prefix match is enough — it also keeps Reports lit on /reports/new.
           const active = pathname.startsWith(href);
@@ -146,7 +109,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
               title={collapsed ? label : undefined}
               className={clsx(
                 "flex items-center rounded-md text-sm font-medium transition-colors",
-                collapsed ? "justify-center px-2 py-2" : "gap-3 px-3 py-2",
+                collapsed ? "justify-center px-2 py-1.5" : "gap-3 px-3 py-1.5",
                 active
                   ? "bg-blue-600/20 text-blue-400"
                   : "text-slate-400 hover:text-slate-100 hover:bg-slate-800"
@@ -157,16 +120,6 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
             </Link>
           );
         })}
-        {!collapsed && navItems.length > PRIMARY_NAV_COUNT && (
-          <button
-            onClick={() => setNavExpanded((v) => !v)}
-            className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium
-                       text-slate-400 hover:text-slate-100 hover:bg-slate-800 transition-colors"
-          >
-            <MoreHorizontal size={16} className="flex-shrink-0" />
-            {navExpanded ? "Less" : "More"}
-          </button>
-        )}
       </nav>
 
       {/* Recent research sessions. Hidden when collapsed — the rail is too
@@ -214,7 +167,7 @@ export default function Sidebar({ collapsed, onToggle }: SidebarProps) {
             </button>
           </>
         ) : (
-          hasToken && <AccountMenu email={user?.email} onSignOut={handleLogout} />
+          hasToken && <AccountMenu onSignOut={handleLogout} />
         )}
       </div>
     </aside>
@@ -230,24 +183,84 @@ function RecentLinks({ sessions }: { sessions: ResearchSession[] }) {
 
   return (
     <>
-      {sessions.map((s) => {
-        const active = s.id === activeId;
-        return (
-          <Link
-            key={s.id}
-            href={`/research?session=${s.id}`}
-            title={s.query}
-            className={clsx(
-              "block px-2 py-1.5 rounded-md border text-xs transition-colors",
-              active
-                ? "border-blue-500 bg-blue-600/20 text-blue-400"
-                : "border-transparent text-slate-400 hover:text-slate-100 hover:bg-slate-800"
-            )}
-          >
-            <span className="line-clamp-2 leading-snug">{s.query}</span>
-          </Link>
-        );
-      })}
+      {sessions.map((s) => (
+        <RecentItem key={s.id} session={s} active={s.id === activeId} />
+      ))}
     </>
+  );
+}
+
+// Reveal speed for the hover scroll. Slow enough to read a long query, fast
+// enough that a short overflow doesn't feel stuck.
+const REVEAL_PX_PER_SECOND = 60;
+
+/**
+ * One Recent entry, clipped to a single line. Queries are routinely longer than
+ * the sidebar is wide, so hovering scrolls the label to its end and leaving
+ * returns it — the whole query stays reachable without spending two lines of
+ * height on every entry.
+ */
+function RecentItem({ session, active }: { session: ResearchSession; active: boolean }) {
+  const labelRef = useRef<HTMLSpanElement>(null);
+  const frameRef = useRef<number | null>(null);
+
+  const stopScrolling = () => {
+    if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    frameRef.current = null;
+  };
+
+  const scrollLabelTo = (target: number) => {
+    const el = labelRef.current;
+    if (!el) return;
+    stopScrolling();
+    const from = el.scrollLeft;
+    const distance = target - from;
+    if (distance === 0) return;
+    // Duration from distance, so long and short labels reveal at one speed
+    // instead of long ones racing past.
+    const duration = (Math.abs(distance) / REVEAL_PX_PER_SECOND) * 1000;
+    const startedAt = performance.now();
+    const step = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      el.scrollLeft = from + distance * progress;
+      frameRef.current = progress < 1 ? requestAnimationFrame(step) : null;
+    };
+    frameRef.current = requestAnimationFrame(step);
+  };
+
+  // An entry can unmount mid-scroll when the list refreshes. Inlined rather
+  // than reusing stopScrolling so the effect keeps an empty dep list.
+  useEffect(
+    () => () => {
+      if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
+    },
+    []
+  );
+
+  return (
+    <Link
+      href={`/research?session=${session.id}`}
+      title={session.query}
+      onMouseEnter={() => {
+        const el = labelRef.current;
+        if (el) scrollLabelTo(el.scrollWidth - el.clientWidth);
+      }}
+      onMouseLeave={() => {
+        // Snap rather than animate back: rewinding a long query at reveal speed
+        // left the label mid-sentence for seconds after the pointer had gone.
+        stopScrolling();
+        if (labelRef.current) labelRef.current.scrollLeft = 0;
+      }}
+      className={clsx(
+        "block px-2 py-1.5 rounded-md border text-xs transition-colors",
+        active
+          ? "border-blue-500 bg-blue-600/20 text-blue-400"
+          : "border-transparent text-slate-400 hover:text-slate-100 hover:bg-slate-800"
+      )}
+    >
+      <span ref={labelRef} className="block truncate">
+        {session.query}
+      </span>
+    </Link>
   );
 }
