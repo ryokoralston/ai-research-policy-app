@@ -14,6 +14,7 @@ from typing import AsyncIterator
 import anthropic
 
 from config import get_settings
+from services.usage import record_anthropic
 from utils.sse import sse_event  # noqa: F401 — re-exported; moved to utils/sse.py (F-3)
 
 logger = logging.getLogger(__name__)
@@ -327,6 +328,7 @@ async def generate_text(
     if stop_sequences:
         kwargs["stop_sequences"] = stop_sequences
     message = await client.messages.create(**kwargs)
+    record_anthropic(model, getattr(message, "usage", None))
     # Join all text blocks (not just the first) — a response can contain more
     # than one text block, e.g. interleaved with server-side tool use.
     generated = "".join(b.text for b in message.content if b.type == "text")  # type: ignore[union-attr]
@@ -551,6 +553,11 @@ async def stream_text(
     async with client.messages.stream(**kwargs) as stream:
         async for text in stream.text_stream:
             yield text
+        # Recorded after the text drains, so usage covers the whole response.
+        # A consumer that abandons this generator early (Stop aborts a run
+        # mid-stream) never reaches here and that call goes unrecorded —
+        # accepted, since an aborted run isn't one to bill for either.
+        record_anthropic(model, getattr(await stream.get_final_message(), "usage", None))
 
 
 def _thinking_stream_tuple(event) -> tuple[str, str] | None:
@@ -687,10 +694,11 @@ async def stream_text_with_thinking(
             kind, text = mapped
             if text:
                 yield (kind, text)
-        if usage_log_tag:
-            final = await stream.get_final_message()
-            u = getattr(final, "usage", None)
-            if u is not None:
+        final = await stream.get_final_message()
+        u = getattr(final, "usage", None)
+        if u is not None:
+            record_anthropic(model, u)
+            if usage_log_tag:
                 logger.info(
                     "%s usage: input=%s cache_read=%s cache_write=%s",
                     usage_log_tag, u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens,
@@ -748,6 +756,7 @@ async def stream_chat(
     async with client.messages.stream(**kwargs) as stream:
         async for text in stream.text_stream:
             yield text
+        record_anthropic(model, getattr(await stream.get_final_message(), "usage", None))
 
 
 async def stream_chat_with_tools(
@@ -842,6 +851,7 @@ async def stream_chat_with_tools(
         # Verifiable cache signal (see Anthropic docs: cache_read_input_tokens).
         u = getattr(final, "usage", None)
         if u is not None:
+            record_anthropic(model, u)
             logger.info(
                 "tool-loop usage: input=%s cache_read=%s cache_write=%s",
                 u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens,

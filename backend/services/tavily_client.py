@@ -3,6 +3,7 @@ import httpx
 from dataclasses import dataclass
 
 from config import get_settings
+from services.usage import record_tavily
 
 
 @dataclass
@@ -39,6 +40,10 @@ class TavilyClient:
             resp = await client.post(f"{self.BASE_URL}/search", json=payload)
             resp.raise_for_status()
             data = resp.json()
+
+        # Billed per search, so one row per successful call — recorded after
+        # raise_for_status so failed requests aren't counted as spend.
+        record_tavily(1)
 
         results = []
         for item in data.get("results", []):

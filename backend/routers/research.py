@@ -8,7 +8,10 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import ResearchSession, SearchResult, Document
+from models.user import User
 from schemas import ResearchStartRequest, ResearchSessionResponse, ResearchSessionDetail
+from services.auth import get_current_user
+from services.usage import usage_context
 from utils.sse import queue_event_stream, sse_event
 
 router = APIRouter(prefix="/api/research", tags=["research"])
@@ -21,6 +24,7 @@ _sse_queues: dict[str, asyncio.Queue] = {}
 async def start_research(
     request: ResearchStartRequest,
     background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     session = ResearchSession(
@@ -35,8 +39,11 @@ async def start_research(
     queue: asyncio.Queue = asyncio.Queue()
     _sse_queues[session.id] = queue
 
+    # The user id travels with the task: the run happens after this request
+    # returns, so it can't read the caller off the request context.
     background_tasks.add_task(
-        _run_research, session.id, request.query, request.max_sources, request.model, queue
+        _run_research, session.id, request.query, request.max_sources,
+        request.model, current_user.id, queue,
     )
     return {"session_id": session.id}
 
@@ -148,7 +155,8 @@ async def _index_web_source(doc_id: str, content: str):
 
 
 async def _run_research(
-    session_id: str, query: str, max_sources: int, model: str | None, queue: asyncio.Queue
+    session_id: str, query: str, max_sources: int, model: str | None,
+    user_id: str, queue: asyncio.Queue,
 ):
     """Background task: run the full research pipeline and push SSE events."""
     # Import here to avoid circular deps at module load
@@ -163,14 +171,18 @@ async def _run_research(
         session.status = "running"
         db.commit()
 
-        await run_research_agent(
-            session_id=session_id,
-            query=query,
-            max_sources=max_sources,
-            model=model,
-            queue=queue,
-            db=db,
-        )
+        # Every provider call the agent makes — decomposition, per-source
+        # summaries, synthesis, the gap-closing rounds, and the Tavily searches
+        # — is attributed to this user and feature.
+        with usage_context(user_id=user_id, feature="research"):
+            await run_research_agent(
+                session_id=session_id,
+                query=query,
+                max_sources=max_sources,
+                model=model,
+                queue=queue,
+                db=db,
+            )
     except Exception as e:
         await queue.put(sse_event("error", {"message": str(e)}))
         session = db.query(ResearchSession).filter(ResearchSession.id == session_id).first()

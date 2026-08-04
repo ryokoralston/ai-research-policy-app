@@ -5,6 +5,7 @@ from .debate import Debate, DebateArgument
 from .reminder import Reminder
 from .user import User
 from .audit_log import AuditLogEntry
+from .usage_event import UsageEvent
 
 __all__ = [
     "Document", "DocumentChunk",
@@ -14,4 +15,5 @@ __all__ = [
     "Reminder",
     "User",
     "AuditLogEntry",
+    "UsageEvent",
 ]
