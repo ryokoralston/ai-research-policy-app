@@ -150,6 +150,28 @@ rotate to it:
    reliably than a file on a persistent disk that might not always be as
    persistent as expected.
 
+## Password Reset (locked-out account)
+
+There is no self-service reset: no email delivery is configured for account
+recovery, and changing a password through the API requires the current one. An
+admin can reset another user from the Users page — but when the locked-out
+account is the only admin, reset it directly against the database instead:
+
+```
+cd backend
+./venv/bin/python -m scripts.reset_password --list          # see the accounts
+./venv/bin/python -m scripts.reset_password --email you@example.com
+./venv/bin/python -m scripts.reset_password --email you@example.com --apply
+```
+
+Without `--apply` it is a dry run. Omit `--password` and it generates one and
+prints it; that output is the only copy. The reset is recorded in the Activity
+Log as `user.password_reset`.
+
+Repeated failed logins are rate limited (5 per 5 minutes per IP) by an
+in-memory counter in the running server, which this script cannot clear — if
+you are locked out, wait for the window to pass or restart the backend.
+
 ## License
 
 MIT
