@@ -5,13 +5,15 @@ on:
     branches: [main]
     paths:
       - "backend/requirements.txt"
-      - "frontend/package-lock.json"
+      - "frontend/pnpm-lock.yaml"
+      - "frontend/pnpm-workspace.yaml"
       - ".github/workflows/dependency-audit.yml"
   pull_request:
     branches: [main]
     paths:
       - "backend/requirements.txt"
-      - "frontend/package-lock.json"
+      - "frontend/pnpm-lock.yaml"
+      - "frontend/pnpm-workspace.yaml"
       - ".github/workflows/dependency-audit.yml"
   schedule:
     # Catches newly-disclosed CVEs in already-pinned versions, not just new commits.
@@ -64,50 +66,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Must precede setup-node so that `cache: pnpm` can find the binary.
+      # The version comes from packageManager in frontend/package.json.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
       - name: Install frontend dependencies
         working-directory: frontend
-        # --ignore-scripts blocks pre/post-install hooks, the delivery mechanism for
-        # npm supply-chain attacks (e.g. the 2026-08-04 keyv@6.0.0 compromise). This
-        # job only inspects the dependency tree, so no install script is needed.
-        run: npm ci --ignore-scripts
-      - name: Run npm audit (high/critical only)
+        # No --ignore-scripts needed: pnpm blocks dependency install scripts by
+        # default, and frontend/pnpm-workspace.yaml denies the two that exist.
+        # Install scripts are how npm supply-chain attacks land (e.g. the
+        # 2026-08-04 keyv@6.0.0 compromise).
+        run: pnpm install --frozen-lockfile
+      - name: Run pnpm audit (high/critical only)
         working-directory: frontend
-        # --ignore for GHSA-qx2v-qp2m-jg93, GHSA-6g55-p6wh-862q, GHSA-r28c-9q8g-f849
-        # (postcss) and GHSA-f88m-g3jw-g9cj (sharp): these are vendored *inside*
-        # next's own package.json (dependencies.postcss / optionalDependencies.sharp),
-        # not versions this project chooses. As of 2026-08-01 even the latest next
-        # release (16.2.12) still bundles the vulnerable postcss@8.4.31 and
-        # sharp@^0.34.5 — there is no newer next release that fixes this yet.
-        # `npm audit fix --force` "solves" it by downgrading next to 9.3.3, which
-        # is far worse than the vulnerabilities themselves — never do that. Revisit
-        # by dropping the matching line below once next ships a real fix.
-        run: |
-          npm audit --audit-level=high --json > audit-result.json || true
-          node -e "
-            const fs = require('fs');
-            const data = JSON.parse(fs.readFileSync('audit-result.json', 'utf8'));
-            const ignored = new Set([
-              'GHSA-qx2v-qp2m-jg93',
-              'GHSA-6g55-p6wh-862q',
-              'GHSA-r28c-9q8g-f849',
-              'GHSA-f88m-g3jw-g9cj',
-            ]);
-            const unresolved = [];
-            for (const [name, v] of Object.entries(data.vulnerabilities || {})) {
-              const ids = (v.via || [])
-                .filter((x) => typeof x === 'object')
-                .map((x) => x.url.split('/').pop());
-              const stillFlagged = ids.filter((id) => !ignored.has(id));
-              if (stillFlagged.length) unresolved.push({ name, ids: stillFlagged });
-            }
-            if (unresolved.length) {
-              console.error('Unresolved high/critical vulnerabilities:', JSON.stringify(unresolved, null, 2));
-              process.exit(1);
-            }
-            console.log('No unresolved high/critical vulnerabilities (only known, upstream-unfixable advisories remain, allowlisted above).');
-          "
+        # Advisories known to be upstream-unfixable are allowlisted in
+        # frontend/pnpm-workspace.yaml under auditConfig.ignoreGhsas, so this
+        # exits non-zero only for genuinely new high/critical findings.
+        run: pnpm audit --audit-level=high

@@ -65,9 +65,9 @@ source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 cd ..
 
-# 4. Install frontend dependencies
+# 4. Install frontend dependencies (pnpm — see frontend/package.json packageManager)
 cd frontend
-npm install
+pnpm install
 cd ..
 ```
 
@@ -88,7 +88,7 @@ cd backend && source venv/bin/activate
 uvicorn main:app --reload --port 8000
 
 # Frontend (separate terminal)
-cd frontend && npm run dev
+cd frontend && pnpm dev
 ```
 
 To stop all servers:

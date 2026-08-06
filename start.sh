@@ -27,7 +27,7 @@ sleep 2
 # Start frontend
 echo "🌐 Starting frontend (Next.js) on http://localhost:3000 ..."
 cd "$SCRIPT_DIR/frontend"
-npm run dev &
+pnpm dev &
 FRONTEND_PID=$!
 
 echo ""

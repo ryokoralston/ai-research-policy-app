@@ -32,6 +32,6 @@ Use simple explanations so non-engineers can understand.
 ## Stack Quick Reference
 
 - **Backend**: Python + FastAPI — `cd backend && source venv/bin/activate && uvicorn main:app --reload --port 8000`
-- **Frontend**: Next.js 14 + TypeScript + Tailwind — `cd frontend && npm run dev` (port 3000)
+- **Frontend**: Next.js 15 + TypeScript + Tailwind — `cd frontend && pnpm dev` (port 3000). Package manager is **pnpm**, not npm — install scripts are denied by default in `frontend/pnpm-workspace.yaml`.
 - **Models**: claude-opus-4-6 (synthesis/reports), claude-haiku-3-5 (per-source summaries), claude-haiku-4-5 (dataset generation)
 - **Evals**: `python -m evals.eval_research_queries` / `eval_synthesis_quality` / `eval_prompt_versions`

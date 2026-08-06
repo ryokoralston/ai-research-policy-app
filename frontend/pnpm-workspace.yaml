@@ -1,0 +1,32 @@
+# Wait 7 days (10080 minutes) after a version is published before installing it.
+# This is the protection npm has no equivalent for: it applies to `pnpm add` and
+# `pnpm update` on a developer's machine, not just to Dependabot PRs. Compromised
+# releases are typically caught and unpublished well inside that window.
+# Installs from the committed lockfile are unaffected.
+minimumReleaseAge: 10080
+
+# pnpm blocks dependency install scripts by default -- install scripts are how
+# npm supply-chain attacks land. These are the keys pnpm 10 understands; do not
+# switch to pnpm 11's `allowBuilds:` map, because Vercel runs pnpm 9/10 for a
+# lockfileVersion 9.0 lockfile and would silently ignore it.
+#
+# Nothing is allowed: build, lint and typecheck all pass with both scripts
+# blocked. sharp gets its binary from optionalDependencies rather than from its
+# install script, and unrs-resolver's postinstall is only a verification check.
+onlyBuiltDependencies: []
+ignoredBuiltDependencies:
+  - sharp
+  - unrs-resolver
+
+# Advisories that are vendored inside next's own package.json
+# (dependencies.postcss / optionalDependencies.sharp), not versions this project
+# picks. No next release fixes them yet, and `audit fix --force` "solves" it by
+# downgrading next to 9.3.3 -- far worse than the advisories. Ignored explicitly
+# so the audit stays a signal for *new* problems. Drop entries once next ships a
+# real fix.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-qx2v-qp2m-jg93 # postcss
+    - GHSA-6g55-p6wh-862q # postcss
+    - GHSA-r28c-9q8g-f849 # postcss
+    - GHSA-f88m-g3jw-g9cj # sharp
