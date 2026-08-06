@@ -71,7 +71,10 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install frontend dependencies
         working-directory: frontend
-        run: npm ci
+        # --ignore-scripts blocks pre/post-install hooks, the delivery mechanism for
+        # npm supply-chain attacks (e.g. the 2026-08-04 keyv@6.0.0 compromise). This
+        # job only inspects the dependency tree, so no install script is needed.
+        run: npm ci --ignore-scripts
       - name: Run npm audit (high/critical only)
         working-directory: frontend
         # --ignore for GHSA-qx2v-qp2m-jg93, GHSA-6g55-p6wh-862q, GHSA-r28c-9q8g-f849
