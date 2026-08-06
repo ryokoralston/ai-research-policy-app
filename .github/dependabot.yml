@@ -1,0 +1,46 @@
+version: 2
+
+# Cooldown holds back version-update PRs until a release has been public long
+# enough for a compromised publish to be caught and unpublished. It does NOT
+# delay Dependabot *security* updates -- those still land immediately, which is
+# the behaviour we want.
+#
+# This only governs versions arriving via Dependabot PRs. Versions pulled by a
+# local `pnpm install` are covered separately by minimumReleaseAge in
+# pnpm-workspace.yaml.
+
+updates:
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+      semver-minor-days: 7
+      semver-patch-days: 3
+    groups:
+      # One PR per ecosystem slice keeps review volume sane on a solo repo.
+      types:
+        patterns:
+          - "@types/*"
+      eslint:
+        patterns:
+          - "eslint"
+          - "eslint-config-*"
+
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    cooldown:
+      default-days: 7
