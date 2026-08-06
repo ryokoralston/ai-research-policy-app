@@ -47,7 +47,7 @@ youtube-transcript-api==1.2.4
 # GHSA-537c-gmf6-5ccf, PYSEC-2026-35/36 — directly used for Fernet
 # (services/secret_crypto.py, services/auth.py), whose API is stable
 # across this range.
-cryptography==49.0.0
+cryptography==50.0.0
 bcrypt==5.0.0
 
 # --- Explicit floors on transitive deps flagged by pip-audit so a fresh
