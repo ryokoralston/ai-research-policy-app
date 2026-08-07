@@ -5,20 +5,12 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Trash2, File, FileText, Download, ChevronDown } from "lucide-react";
 import { api, downloadFile } from "@/lib/api";
 import type { RiskAnalysis, CitationConfidence } from "@/lib/types";
+import { ANALYSIS_TYPE_LABELS, SCORE_LABELS } from "@/lib/riskAnalysis";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import Badge from "@/components/ui/Badge";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import CitationConfidenceCard from "@/components/ui/CitationConfidenceCard";
-
-const SCORE_LABELS: Record<string, string> = {
-  capability: "Capability",
-  deployment: "Deployment Speed",
-  governance: "Governance Gap",
-  geopolitical: "Geopolitical Risk",
-  misuse: "Misuse Potential",
-  systemic: "Systemic Risk",
-};
 
 function ScoreBar({ label, score }: { label: string; score: number }) {
   const color = score >= 7 ? "bg-red-500" : score >= 5 ? "bg-amber-500" : "bg-green-500";
@@ -116,12 +108,6 @@ export default function AnalysisDetailPage() {
     ? (JSON.parse(analysis.citation_confidence_json) as CitationConfidence)
     : null;
 
-  const TYPE_LABELS: Record<string, string> = {
-    technology: "Technology",
-    policy: "Policy",
-    actor: "Actor/Organization",
-  };
-
   return (
     <div className="p-8 max-w-4xl mx-auto">
       {/* Header */}
@@ -136,7 +122,7 @@ export default function AnalysisDetailPage() {
           <h1 className="text-2xl font-bold text-slate-100 mb-2">{analysis.subject}</h1>
           <div className="flex items-center gap-3">
             <Badge variant="blue">
-              {TYPE_LABELS[analysis.analysis_type] || analysis.analysis_type}
+              {ANALYSIS_TYPE_LABELS[analysis.analysis_type] || analysis.analysis_type}
             </Badge>
             <Badge variant="green">Risk Analysis</Badge>
             <span className="text-slate-600 text-xs">

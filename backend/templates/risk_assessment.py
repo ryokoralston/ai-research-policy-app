@@ -30,7 +30,7 @@ RISK_ASSESSMENT_SECTIONS = [
         # assembled report), so the entry stays in this list; `instructions` is
         # dead for this key only and kept for reference/documentation.
         "instructions": (
-            "For each of the 6 risk dimensions below, provide:\n"
+            "For each of the risk dimensions below, provide:\n"
             "- Score: X/10 (with brief justification in parentheses)\n"
             "- 2-3 sentence analysis\n\n"
             "Dimensions to assess:\n"
@@ -39,7 +39,8 @@ RISK_ASSESSMENT_SECTIONS = [
             "3. **Governance & Oversight Gap** (1=well-governed, 10=governance vacuum)\n"
             "4. **Geopolitical Risk Concentration** (1=distributed/benign, 10=concentrated/adversarial)\n"
             "5. **Misuse Potential** (1=difficult to misuse, 10=trivially weaponizable)\n"
-            "6. **Systemic/Cascading Risk** (1=contained, 10=civilization-scale)"
+            "6. **Rights & Equity Impact** (1=negligible, 10=severe rights violations at scale)\n"
+            "7. **Systemic/Cascading Risk** (1=contained, 10=civilization-scale)"
         ),
     },
     {
@@ -89,9 +90,13 @@ RISK_ASSESSMENT_SECTIONS = [
 # / run_risk_analysis) instead of the single crammed-together prompt that
 # RISK_ASSESSMENT_SECTIONS' risk_dimensions["instructions"] describes.
 #
-# `key` MUST match the keys the scores-extraction prompt in run_risk_analysis
-# asks generate_json() for: capability, deployment, governance, geopolitical,
-# misuse, systemic. `title` matches the bold dimension names and `scale`
+# This list is the single source of truth for the dimension set: the
+# scores-extraction prompt in run_risk_analysis builds its required-key list by
+# reading `key` off these entries, so adding or renaming a dimension here
+# propagates to score extraction with no second edit. (The frontend's
+# SCORE_LABELS in lib/riskAnalysis.ts must still be given a label for any new
+# key — it falls back to the raw key if one is missing.) `title` matches the
+# bold dimension names and `scale`
 # matches the 1=.../10=... anchors previously embedded in the single prompt
 # above — same wording, just split out per-dimension. `criteria` is new:
 # 3-5 bullet points of specialized considerations unique to that dimension,
@@ -151,6 +156,18 @@ RISK_DIMENSIONS: list[dict] = [
             "Dual-use surface — how readily beneficial uses convert into harmful ones",
             "Technical expertise and resources an attacker would need to misuse it",
             "Existing precedents or documented instances of misuse",
+        ],
+    },
+    {
+        "key": "equity",
+        "title": "Rights & Equity Impact",
+        "scale": "(1=negligible, 10=severe rights violations at scale)",
+        "criteria": [
+            "Evidence of disparate performance or error rates across demographic groups",
+            "Exposure of fundamental rights — privacy, due process, non-discrimination, freedom of expression",
+            "Whether it operates in a domain where decisions materially affect life chances (employment, credit, housing, healthcare, education, law enforcement, migration)",
+            "Availability of recourse: can an affected person contest, appeal, or obtain an explanation of a decision",
+            "Distribution of benefits vs. harms — whether the populations bearing the risk are the ones gaining the value",
         ],
     },
     {

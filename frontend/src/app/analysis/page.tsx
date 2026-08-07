@@ -5,26 +5,12 @@ import { useRouter } from "next/navigation";
 import { Shield, Plus } from "lucide-react";
 import { api, postStream } from "@/lib/api";
 import type { RiskAnalysis, CitationConfidence } from "@/lib/types";
+import { ANALYSIS_TYPES, ANALYSIS_TYPE_LABELS, SCORE_LABELS } from "@/lib/riskAnalysis";
 import Badge from "@/components/ui/Badge";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import StreamingText from "@/components/ui/StreamingText";
 import CitationConfidenceCard from "@/components/ui/CitationConfidenceCard";
 import ReasoningPanel from "@/components/ui/ReasoningPanel";
-
-const ANALYSIS_TYPES = [
-  { id: "technology", label: "Technology" },
-  { id: "policy", label: "Policy" },
-  { id: "actor", label: "Actor/Organization" },
-];
-
-const SCORE_LABELS: Record<string, string> = {
-  capability: "Capability",
-  deployment: "Deployment Speed",
-  governance: "Governance Gap",
-  geopolitical: "Geopolitical Risk",
-  misuse: "Misuse Potential",
-  systemic: "Systemic Risk",
-};
 
 function ScoreBar({ label, score }: { label: string; score: number }) {
   const color = score >= 7 ? "bg-red-500" : score >= 5 ? "bg-amber-500" : "bg-green-500";
@@ -150,7 +136,7 @@ export default function AnalysisPage() {
               className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500"
             />
           </div>
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             {ANALYSIS_TYPES.map((t) => (
               <label key={t.id} className={`flex items-center gap-2 px-4 py-2 rounded-lg border cursor-pointer transition-colors text-sm ${
                 analysisType === t.id ? "border-blue-500 bg-blue-900/20 text-blue-300" : "border-slate-700 text-slate-400"
@@ -249,7 +235,7 @@ export default function AnalysisPage() {
                 <div className="flex items-center justify-between">
                   <p className="text-slate-100 font-medium text-sm">{a.subject}</p>
                   <div className="flex items-center gap-2">
-                    <Badge variant="blue">{a.analysis_type}</Badge>
+                    <Badge variant="blue">{ANALYSIS_TYPE_LABELS[a.analysis_type] || a.analysis_type}</Badge>
                     <span className="text-slate-600 text-xs">{new Date(a.created_at).toLocaleDateString()}</span>
                   </div>
                 </div>

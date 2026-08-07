@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 WEAK_DIMENSION_THRESHOLD = 6
 
 # MAX_DIMENSIONS_TO_FIX — bounded like every other loop in this codebase:
-# even if all 6 dimensions grade weak, only the 2 lowest-scoring get the
+# even if every dimension grades weak, only the 2 lowest-scoring get the
 # extra search+regenerate+re-grade treatment (one Tavily search + one LLM
 # generation + one grading call each), so worst-case added cost per analysis
 # is fixed regardless of how bad the initial pass is.
@@ -223,7 +223,7 @@ async def _fix_weak_dimensions(
     """Bounded evaluator-optimizer loop over the 6 risk_dimensions' individual
     grounding grades (see WEAK_DIMENSION_THRESHOLD / MAX_DIMENSIONS_TO_FIX).
 
-    Grades all 6 dimensions in parallel, then — for up to
+    Grades every dimension in parallel, then — for up to
     MAX_DIMENSIONS_TO_FIX of the weakest-scoring dimensions below
     WEAK_DIMENSION_THRESHOLD — runs one bounded extra-research pass each: a
     targeted Tavily search, one regeneration grounded in the new material,
@@ -427,9 +427,9 @@ async def run_risk_analysis(
 
         section_content = ""
         if section_key == "risk_dimensions":
-            # Parallel path: 6 independent per-dimension calls (see
-            # _build_dimension_prompt / _analyze_dimension) instead of one
-            # call cramming all 6 dimensions into a single prompt.
+            # Parallel path: one independent call per RISK_DIMENSIONS entry
+            # (see _build_dimension_prompt / _analyze_dimension) instead of one
+            # call cramming every dimension into a single prompt.
             #
             # Cache-ordering note: this launch happens after the
             # subject_profile section above has already made a
@@ -514,7 +514,7 @@ async def run_risk_analysis(
                 f"extract the numerical score (1-10) for each dimension.\n\n"
                 f"<dimension_analysis>\n{section_content}\n</dimension_analysis>\n\n"
                 f"Return a JSON object with exactly these keys: "
-                f"capability, deployment, governance, geopolitical, misuse, systemic"
+                f"{', '.join(dim['key'] for dim in RISK_DIMENSIONS)}"
             )
             try:
                 # temperature=0.0: fully deterministic — scores must be consistent

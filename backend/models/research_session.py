@@ -52,7 +52,9 @@ class RiskAnalysis(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     subject: Mapped[str] = mapped_column(String, nullable=False)
-    analysis_type: Mapped[str] = mapped_column(String, nullable=False)  # 'technology'|'policy'|'actor'
+    # Free-form, not an enum — see schemas/analysis.py. Frontend offers:
+    # 'technology'|'policy'|'actor'|'use_case'|'supply_chain'
+    analysis_type: Mapped[str] = mapped_column(String, nullable=False)
     content: Mapped[str | None] = mapped_column(Text)
     risk_scores_json: Mapped[str | None] = mapped_column("risk_scores", Text)  # JSON
     citation_confidence_json: Mapped[str | None] = mapped_column("citation_confidence", Text)  # JSON

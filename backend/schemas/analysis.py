@@ -4,7 +4,11 @@ from pydantic import BaseModel
 
 class AnalysisStartRequest(BaseModel):
     subject: str
-    analysis_type: str = "technology"  # 'technology' | 'policy' | 'actor'
+    # Free-form label describing what kind of thing is being assessed; it is
+    # injected verbatim into the analysis prompt, so it is deliberately not an
+    # enum. The frontend offers: 'technology' | 'policy' | 'actor' |
+    # 'use_case' | 'supply_chain'.
+    analysis_type: str = "technology"
     context: str | None = None
     run_web_research: bool = True
 

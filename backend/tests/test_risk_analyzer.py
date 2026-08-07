@@ -43,8 +43,10 @@ from services.risk_analyzer import (
 from services.tavily_client import SearchResult as TavilySearchResult
 from templates import RISK_DIMENSIONS
 
-_SCORES = {"capability": 7, "deployment": 5, "governance": 6,
-           "geopolitical": 4, "misuse": 8, "systemic": 5}
+# Derived from RISK_DIMENSIONS so a new dimension needs no edit here. Values
+# are deliberately varied (not all equal) so the round-trip assertions on
+# risk_scores_json would catch a per-key mix-up, not just a shape match.
+_SCORES = {dim["key"]: 4 + (i * 3) % 5 for i, dim in enumerate(RISK_DIMENSIONS)}
 
 
 async def _fake_stream_text_with_thinking(
@@ -132,7 +134,11 @@ def test_scores_extracted_and_saved():
     assert analysis.content and analysis.content.startswith("# Risk Assessment"), analysis.content[:50]
     assert json.loads(analysis.risk_scores_json) == _SCORES
     complete = [e for e in events if e.startswith("event: complete")]
-    assert len(complete) == 1 and '"misuse": 8' in complete[0]
+    assert len(complete) == 1, complete
+    # Spot-check that the scores ride along in the complete event, using a key
+    # taken from _SCORES rather than a literal so it survives dimension changes.
+    probe_key, probe_value = next(iter(_SCORES.items()))
+    assert f'"{probe_key}": {probe_value}' in complete[0], complete[0]
     db.close()
 
 
@@ -417,7 +423,7 @@ def test_dimension_grading_skipped_without_source_material():
 
 
 def test_all_dimensions_well_grounded_no_fixup():
-    """All 6 dimensions grade >= WEAK_DIMENSION_THRESHOLD → no Tavily search,
+    """Every dimension grades >= WEAK_DIMENSION_THRESHOLD → no Tavily search,
     dimension content unchanged, no extra revision stream calls."""
     initial_scores = {title: 8 for title in _ALL_TITLES}
     fake_verify = _fake_verify_grounding_factory(initial_scores)
@@ -432,7 +438,7 @@ def test_all_dimensions_well_grounded_no_fixup():
     assert search_calls == [], "no dimension is weak — Tavily must not be called"
     assert revision_calls == [], "no dimension is weak — no extra revision generation calls expected"
     blocks = _dimension_token_events(events)
-    assert len(blocks) == 6
+    assert len(blocks) == len(RISK_DIMENSIONS)
     for block in blocks:
         assert "Original analysis for" in block, block
         assert "Revised analysis for" not in block, block
@@ -440,11 +446,13 @@ def test_all_dimensions_well_grounded_no_fixup():
 
 
 def test_more_than_cap_weak_dimensions_only_two_fixed():
-    """All 6 dimensions grade weak → only MAX_DIMENSIONS_TO_FIX (2)
+    """Every dimension grades weak → only MAX_DIMENSIONS_TO_FIX (2)
     lowest-scoring dimensions get a Tavily search + revision attempt."""
-    # Distinct ascending scores, all below threshold, so the two weakest are
-    # unambiguous: capability(1) and deployment(2).
-    ordered_scores = [1, 2, 3, 4, 5, 5.5]
+    # Distinct ascending scores spread over [1, 5.5], so the two weakest are
+    # unambiguously the first two dimensions (capability, deployment) and every
+    # score stays under the threshold no matter how many dimensions exist.
+    n = len(_ALL_TITLES)
+    ordered_scores = [1 + i * 4.5 / (n - 1) for i in range(n)]
     assert all(s < WEAK_DIMENSION_THRESHOLD for s in ordered_scores)
     initial_scores = dict(zip(_ALL_TITLES, ordered_scores))
     # Regrade ties initial score so acceptance doesn't matter for this test.

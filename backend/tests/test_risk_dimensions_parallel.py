@@ -62,9 +62,9 @@ def _title_for_prompt(prompt: str) -> str:
 
 async def _fake_generate_json(prompt, **kwargs):
     """Fixed scores payload — these tests care about the risk_dimensions
-    streaming path, not score extraction, so keep this a no-op success."""
-    return {"capability": 5, "deployment": 5, "governance": 5,
-            "geopolitical": 5, "misuse": 5, "systemic": 5}
+    streaming path, not score extraction, so keep this a no-op success.
+    Derived from RISK_DIMENSIONS so adding a dimension needs no edit here."""
+    return {dim["key"]: 5 for dim in RISK_DIMENSIONS}
 
 
 def _run(fake_stream):
@@ -118,9 +118,9 @@ def _dimension_token_events(events):
     return out
 
 
-# ── (a) exactly 6 dimension calls, each prompt isolated to its own title ────
+# ── (a) one call per dimension, each prompt isolated to its own title ──────
 
-def test_exactly_six_dimension_calls_with_isolated_titles():
+def test_one_call_per_dimension_with_isolated_titles():
     calls = []
 
     async def counting_fake(prompt, system="", model=None, max_tokens=8192,
@@ -135,7 +135,9 @@ def test_exactly_six_dimension_calls_with_isolated_titles():
     _run(counting_fake)
 
     dimension_calls = [p for p in calls if _is_dimension_prompt(p)]
-    assert len(dimension_calls) == 6, f"expected 6 dimension calls, got {len(dimension_calls)}"
+    assert len(dimension_calls) == len(RISK_DIMENSIONS), (
+        f"expected {len(RISK_DIMENSIONS)} dimension calls, got {len(dimension_calls)}"
+    )
 
     all_titles = [dim["title"] for dim in RISK_DIMENSIONS]
     for prompt in dimension_calls:
@@ -145,9 +147,9 @@ def test_exactly_six_dimension_calls_with_isolated_titles():
         )
 
 
-# ── (b) true concurrency: all 6 dimension calls in flight simultaneously ────
+# ── (b) true concurrency: every dimension call in flight simultaneously ────
 
-def test_six_dimension_calls_run_concurrently():
+def test_all_dimension_calls_run_concurrently():
     state = {"in_flight": 0, "max_in_flight": 0}
     all_entered = asyncio.Event()
 
@@ -158,8 +160,8 @@ def test_six_dimension_calls_run_concurrently():
             return
         state["in_flight"] += 1
         state["max_in_flight"] = max(state["max_in_flight"], state["in_flight"])
-        if state["in_flight"] >= 6:
-            # Last of the 6 to enter — release everyone staggered behind
+        if state["in_flight"] >= len(RISK_DIMENSIONS):
+            # Last one to enter — release everyone staggered behind
             # asyncio.sleep(0)-equivalent suspension (Event.wait()).
             all_entered.set()
         else:
@@ -169,8 +171,9 @@ def test_six_dimension_calls_run_concurrently():
 
     _run(concurrency_fake)
 
-    assert state["max_in_flight"] == 6, (
-        f"expected all 6 dimension calls in flight at once, got max_in_flight={state['max_in_flight']}"
+    assert state["max_in_flight"] == len(RISK_DIMENSIONS), (
+        f"expected all {len(RISK_DIMENSIONS)} dimension calls in flight at once, "
+        f"got max_in_flight={state['max_in_flight']}"
     )
 
 
@@ -196,7 +199,7 @@ def test_out_of_order_completion_preserves_canonical_emission_order():
     events, analysis = _run(staggered_fake)
 
     blocks = _dimension_token_events(events)
-    assert len(blocks) == 6, blocks
+    assert len(blocks) == len(RISK_DIMENSIONS), blocks
     for i, dim in enumerate(RISK_DIMENSIONS):
         assert dim["title"] in blocks[i], (
             f"expected emitted block {i} to be dimension {dim['title']!r}, got: {blocks[i][:120]!r}"
@@ -210,7 +213,7 @@ def test_out_of_order_completion_preserves_canonical_emission_order():
     )
 
 
-# ── (d) one failing dimension → placeholder; other five unaffected ──────────
+# ── (d) one failing dimension → placeholder; the rest unaffected ───────────
 
 def test_one_dimension_failure_yields_placeholder_others_intact():
     failing_title = RISK_DIMENSIONS[2]["title"]  # arbitrary middle dimension
@@ -225,12 +228,12 @@ def test_one_dimension_failure_yields_placeholder_others_intact():
             raise RuntimeError("simulated API failure")
         yield ("text", f"### {title}\nScore: 5/10 (ok)\nAnalysis for {title}.")
 
-    # Must not raise — one failing dimension must not sink the other five or
+    # Must not raise — one failing dimension must not sink the others or
     # the analysis as a whole.
     events, analysis = _run(flaky_fake)
 
     blocks = _dimension_token_events(events)
-    assert len(blocks) == 6, blocks
+    assert len(blocks) == len(RISK_DIMENSIONS), blocks
 
     for i, dim in enumerate(RISK_DIMENSIONS):
         if dim["title"] == failing_title:
@@ -284,8 +287,8 @@ def _run_test(name, fn):
 if __name__ == "__main__":
     print("\nRunning risk_dimensions parallel-analysis tests...\n")
 
-    _run_test("exactly 6 dimension calls, isolated titles", test_exactly_six_dimension_calls_with_isolated_titles)
-    _run_test("six dimension calls run concurrently", test_six_dimension_calls_run_concurrently)
+    _run_test("one call per dimension, isolated titles", test_one_call_per_dimension_with_isolated_titles)
+    _run_test("all dimension calls run concurrently", test_all_dimension_calls_run_concurrently)
     _run_test("out-of-order completion preserves canonical emission order", test_out_of_order_completion_preserves_canonical_emission_order)
     _run_test("one dimension failure yields placeholder, others intact", test_one_dimension_failure_yields_placeholder_others_intact)
     _run_test("_build_dimension_prompt contains scale + criteria", test_build_dimension_prompt_contains_scale_and_criteria)
