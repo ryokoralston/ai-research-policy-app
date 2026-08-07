@@ -9,23 +9,9 @@ import { ANALYSIS_TYPE_LABELS, SCORE_LABELS } from "@/lib/riskAnalysis";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import Badge from "@/components/ui/Badge";
+import ScoreBar from "@/components/ui/ScoreBar";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import CitationConfidenceCard from "@/components/ui/CitationConfidenceCard";
-
-function ScoreBar({ label, score }: { label: string; score: number }) {
-  const color = score >= 7 ? "bg-red-500" : score >= 5 ? "bg-amber-500" : "bg-green-500";
-  return (
-    <div>
-      <div className="flex justify-between text-xs mb-1">
-        <span className="text-slate-400">{label}</span>
-        <span className="text-slate-100 font-mono font-semibold">{score}/10</span>
-      </div>
-      <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-        <div className={`h-full ${color} rounded-full transition-all`} style={{ width: `${score * 10}%` }} />
-      </div>
-    </div>
-  );
-}
 
 function ExportMenu({ analysisId }: { analysisId: string }) {
   const [open, setOpen] = useState(false);
@@ -149,7 +135,7 @@ export default function AnalysisDetailPage() {
           </h2>
           <div className="grid grid-cols-2 gap-4">
             {Object.entries(scores).map(([key, val]) => (
-              <ScoreBar key={key} label={SCORE_LABELS[key] || key} score={val} />
+              <ScoreBar key={key} label={SCORE_LABELS[key] || key} score={val} size="md" />
             ))}
           </div>
         </div>

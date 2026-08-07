@@ -7,25 +7,11 @@ import { api, postStream } from "@/lib/api";
 import type { RiskAnalysis, CitationConfidence } from "@/lib/types";
 import { ANALYSIS_TYPES, ANALYSIS_TYPE_LABELS, SCORE_LABELS } from "@/lib/riskAnalysis";
 import Badge from "@/components/ui/Badge";
+import ScoreBar from "@/components/ui/ScoreBar";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import StreamingText from "@/components/ui/StreamingText";
 import CitationConfidenceCard from "@/components/ui/CitationConfidenceCard";
 import ReasoningPanel from "@/components/ui/ReasoningPanel";
-
-function ScoreBar({ label, score }: { label: string; score: number }) {
-  const color = score >= 7 ? "bg-red-500" : score >= 5 ? "bg-amber-500" : "bg-green-500";
-  return (
-    <div>
-      <div className="flex justify-between text-xs mb-1">
-        <span className="text-slate-400">{label}</span>
-        <span className="text-slate-100 font-mono">{score}/10</span>
-      </div>
-      <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
-        <div className={`h-full ${color} rounded-full`} style={{ width: `${score * 10}%` }} />
-      </div>
-    </div>
-  );
-}
 
 export default function AnalysisPage() {
   const router = useRouter();
