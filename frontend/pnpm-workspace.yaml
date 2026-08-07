@@ -18,15 +18,12 @@ ignoredBuiltDependencies:
   - sharp
   - unrs-resolver
 
-# Advisories that are vendored inside next's own package.json
-# (dependencies.postcss / optionalDependencies.sharp), not versions this project
-# picks. No next release fixes them yet, and `audit fix --force` "solves" it by
-# downgrading next to 9.3.3 -- far worse than the advisories. Ignored explicitly
-# so the audit stays a signal for *new* problems. Drop entries once next ships a
-# real fix.
-auditConfig:
-  ignoreGhsas:
-    - GHSA-qx2v-qp2m-jg93 # postcss
-    - GHSA-6g55-p6wh-862q # postcss
-    - GHSA-r28c-9q8g-f849 # postcss
-    - GHSA-f88m-g3jw-g9cj # sharp
+# auditConfig.ignoreGhsas used to suppress three postcss advisories and one
+# sharp advisory, because those versions are vendored inside next's own
+# package.json (dependencies.postcss / optionalDependencies.sharp) and no next
+# 15 release fixes them -- 15.5.23 still pins postcss 8.4.31 and sharp ^0.34.3.
+# They are now fixed for real by pnpm.overrides in package.json instead, so the
+# suppressions are gone and the audit is an honest signal again. If an override
+# ever has to be dropped, put the GHSA back here rather than leaving the audit
+# red. Do NOT run `audit fix --force`: it "solves" these by downgrading next to
+# 9.3.3, far worse than the advisories.
