@@ -58,6 +58,10 @@ class RiskAnalysis(Base):
     content: Mapped[str | None] = mapped_column(Text)
     risk_scores_json: Mapped[str | None] = mapped_column("risk_scores", Text)  # JSON
     citation_confidence_json: Mapped[str | None] = mapped_column("citation_confidence", Text)  # JSON
+    # JSON {dimension_key: grounding confidence 0-10}. Distinct from
+    # risk_scores (how bad the risk is) and from citation_confidence (one
+    # grade for the whole document) — this is per-dimension evidence quality.
+    dimension_confidence_json: Mapped[str | None] = mapped_column("dimension_confidence", Text)
     sources_json: Mapped[str | None] = mapped_column("sources", Text)  # JSON array of URLs
     session_id: Mapped[str | None] = mapped_column(String, ForeignKey("research_sessions.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

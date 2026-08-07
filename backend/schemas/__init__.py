@@ -10,7 +10,7 @@ from .report import (
     ReportUpdateRequest, ReportDraftRequest,
 )
 from .analysis import (
-    AnalysisStartRequest, RiskAnalysisResponse,
+    AnalysisStartRequest, RiskAnalysisResponse, SourceRef,
 )
 from .debate import (
     DebateStartRequest, DebateResponse, DebateDetail, DebateArgumentResponse,
@@ -22,6 +22,6 @@ __all__ = [
     "DocumentResponse", "DocumentDetail", "DocumentAskRequest", "DocumentCitedAskRequest",
     "ReportGenerateRequest", "ReportResponse", "ReportDetail", "ReportSectionResponse",
     "ReportUpdateRequest",
-    "AnalysisStartRequest", "RiskAnalysisResponse",
+    "AnalysisStartRequest", "RiskAnalysisResponse", "SourceRef",
     "DebateStartRequest", "DebateResponse", "DebateDetail", "DebateArgumentResponse",
 ]

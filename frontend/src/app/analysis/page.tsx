@@ -27,6 +27,7 @@ export default function AnalysisPage() {
   const [outputText, setOutputText] = useState("");
   const [thinkingText, setThinkingText] = useState("");
   const [scores, setScores] = useState<Record<string, number> | null>(null);
+  const [dimensionConfidence, setDimensionConfidence] = useState<Record<string, number> | null>(null);
   const [citationConfidence, setCitationConfidence] = useState<CitationConfidence | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [completedAnalysisId, setCompletedAnalysisId] = useState<string | null>(null);
@@ -45,6 +46,7 @@ export default function AnalysisPage() {
     setOutputText("");
     setThinkingText("");
     setScores(null);
+    setDimensionConfidence(null);
     setCitationConfidence(null);
     setError(null);
     abortRef.current = new AbortController();
@@ -63,6 +65,8 @@ export default function AnalysisPage() {
             setOutputText((prev) => prev + (d.text as string));
           } else if (event === "scores") {
             setScores(d.scores as Record<string, number>);
+          } else if (event === "dimension_confidence") {
+            setDimensionConfidence(d.confidence as Record<string, number>);
           } else if (event === "verification") {
             setCitationConfidence({
               confidence_score: d.confidence_score as number | undefined,
@@ -174,7 +178,12 @@ export default function AnalysisPage() {
               <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
                 <h3 className="text-slate-100 font-semibold text-sm mb-4">Risk Scores</h3>
                 {Object.entries(scores).map(([key, val]) => (
-                  <ScoreBar key={key} label={SCORE_LABELS[key] || key} score={val} />
+                  <ScoreBar
+                    key={key}
+                    label={SCORE_LABELS[key] || key}
+                    score={val}
+                    confidence={dimensionConfidence?.[key]}
+                  />
                 ))}
               </div>
             )}

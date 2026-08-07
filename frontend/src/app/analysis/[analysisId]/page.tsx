@@ -12,6 +12,7 @@ import Badge from "@/components/ui/Badge";
 import ScoreBar from "@/components/ui/ScoreBar";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import CitationConfidenceCard from "@/components/ui/CitationConfidenceCard";
+import SourceList from "@/components/ui/SourceList";
 
 function ExportMenu({ analysisId }: { analysisId: string }) {
   const [open, setOpen] = useState(false);
@@ -93,6 +94,9 @@ export default function AnalysisDetailPage() {
   const citationConfidence = analysis.citation_confidence_json
     ? (JSON.parse(analysis.citation_confidence_json) as CitationConfidence)
     : null;
+  const dimensionConfidence = analysis.dimension_confidence_json
+    ? (JSON.parse(analysis.dimension_confidence_json) as Record<string, number>)
+    : null;
 
   return (
     <div className="p-8 max-w-4xl mx-auto">
@@ -135,9 +139,21 @@ export default function AnalysisDetailPage() {
           </h2>
           <div className="grid grid-cols-2 gap-4">
             {Object.entries(scores).map(([key, val]) => (
-              <ScoreBar key={key} label={SCORE_LABELS[key] || key} score={val} size="md" />
+              <ScoreBar
+                key={key}
+                label={SCORE_LABELS[key] || key}
+                score={val}
+                confidence={dimensionConfidence?.[key]}
+                size="md"
+              />
             ))}
           </div>
+          {dimensionConfidence && (
+            <p className="text-xs text-slate-500 mt-4">
+              <span className="font-mono">ev</span> = grounding confidence (0-10): how well the
+              sources support that dimension, scored separately from the risk itself.
+            </p>
+          )}
         </div>
       )}
 
@@ -154,6 +170,9 @@ export default function AnalysisDetailPage() {
           <p className="text-slate-500 text-sm">No content available.</p>
         )}
       </div>
+
+      {/* Resolves the [Source N] markers cited throughout the content above */}
+      <SourceList sources={analysis.sources} />
     </div>
   );
 }

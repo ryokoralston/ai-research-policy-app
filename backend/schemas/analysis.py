@@ -13,6 +13,14 @@ class AnalysisStartRequest(BaseModel):
     run_web_research: bool = True
 
 
+class SourceRef(BaseModel):
+    """One resolved [Source N] citation. `order` is the number as it appears
+    in the assessment text."""
+    order: int
+    title: str
+    url: str
+
+
 class RiskAnalysisResponse(BaseModel):
     id: str
     subject: str
@@ -20,8 +28,12 @@ class RiskAnalysisResponse(BaseModel):
     content: str | None
     risk_scores_json: str | None
     citation_confidence_json: str | None
+    dimension_confidence_json: str | None
     sources_json: str | None
     session_id: str | None
     created_at: datetime
+    # Resolved citation list. Populated only by the detail endpoint — the list
+    # endpoint leaves it empty rather than running a source lookup per row.
+    sources: list[SourceRef] = []
 
     model_config = {"from_attributes": True}

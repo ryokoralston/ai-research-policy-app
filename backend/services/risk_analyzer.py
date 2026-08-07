@@ -8,7 +8,8 @@ from typing import AsyncIterator
 
 from sqlalchemy.orm import Session
 
-from models import RiskAnalysis, ResearchSession
+from models import RiskAnalysis, ResearchSession, SearchResult
+from services.analysis_sources import collect_source
 from schemas import AnalysisStartRequest
 from services.anthropic_client import generate_json, stream_text_with_thinking, sse_event, UNTRUSTED_CONTENT_GUARD
 from services.citation_verifier import verify_grounding
@@ -81,8 +82,8 @@ def _build_dimension_prompt(dimension: dict) -> str:
     shared_context, passed separately as `cached_context` to
     stream_text_with_thinking, so this string only ever varies by dimension.
 
-    Mentions exactly one dimension's title — never any of the other five —
-    so the 6 parallel calls stay independent and don't bleed into each
+    Mentions exactly one dimension's title — never any of the others —
+    so the parallel calls stay independent and don't bleed into each
     other's output. Requests the exact output format
     run_risk_analysis expects when assembling section_content:
         ### {title}
@@ -109,7 +110,7 @@ async def _analyze_dimension(
 ) -> tuple[str, str, str]:
     """Run one risk dimension's parallel analysis call, fully buffering both
     the thinking and text streams before returning. The caller in
-    run_risk_analysis awaits all 6 of these tasks first, collecting their
+    run_risk_analysis awaits all of these tasks first, collecting their
     buffered output into a dimension_results dict WITHOUT emitting any SSE
     events yet; only after an optional per-dimension grading/fix-up pass
     (see _fix_weak_dimensions) does it loop over RISK_DIMENSIONS in
@@ -123,9 +124,9 @@ async def _analyze_dimension(
 
     On any exception (API error, timeout, malformed stream, ...) logs a
     warning and returns a short English placeholder for content with empty
-    thinking, instead of propagating — this task runs concurrently with 5
+    thinking, instead of propagating — this task runs concurrently with its
     siblings via asyncio.create_task, and one dimension failing must not
-    sink the other five or the section as a whole.
+    sink the others or the section as a whole.
     """
     prompt = _build_dimension_prompt(dimension)
     thinking_text = ""
@@ -220,7 +221,7 @@ async def _fix_weak_dimensions(
     section_system: str,
     shared_context: str,
 ) -> dict[str, tuple[str, str]]:
-    """Bounded evaluator-optimizer loop over the 6 risk_dimensions' individual
+    """Bounded evaluator-optimizer loop over the risk_dimensions' individual
     grounding grades (see WEAK_DIMENSION_THRESHOLD / MAX_DIMENSIONS_TO_FIX).
 
     Grades every dimension in parallel, then — for up to
@@ -237,9 +238,14 @@ async def _fix_weak_dimensions(
     dimension's failure never blocks the others or raises out of this
     function.
 
-    Returns dimension_results, with 0 or more entries replaced in place by
-    accepted revisions. Callers should treat the return value as the
-    complete, final set of (thinking_text, content_text) pairs to emit.
+    Returns (dimension_results, confidence), where dimension_results has 0 or
+    more entries replaced in place by accepted revisions — callers should treat
+    it as the complete, final set of (thinking_text, content_text) pairs to
+    emit — and confidence maps dimension key to the grounding score that
+    belongs to the content actually returned: the re-grade where a revision was
+    accepted, the original grade otherwise. Dimensions whose grading call
+    failed are absent from confidence rather than defaulting to a score, so a
+    grader outage reads as "unknown" instead of "well grounded".
     """
     grade_tasks = {
         key: asyncio.create_task(_grade_dimension_safe(content_text, source_material))
@@ -262,8 +268,18 @@ async def _fix_weak_dimensions(
     weak_keys.sort(key=_score)
     weak_keys = weak_keys[:MAX_DIMENSIONS_TO_FIX]
 
+    # Confidence reported for the content that ends up being returned. Seeded
+    # with the initial grades; a weak dimension whose revision is accepted
+    # below overwrites its entry with the re-grade. Dimensions whose grading
+    # failed (grade is None) are simply never added.
+    confidence: dict[str, float] = {
+        key: grade["confidence_score"]
+        for key, grade in grades.items()
+        if grade is not None and grade.get("confidence_score") is not None
+    }
+
     if not weak_keys:
-        return dimension_results
+        return dimension_results, confidence
 
     dimensions_by_key = {dim["key"]: dim for dim in RISK_DIMENSIONS}
 
@@ -341,8 +357,13 @@ async def _fix_weak_dimensions(
 
         if regrade.get("confidence_score", 0) >= grade.get("confidence_score", 0):
             dimension_results[key] = (revised_thinking, revised_content)
+            # The revision is what will be emitted, so its re-grade is the
+            # score that describes it. Rejected revisions leave the original
+            # grade in place, which still matches the content being kept.
+            if regrade.get("confidence_score") is not None:
+                confidence[key] = regrade["confidence_score"]
 
-    return dimension_results
+    return dimension_results, confidence
 
 
 def _strip_duplicate_heading(content: str, section_title: str = "") -> str:
@@ -398,6 +419,20 @@ async def run_risk_analysis(
         analysis = db.query(RiskAnalysis).filter(RiskAnalysis.id == analysis_id).first()
         if analysis:
             analysis.session_id = session.id
+            # Snapshot the citation list now, while it matches the synthesis
+            # the assessment is about to be written from. run_research_agent
+            # has fully returned by here, including any gap-close rounds, so
+            # every [Source N] the model can cite already exists as a row.
+            # Stored on the analysis so an export survives deletion of the
+            # research session.
+            rows = (
+                db.query(SearchResult)
+                .filter(SearchResult.session_id == session.id)
+                .order_by(SearchResult.result_order)
+                .all()
+            )
+            if rows:
+                analysis.sources_json = json.dumps([collect_source(r) for r in rows])
             db.commit()
 
     yield sse_event("status", {"message": "Generating risk assessment..."})
@@ -405,6 +440,10 @@ async def run_risk_analysis(
     # Generate sections
     full_content_parts: list[str] = []
     extracted_scores: dict = {}
+    # Per-dimension grounding grades, filled in by the _fix_weak_dimensions
+    # pass below. Stays empty when there is no source material to grade
+    # against (run_web_research off and no context supplied).
+    dimension_confidence: dict[str, float] = {}
 
     # Shared/cacheable prefix: subject + analysis type + research material —
     # byte-identical across every section call below. Passed as
@@ -435,18 +474,20 @@ async def run_risk_analysis(
             # subject_profile section above has already made a
             # stream_text_with_thinking call against this same
             # shared_context, so the ephemeral cache_control write on
-            # shared_context is already warm by the time these 6 tasks
+            # shared_context is already warm by the time these tasks
             # start — they land as cache READS, not competing cache
             # writes. Moving this section earlier in the loop (or removing
-            # subject_profile) would have all 6 tasks race to write the
+            # subject_profile) would have every task race to write the
             # same cache entry instead of reading an existing one.
-            yield sse_event("status", {"message": "Analyzing 6 risk dimensions in parallel..."})
+            yield sse_event("status", {
+                "message": f"Analyzing {len(RISK_DIMENSIONS)} risk dimensions in parallel..."
+            })
 
             tasks = [
                 asyncio.create_task(_analyze_dimension(dimension, section_system, shared_context))
                 for dimension in RISK_DIMENSIONS
             ]
-            # Phase 1: await all 6 tasks first, collecting their buffered
+            # Phase 1: await all tasks first, collecting their buffered
             # output into dimension_results WITHOUT emitting any SSE events
             # yet. The tasks above are already scheduled and running
             # concurrently via asyncio.create_task; this gather only
@@ -470,7 +511,7 @@ async def run_risk_analysis(
             if source_material:
                 yield sse_event("status", {"message": "Verifying dimension grounding..."})
                 try:
-                    dimension_results = await _fix_weak_dimensions(
+                    dimension_results, dimension_confidence = await _fix_weak_dimensions(
                         dimension_results, request.subject, source_material,
                         section_system, shared_context,
                     )
@@ -479,6 +520,10 @@ async def run_risk_analysis(
                         "Per-dimension weak-grounding fix-up failed for %r — "
                         "continuing with original dimension content",
                         request.subject, exc_info=True,
+                    )
+                if dimension_confidence:
+                    yield sse_event(
+                        "dimension_confidence", {"confidence": dimension_confidence}
                     )
 
             # Phase 3: emit thinking/token events in RISK_DIMENSIONS
@@ -560,6 +605,9 @@ async def run_risk_analysis(
         analysis.citation_confidence_json = (
             json.dumps(citation_confidence) if citation_confidence else None
         )
+        analysis.dimension_confidence_json = (
+            json.dumps(dimension_confidence) if dimension_confidence else None
+        )
         db.commit()
 
     if citation_confidence:
@@ -571,6 +619,7 @@ async def run_risk_analysis(
     yield sse_event("complete", {
         "analysis_id": analysis_id,
         "scores": extracted_scores,
+        "dimension_confidence": dimension_confidence,
         "citation_confidence": citation_confidence,
         "word_count": len(full_content.split()),
         "event_type": "complete",

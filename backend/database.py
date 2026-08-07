@@ -39,6 +39,7 @@ def init_db():
     normalize_legacy_report_status()
     add_citation_confidence_columns()
     add_debate_consensus_column()
+    add_dimension_confidence_column()
     print("Database initialized.")
 
 
@@ -96,6 +97,25 @@ def add_debate_consensus_column():
         try:
             conn.execute(
                 text("ALTER TABLE debates ADD COLUMN consensus TEXT")
+            )
+        except Exception:
+            pass  # column already exists, or table doesn't exist yet
+
+
+def add_dimension_confidence_column():
+    """Idempotent migration: add the dimension_confidence column to risk_analyses.
+
+    Stores the per-dimension grounding grades that risk_analyzer._fix_weak_dimensions
+    already computed but previously discarded — it graded every dimension, used the
+    scores only to pick which ones to re-research, and then threw them away. The
+    column keeps them so the UI can show "score 8/10, but grounded at 4/10".
+    """
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        try:
+            conn.execute(
+                text("ALTER TABLE risk_analyses ADD COLUMN dimension_confidence TEXT")
             )
         except Exception:
             pass  # column already exists, or table doesn't exist yet

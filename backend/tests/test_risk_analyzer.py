@@ -590,6 +590,119 @@ def test_tavily_empty_results_skips_dimension_gracefully():
     db.close()
 
 
+# ── Per-dimension grounding confidence is kept, not discarded ────────────────
+# _fix_weak_dimensions graded every dimension all along and used the scores
+# only to pick which ones to re-research. These pin that the grades now
+# survive: persisted on the analysis and emitted as their own SSE event, with
+# the score always describing the content that actually shipped.
+
+def _dimension_confidence_events(events):
+    return [
+        json.loads(e.split("data: ", 1)[1].strip())["confidence"]
+        for e in events if e.startswith("event: dimension_confidence")
+    ]
+
+
+def _key_for_title(title: str) -> str:
+    return next(d["key"] for d in RISK_DIMENSIONS if d["title"] == title)
+
+
+def test_dimension_confidence_persisted_and_emitted():
+    """Every dimension's grounding grade is saved and streamed, keyed the same
+    way risk_scores_json is so the UI can line them up."""
+    initial_scores = {title: 8 for title in _ALL_TITLES}
+    analysis, events, db = _run_analysis(
+        _fake_gj_scores,
+        fake_verify_grounding=_fake_verify_grounding_factory(initial_scores),
+        fake_stream=_dimension_aware_stream(),
+    )
+    stored = json.loads(analysis.dimension_confidence_json)
+    assert set(stored) == {d["key"] for d in RISK_DIMENSIONS}, stored
+    assert set(stored.values()) == {8}, stored
+
+    emitted = _dimension_confidence_events(events)
+    assert len(emitted) == 1, emitted
+    assert emitted[0] == stored, (emitted[0], stored)
+    db.close()
+
+
+def test_dimension_confidence_uses_regrade_when_revision_accepted():
+    """An accepted revision replaces the content, so the stored confidence must
+    be the re-grade — reporting the original score would describe text that is
+    no longer in the document."""
+    weak_title = _ALL_TITLES[0]
+    fake_verify = _fake_verify_grounding_factory(
+        {weak_title: 2}, regrade_scores={weak_title: 9},
+    )
+    search_calls = []
+    analysis, events, db = _run_analysis(
+        _fake_gj_scores, fake_verify_grounding=fake_verify,
+        fake_stream=_dimension_aware_stream(),
+        fake_tavily_client_cls=_make_tavily_client_cls(search_calls),
+    )
+    blocks = _dimension_token_events(events)
+    idx = _ALL_TITLES.index(weak_title)
+    assert f"Revised analysis for {weak_title}" in blocks[idx], "precondition: revision accepted"
+
+    stored = json.loads(analysis.dimension_confidence_json)
+    assert stored[_key_for_title(weak_title)] == 9, stored
+    db.close()
+
+
+def test_dimension_confidence_keeps_original_score_when_revision_rejected():
+    """A rejected revision leaves the original content in place, so its
+    original grade is still the one that describes it."""
+    weak_title = _ALL_TITLES[0]
+    fake_verify = _fake_verify_grounding_factory(
+        {weak_title: 5}, regrade_scores={weak_title: 1},
+    )
+    search_calls = []
+    analysis, events, db = _run_analysis(
+        _fake_gj_scores, fake_verify_grounding=fake_verify,
+        fake_stream=_dimension_aware_stream(),
+        fake_tavily_client_cls=_make_tavily_client_cls(search_calls),
+    )
+    blocks = _dimension_token_events(events)
+    idx = _ALL_TITLES.index(weak_title)
+    assert f"Original analysis for {weak_title}" in blocks[idx], "precondition: revision rejected"
+
+    stored = json.loads(analysis.dimension_confidence_json)
+    assert stored[_key_for_title(weak_title)] == 5, stored
+    db.close()
+
+
+def test_dimension_confidence_omits_dimension_whose_grading_failed():
+    """A grader failure must read as "unknown", not as a passing score — the
+    key is absent rather than defaulted, so the UI shows nothing for it."""
+    failing_title = _ALL_TITLES[2]
+    graded = _fake_verify_grounding_factory({title: 8 for title in _ALL_TITLES})
+
+    async def flaky_verify(content, source_material):
+        if _title_in(content) == failing_title and "Revised analysis for" not in content:
+            raise RuntimeError("grader down")
+        return await graded(content, source_material)
+
+    analysis, events, db = _run_analysis(
+        _fake_gj_scores, fake_verify_grounding=flaky_verify,
+        fake_stream=_dimension_aware_stream(),
+    )
+    stored = json.loads(analysis.dimension_confidence_json)
+    assert _key_for_title(failing_title) not in stored, stored
+    assert len(stored) == len(RISK_DIMENSIONS) - 1, stored
+    db.close()
+
+
+def test_dimension_confidence_absent_without_source_material():
+    """No source material means nothing to grade against — the whole grading
+    pass is skipped, so no confidence is stored or emitted."""
+    analysis, events, db = _run_analysis(
+        _fake_gj_scores, context=None, fake_stream=_dimension_aware_stream(),
+    )
+    assert analysis.dimension_confidence_json is None
+    assert _dimension_confidence_events(events) == []
+    db.close()
+
+
 def test_build_dimension_revision_prompt_contains_required_elements():
     """Pure function test — no mocking. The revision prompt must include the
     previous content, the unsupported claims, the new source material, and
@@ -667,6 +780,12 @@ if __name__ == "__main__":
     _run("weak dimension revision accepted when regrade equal (tie)", test_weak_dimension_revision_accepted_when_regrade_equal)
     _run("Tavily search failure skips dimension gracefully", test_tavily_search_failure_skips_dimension_gracefully)
     _run("Tavily empty results skips dimension gracefully", test_tavily_empty_results_skips_dimension_gracefully)
+    _run("dimension confidence persisted and emitted", test_dimension_confidence_persisted_and_emitted)
+    _run("dimension confidence uses regrade when revision accepted", test_dimension_confidence_uses_regrade_when_revision_accepted)
+    _run("dimension confidence keeps original when revision rejected", test_dimension_confidence_keeps_original_score_when_revision_rejected)
+    _run("dimension confidence omits failed grading", test_dimension_confidence_omits_dimension_whose_grading_failed)
+    _run("dimension confidence absent without source material", test_dimension_confidence_absent_without_source_material)
+
     _run("_build_dimension_revision_prompt contains required elements", test_build_dimension_revision_prompt_contains_required_elements)
     _run("_build_dimension_revision_prompt handles no claims", test_build_dimension_revision_prompt_handles_no_claims)
 

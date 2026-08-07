@@ -61,6 +61,14 @@ export interface ReportSection {
   citations_json: string | null;
 }
 
+/** One resolved [Source N] citation. `order` is the number as it appears in
+ *  the assessment text, so it is the citation key — never renumber it. */
+export interface SourceRef {
+  order: number;
+  title: string;
+  url: string;
+}
+
 export interface RiskAnalysis {
   id: string;
   subject: string;
@@ -68,9 +76,15 @@ export interface RiskAnalysis {
   content: string | null;
   risk_scores_json: string | null;
   citation_confidence_json: string | null;
+  /** JSON {dimension_key: grounding confidence 0-10}. How well-evidenced each
+   *  dimension is — unrelated to how high its risk score is. */
+  dimension_confidence_json: string | null;
   sources_json: string | null;
   session_id: string | null;
   created_at: string;
+  /** Resolved citations. Populated by the detail endpoint only; the list
+   *  endpoint returns []. */
+  sources: SourceRef[];
 }
 
 export interface SSEEvent {
