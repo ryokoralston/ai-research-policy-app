@@ -67,6 +67,9 @@ export interface SourceRef {
   order: number;
   title: string;
   url: string;
+  /** Publisher provenance — see SOURCE_TIERS in lib/riskAnalysis.ts. Provenance,
+   *  not credibility: it says who published the source, not whether it is right. */
+  tier?: string;
 }
 
 export interface RiskAnalysis {

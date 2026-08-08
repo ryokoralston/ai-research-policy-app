@@ -40,6 +40,9 @@ class SearchResult(Base):
     full_content: Mapped[str | None] = mapped_column(Text)
     relevance_score: Mapped[float | None] = mapped_column(Float)
     ai_summary: Mapped[str | None] = mapped_column(Text)
+    # Provenance of the publisher, one of services/source_tier.py's TIERS.
+    # Provenance, not credibility — never used to weight a claim.
+    source_tier: Mapped[str | None] = mapped_column(String)
     published_date: Mapped[str | None] = mapped_column(String)
     result_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

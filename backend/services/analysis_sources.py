@@ -22,6 +22,7 @@ import json
 from sqlalchemy.orm import Session
 
 from models import RiskAnalysis, SearchResult
+from services.source_tier import DEFAULT_TIER, tier_label
 
 
 def resolve_sources(db: Session, analysis: RiskAnalysis) -> list[dict]:
@@ -67,6 +68,9 @@ def collect_source(result: SearchResult) -> dict:
         "order": result.result_order + 1,
         "title": result.title or result.url,
         "url": result.url,
+        # NULL for sources gathered before tiering existed; renders as
+        # unclassified rather than as a low tier.
+        "tier": result.source_tier or DEFAULT_TIER,
     }
 
 
@@ -80,6 +84,7 @@ def format_sources_markdown(sources: list[dict]) -> str:
     if not sources:
         return ""
     lines = "\n".join(
-        f"[Source {s['order']}] {s['title']} — {s['url']}" for s in sources
+        f"[Source {s['order']}] {s['title']} ({tier_label(s.get('tier'))}) — {s['url']}"
+        for s in sources
     )
     return f"\n\n---\n\n## Sources\n\n{lines}"

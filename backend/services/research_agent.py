@@ -26,6 +26,7 @@ from services.anthropic_client import (
     sse_event,
     UNTRUSTED_CONTENT_GUARD,
 )
+from services.source_tier import DEFAULT_TIER, TIER_INSTRUCTION, split_tier, tier_label
 from services.tavily_client import TavilyClient, SearchResult as TavilyResult
 
 
@@ -78,6 +79,7 @@ def build_source_summary_prompt(
     url: str,
     content: str,
     include_process_steps: bool = False,
+    include_source_type: bool = False,
 ) -> str:
     """Build the per-source summarization prompt.
 
@@ -100,6 +102,12 @@ def build_source_summary_prompt(
     if include_process_steps:
         prompt += _SUMMARY_PROCESS_STEPS + "\n"
     prompt += _SUMMARY_GUIDELINES
+    if include_source_type:
+        # Appended after the guidelines so the summary instructions Claude has
+        # been calibrated against are unchanged; this only prepends one
+        # structured line, which services.source_tier.split_tier removes again
+        # before the summary is stored or synthesized.
+        prompt += "\n\n" + TIER_INSTRUCTION
     return prompt
 
 
@@ -202,8 +210,14 @@ def build_synthesis_prompt(query: str, summarized: list[dict]) -> str:
     Mirrors build_decomposition_prompt / build_source_summary_prompt: a named,
     pure prompt builder with no duplicated prompt text between call sites.
     """
+    # Provenance is shown to the model alongside each source so its own
+    # hedging ("advocacy-sourced and untested", "methodology undisclosed") is
+    # applied consistently rather than re-derived from the URL each time. It is
+    # context for judgement, never a weight — see services/source_tier.py.
     sources_text = "\n\n".join(
-        f"[Source {s['order']}] {s['title']} ({s['url']})\n{s['summary']}"
+        f"[Source {s['order']}] {s['title']} ({s['url']})\n"
+        f"Publisher type: {tier_label(s.get('tier'))}\n"
+        f"{s['summary']}"
         for s in summarized
     )
     return (
@@ -277,10 +291,18 @@ async def run_research_agent(
     db_results: list[SearchResult] = []
     summarized: list[dict] = []
 
-    async def _summarize_source(result: TavilyResult) -> str:
-        """Summarize a single source. Each call is independent, so all sources
-        are summarized concurrently (see asyncio.gather below) instead of one at
-        a time — this is the slowest part of the pipeline and dominates latency."""
+    async def _summarize_source(result: TavilyResult) -> tuple[str, str]:
+        """Summarize a single source, returning (summary, provenance tier).
+
+        Each call is independent, so all sources are summarized concurrently
+        (see asyncio.gather below) instead of one at a time — this is the
+        slowest part of the pipeline and dominates latency.
+
+        The tier classification rides on this same call rather than taking one
+        of its own: this call already has the page body in context, which is
+        far better evidence of who published something than the domain alone
+        (a .com is Reuters or a content farm), and it adds no API calls.
+        """
         content_for_summary = result.content or result.snippet or ""
         # Trim to avoid huge prompts
         if len(content_for_summary) > 6000:
@@ -291,15 +313,19 @@ async def run_research_agent(
             title=result.title,
             url=result.url,
             content=content_for_summary,
+            include_source_type=True,
         )
         try:
             # temperature=0.3: 事実の要約なので低め（再現性重視）
             # System guard: the page body is untrusted — treat it as data only.
-            return await generate_text(
+            raw = await generate_text(
                 summary_prompt, system=UNTRUSTED_CONTENT_GUARD, temperature=0.3
             )
         except Exception:
-            return result.snippet or ""
+            # No summary means no classification either — the snippet is a
+            # fallback body, not a judged one.
+            return (result.snippet or "", DEFAULT_TIER)
+        return split_tier(raw, result.url)
 
     # Fan out all per-source summaries in parallel, then process results in the
     # original relevance order so DB result_order and SSE events stay consistent.
@@ -307,7 +333,7 @@ async def run_research_agent(
         *(_summarize_source(r) for r in unique_results)
     )
 
-    for order, (result, ai_summary) in enumerate(zip(unique_results, summaries)):
+    for order, (result, (ai_summary, source_tier)) in enumerate(zip(unique_results, summaries)):
         db_result = SearchResult(
             id=str(uuid.uuid4()),
             session_id=session_id,
@@ -317,6 +343,7 @@ async def run_research_agent(
             full_content=(result.content or "")[:10000],  # store first 10k chars
             relevance_score=result.score,
             ai_summary=ai_summary,
+            source_tier=source_tier,
             published_date=result.published_date,
             result_order=order,
         )
@@ -330,6 +357,7 @@ async def run_research_agent(
             "url": result.url,
             "summary": ai_summary,
             "score": result.score,
+            "tier": source_tier,
         })
 
         await queue.put(sse_event("source_processed", {
@@ -338,6 +366,7 @@ async def run_research_agent(
             "url": result.url,
             "snippet": result.snippet,
             "ai_summary": ai_summary,
+            "tier": source_tier,
         }))
 
     # ── Step 4: Synthesis (streaming) ─────────────────────────────────────────
@@ -424,7 +453,7 @@ async def run_research_agent(
             *(_summarize_source(r) for r in new_unique)
         )
 
-        for result, ai_summary in zip(new_unique, new_summaries):
+        for result, (ai_summary, source_tier) in zip(new_unique, new_summaries):
             order = len(summarized)
             db_result = SearchResult(
                 id=str(uuid.uuid4()),
@@ -435,6 +464,7 @@ async def run_research_agent(
                 full_content=(result.content or "")[:10000],
                 relevance_score=result.score,
                 ai_summary=ai_summary,
+                source_tier=source_tier,
                 published_date=result.published_date,
                 result_order=order,
             )
@@ -448,6 +478,7 @@ async def run_research_agent(
                 "url": result.url,
                 "summary": ai_summary,
                 "score": result.score,
+                "tier": source_tier,
             })
 
             await queue.put(sse_event("source_processed", {
@@ -456,6 +487,7 @@ async def run_research_agent(
                 "url": result.url,
                 "snippet": result.snippet,
                 "ai_summary": ai_summary,
+                "tier": source_tier,
             }))
 
         # A brand-new synthesis is about to stream, superseding the previous

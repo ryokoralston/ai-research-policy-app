@@ -160,14 +160,23 @@ def test_no_session_and_no_persisted_returns_empty():
 
 def test_markdown_renders_citation_keys_not_a_list():
     """The number is the citation key. Rendered literally as [Source N] rather
-    than as an ordered list, which a renderer could renumber."""
+    than as an ordered list, which a renderer could renumber. Each entry also
+    carries its publisher provenance, so an exported document says which
+    citations came from a vendor and which from a regulator."""
     md = format_sources_markdown([
-        {"order": 1, "title": "First", "url": "https://a.example"},
-        {"order": 2, "title": "Second", "url": "https://b.example"},
+        {"order": 1, "title": "First", "url": "https://a.example", "tier": "official"},
+        {"order": 2, "title": "Second", "url": "https://b.example", "tier": "vendor"},
     ])
     assert "## Sources" in md
-    assert "[Source 1] First — https://a.example" in md
-    assert "[Source 2] Second — https://b.example" in md
+    assert "[Source 1] First (Official / Regulator) — https://a.example" in md
+    assert "[Source 2] Second (Vendor / Commercial) — https://b.example" in md
+
+
+def test_markdown_labels_untiered_sources_as_unclassified():
+    """Sources gathered before tiering existed have no tier; they must still
+    render, labelled unclassified rather than silently as a low tier."""
+    md = format_sources_markdown([{"order": 1, "title": "Old", "url": "https://a.example"}])
+    assert "[Source 1] Old (Unclassified) — https://a.example" in md
 
 
 def test_markdown_empty_when_no_sources():
@@ -204,6 +213,7 @@ if __name__ == "__main__":
     _run_test("empty persisted list falls back", test_empty_persisted_list_falls_back)
     _run_test("no session and none persisted → empty", test_no_session_and_no_persisted_returns_empty)
     _run_test("markdown renders citation keys", test_markdown_renders_citation_keys_not_a_list)
+    _run_test("markdown labels untiered as unclassified", test_markdown_labels_untiered_sources_as_unclassified)
     _run_test("markdown empty when no sources", test_markdown_empty_when_no_sources)
 
     total = len(_PASSED) + len(_FAILED)

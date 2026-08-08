@@ -42,6 +42,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.anthropic_client import generate_text
+from services.source_tier import split_tier
 from services.research_agent import build_source_summary_prompt
 from evals.report import build_html_report, save_report
 
@@ -166,8 +167,14 @@ PROMPT_VERSIONS = [
     {
         "name": "v2 (production)",
         "description": "Output Quality Guidelines — the live research_agent.py prompt",
+        # include_source_type mirrors production: the live call asks for a
+        # SOURCE_TYPE classification line before the summary. It is included
+        # here so this variant stays the real production prompt, and stripped
+        # before grading (see strip_tier_line) so the graders score the summary
+        # itself — exactly what research_agent stores and synthesizes from.
         "build": lambda s: build_source_summary_prompt(
             query=s["query"], title=s["title"], url=s["url"], content=s["content"],
+            include_source_type=True,
         ),
     },
     {
@@ -291,7 +298,13 @@ async def run_version(version: dict, dataset: list[dict]) -> dict:
     async def _score_case(source: dict) -> dict:
         async with sem:
             # temperature=0.3 matches the real summary call in research_agent.py
-            summary = await generate_text(version["build"](source), temperature=0.3)
+            raw = await generate_text(version["build"](source), temperature=0.3)
+            # Drop the SOURCE_TYPE classification line the production variant
+            # asks for, exactly as research_agent does before storing the
+            # summary — the graders must score what the app actually keeps, not
+            # a structured field bolted onto the front of it. A no-op for the
+            # variants that don't request the line.
+            summary, _ = split_tier(raw, source["url"])
             code = grade_structure(summary)
             model = await grade_quality(source, summary)
             return {

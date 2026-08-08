@@ -19,6 +19,9 @@ class SourceRef(BaseModel):
     order: int
     title: str
     url: str
+    # Publisher provenance, one of services/source_tier.py's TIERS. Defaults to
+    # "unknown" for sources gathered before tiering existed.
+    tier: str = "unknown"
 
 
 class RiskAnalysisResponse(BaseModel):

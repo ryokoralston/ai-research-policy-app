@@ -40,6 +40,7 @@ def init_db():
     add_citation_confidence_columns()
     add_debate_consensus_column()
     add_dimension_confidence_column()
+    add_source_tier_column()
     print("Database initialized.")
 
 
@@ -117,6 +118,23 @@ def add_dimension_confidence_column():
             conn.execute(
                 text("ALTER TABLE risk_analyses ADD COLUMN dimension_confidence TEXT")
             )
+        except Exception:
+            pass  # column already exists, or table doesn't exist yet
+
+
+def add_source_tier_column():
+    """Idempotent migration: add the source_tier column to search_results.
+
+    Records who published each source (regulator, peer-reviewed venue, news
+    organisation, advocacy group, vendor) so the citation list can show it.
+    Rows predating this stay NULL and render as unclassified — classifying them
+    on read would cost one LLM call per source per page view.
+    """
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        try:
+            conn.execute(text("ALTER TABLE search_results ADD COLUMN source_tier VARCHAR"))
         except Exception:
             pass  # column already exists, or table doesn't exist yet
 
