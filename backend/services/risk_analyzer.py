@@ -15,7 +15,7 @@ from services.anthropic_client import generate_json, stream_text_with_thinking, 
 from services.citation_verifier import verify_grounding
 from services.research_agent import run_research_agent
 from services.tavily_client import TavilyClient
-from templates import TEMPLATES, RISK_DIMENSIONS
+from templates import TEMPLATES, dimensions_for
 
 import asyncio
 
@@ -113,7 +113,7 @@ async def _analyze_dimension(
     run_risk_analysis awaits all of these tasks first, collecting their
     buffered output into a dimension_results dict WITHOUT emitting any SSE
     events yet; only after an optional per-dimension grading/fix-up pass
-    (see _fix_weak_dimensions) does it loop over RISK_DIMENSIONS in
+    (see _fix_weak_dimensions) does it loop over the dimension set in
     canonical order and emit each dimension's final thinking/token events.
     This two-phase collect-then-emit shape is required because a per-
     dimension revision must be fully decided before its content is ever
@@ -220,7 +220,8 @@ async def _fix_weak_dimensions(
     source_material: str,
     section_system: str,
     shared_context: str,
-) -> dict[str, tuple[str, str]]:
+    dimensions: list[dict],
+) -> tuple[dict[str, tuple[str, str]], dict[str, float]]:
     """Bounded evaluator-optimizer loop over the risk_dimensions' individual
     grounding grades (see WEAK_DIMENSION_THRESHOLD / MAX_DIMENSIONS_TO_FIX).
 
@@ -281,7 +282,10 @@ async def _fix_weak_dimensions(
     if not weak_keys:
         return dimension_results, confidence
 
-    dimensions_by_key = {dim["key"]: dim for dim in RISK_DIMENSIONS}
+    # Looked up from the set actually being scored, not the global default —
+    # a policy analysis's weak dimension does not exist in the system set, and
+    # would otherwise be silently skipped instead of re-researched.
+    dimensions_by_key = {dim["key"]: dim for dim in dimensions}
 
     for key in weak_keys:
         dimension = dimensions_by_key.get(key)
@@ -437,6 +441,14 @@ async def run_risk_analysis(
 
     yield sse_event("status", {"message": "Generating risk assessment..."})
 
+    # Which dimensions this subject type is scored on. A regulation is not
+    # scored on "Technical Capability Level" and an organization is not scored
+    # on "Deployment/Proliferation Speed"; see templates/risk_assessment.py.
+    # Resolved once here so every use below — the parallel calls, the weak-
+    # grounding lookup, the emission order and the score-extraction keys —
+    # reads the same list.
+    dimensions = dimensions_for(request.analysis_type)
+
     # Generate sections
     full_content_parts: list[str] = []
     extracted_scores: dict = {}
@@ -466,7 +478,7 @@ async def run_risk_analysis(
 
         section_content = ""
         if section_key == "risk_dimensions":
-            # Parallel path: one independent call per RISK_DIMENSIONS entry
+            # Parallel path: one independent call per dimension in the set
             # (see _build_dimension_prompt / _analyze_dimension) instead of one
             # call cramming every dimension into a single prompt.
             #
@@ -480,12 +492,12 @@ async def run_risk_analysis(
             # subject_profile) would have every task race to write the
             # same cache entry instead of reading an existing one.
             yield sse_event("status", {
-                "message": f"Analyzing {len(RISK_DIMENSIONS)} risk dimensions in parallel..."
+                "message": f"Analyzing {len(dimensions)} risk dimensions in parallel..."
             })
 
             tasks = [
                 asyncio.create_task(_analyze_dimension(dimension, section_system, shared_context))
-                for dimension in RISK_DIMENSIONS
+                for dimension in dimensions
             ]
             # Phase 1: await all tasks first, collecting their buffered
             # output into dimension_results WITHOUT emitting any SSE events
@@ -513,7 +525,7 @@ async def run_risk_analysis(
                 try:
                     dimension_results, dimension_confidence = await _fix_weak_dimensions(
                         dimension_results, request.subject, source_material,
-                        section_system, shared_context,
+                        section_system, shared_context, dimensions,
                     )
                 except Exception:
                     logger.warning(
@@ -526,10 +538,10 @@ async def run_risk_analysis(
                         "dimension_confidence", {"confidence": dimension_confidence}
                     )
 
-            # Phase 3: emit thinking/token events in RISK_DIMENSIONS
+            # Phase 3: emit thinking/token events in the dimension set's
             # (canonical) order, reading from dimension_results — which now
             # holds whichever content (original or accepted revision) won.
-            for i, dimension in enumerate(RISK_DIMENSIONS):
+            for i, dimension in enumerate(dimensions):
                 thinking_text, content_text = dimension_results[dimension["key"]]
                 if thinking_text:
                     yield sse_event("thinking", {"text": thinking_text, "section": section_key})
@@ -559,7 +571,7 @@ async def run_risk_analysis(
                 f"extract the numerical score (1-10) for each dimension.\n\n"
                 f"<dimension_analysis>\n{section_content}\n</dimension_analysis>\n\n"
                 f"Return a JSON object with exactly these keys: "
-                f"{', '.join(dim['key'] for dim in RISK_DIMENSIONS)}"
+                f"{', '.join(dim['key'] for dim in dimensions)}"
             )
             try:
                 # temperature=0.0: fully deterministic — scores must be consistent

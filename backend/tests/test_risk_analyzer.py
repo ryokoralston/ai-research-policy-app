@@ -41,7 +41,7 @@ from services.risk_analyzer import (
     MAX_DIMENSIONS_TO_FIX,
 )
 from services.tavily_client import SearchResult as TavilySearchResult
-from templates import RISK_DIMENSIONS
+from templates import RISK_DIMENSIONS, DIMENSION_REGISTRY, dimensions_for
 
 # Derived from RISK_DIMENSIONS so a new dimension needs no edit here. Values
 # are deliberately varied (not all equal) so the round-trip assertions on
@@ -80,8 +80,11 @@ class _UncalledTavilyClient:
 
 def _run_analysis(
     fake_generate_json, fake_verify_grounding=None, context="Some provided context.",
-    fake_stream=None, fake_tavily_client_cls=None,
+    fake_stream=None, fake_tavily_client_cls=None, analysis_type="technology",
 ):
+    """Defaults to analysis_type="technology" so every existing test keeps
+    running against RISK_DIMENSIONS (the system set); pass analysis_type to
+    exercise another subject type's dimension set."""
     engine = create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
@@ -89,11 +92,11 @@ def _run_analysis(
     db = sessionmaker(bind=engine)()
 
     analysis_id = str(uuid.uuid4())
-    db.add(RiskAnalysis(id=analysis_id, subject="Test AI system", analysis_type="technology"))
+    db.add(RiskAnalysis(id=analysis_id, subject="Test AI system", analysis_type=analysis_type))
     db.commit()
 
     request = AnalysisStartRequest(
-        subject="Test AI system", analysis_type="technology",
+        subject="Test AI system", analysis_type=analysis_type,
         context=context, run_web_research=False,
     )
 
@@ -590,6 +593,71 @@ def test_tavily_empty_results_skips_dimension_gracefully():
     db.close()
 
 
+# ── Subject type selects the dimension set, end to end ───────────────────────
+# test_dimension_sets.py pins the mapping itself; this pins that
+# run_risk_analysis actually honours it — the generation calls, the assembled
+# document and the score-extraction keys all follow the selected set.
+
+def test_policy_analysis_runs_the_instrument_set_end_to_end():
+    dimension_prompts = []
+    scores_prompts = []
+
+    async def any_dimension_stream(prompt, system="", model=None, max_tokens=8192,
+                                    cached_context=None, usage_log_tag=None):
+        if prompt.startswith(_DIMENSION_MARKER):
+            dimension_prompts.append(prompt)
+            title = next(
+                (d["title"] for d in DIMENSION_REGISTRY.values() if d["title"] in prompt),
+                "unknown",
+            )
+            yield ("text", f"### {title}\nScore: 5/10 (ok)\nAnalysis for {title}.")
+        else:
+            yield ("text", "section content")
+
+    async def capture_scores(prompt, **kwargs):
+        scores_prompts.append(prompt)
+        return {d["key"]: 5 for d in dimensions_for("policy")}
+
+    analysis, events, db = _run_analysis(
+        capture_scores, fake_stream=any_dimension_stream, analysis_type="policy",
+    )
+
+    instrument = dimensions_for("policy")
+    assert len(dimension_prompts) == len(instrument), len(dimension_prompts)
+
+    prompted = {
+        d["title"] for d in DIMENSION_REGISTRY.values()
+        if any(d["title"] in p for p in dimension_prompts)
+    }
+    assert prompted == {d["title"] for d in instrument}, prompted
+    # The dimension that made a regulation score 2/10 for "capability" while
+    # arguing its oversight is weak must not be asked about at all.
+    assert "Technical Capability Level" not in prompted
+
+    # Score extraction must ask for the instrument keys, not the system ones.
+    assert len(scores_prompts) == 1, scores_prompts
+    for dim in instrument:
+        assert dim["key"] in scores_prompts[0], dim["key"]
+    assert "capability" not in scores_prompts[0]
+
+    # And the saved document carries the instrument dimensions' headings.
+    for dim in instrument:
+        assert dim["title"] in analysis.content, dim["title"]
+    db.close()
+
+
+def test_unknown_analysis_type_still_produces_the_default_set():
+    """A free-form analysis_type must degrade to a full assessment, not an
+    empty one."""
+    analysis, events, db = _run_analysis(
+        _fake_gj_scores, fake_stream=_dimension_aware_stream(),
+        analysis_type="something-nobody-defined",
+    )
+    for dim in RISK_DIMENSIONS:
+        assert dim["title"] in analysis.content, dim["title"]
+    db.close()
+
+
 # ── Per-dimension grounding confidence is kept, not discarded ────────────────
 # _fix_weak_dimensions graded every dimension all along and used the scores
 # only to pick which ones to re-research. These pin that the grades now
@@ -780,6 +848,9 @@ if __name__ == "__main__":
     _run("weak dimension revision accepted when regrade equal (tie)", test_weak_dimension_revision_accepted_when_regrade_equal)
     _run("Tavily search failure skips dimension gracefully", test_tavily_search_failure_skips_dimension_gracefully)
     _run("Tavily empty results skips dimension gracefully", test_tavily_empty_results_skips_dimension_gracefully)
+    _run("policy analysis runs the instrument set", test_policy_analysis_runs_the_instrument_set_end_to_end)
+    _run("unknown type still produces default set", test_unknown_analysis_type_still_produces_the_default_set)
+
     _run("dimension confidence persisted and emitted", test_dimension_confidence_persisted_and_emitted)
     _run("dimension confidence uses regrade when revision accepted", test_dimension_confidence_uses_regrade_when_revision_accepted)
     _run("dimension confidence keeps original when revision rejected", test_dimension_confidence_keeps_original_score_when_revision_rejected)

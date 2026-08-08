@@ -1,6 +1,13 @@
 from .congressional_brief import CONGRESSIONAL_BRIEF_SYSTEM, CONGRESSIONAL_BRIEF_SECTIONS
 from .policy_memo import POLICY_MEMO_SYSTEM, POLICY_MEMO_SECTIONS
-from .risk_assessment import RISK_ASSESSMENT_SYSTEM, RISK_ASSESSMENT_SECTIONS, RISK_DIMENSIONS
+from .risk_assessment import (
+    RISK_ASSESSMENT_SYSTEM,
+    RISK_ASSESSMENT_SECTIONS,
+    RISK_DIMENSIONS,
+    DIMENSION_REGISTRY,
+    DIMENSION_SETS,
+    dimensions_for,
+)
 
 TEMPLATES = {
     "congressional_brief": {
@@ -17,4 +24,7 @@ TEMPLATES = {
     },
 }
 
-__all__ = ["TEMPLATES", "RISK_DIMENSIONS"]
+__all__ = [
+    "TEMPLATES", "RISK_DIMENSIONS", "DIMENSION_REGISTRY", "DIMENSION_SETS",
+    "dimensions_for",
+]

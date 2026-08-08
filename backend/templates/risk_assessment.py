@@ -90,18 +90,33 @@ RISK_ASSESSMENT_SECTIONS = [
 # / run_risk_analysis) instead of the single crammed-together prompt that
 # RISK_ASSESSMENT_SECTIONS' risk_dimensions["instructions"] describes.
 #
-# This list is the single source of truth for the dimension set: the
-# scores-extraction prompt in run_risk_analysis builds its required-key list by
-# reading `key` off these entries, so adding or renaming a dimension here
-# propagates to score extraction with no second edit. (The frontend's
-# SCORE_LABELS in lib/riskAnalysis.ts must still be given a label for any new
-# key — it falls back to the raw key if one is missing.) `title` matches the
-# bold dimension names and `scale`
-# matches the 1=.../10=... anchors previously embedded in the single prompt
-# above — same wording, just split out per-dimension. `criteria` is new:
-# 3-5 bullet points of specialized considerations unique to that dimension,
-# so each parallel call gets a substantive, distinct rubric instead of the
-# one-line description every dimension shared before.
+# DESIGN RULE for every dimension below: it must answer one question — "how
+# much does this raise the risk?" — on a scale where 10 is always worse. A
+# dimension that describes a property instead of a risk produces a score that
+# points the opposite way from its own analysis. That is exactly what happened
+# when a regulation was assessed against the technology-shaped set: GDPR scored
+# "Technical Capability Level 2/10", which reads as low risk, while the text
+# under it argued the oversight machinery is dangerously weak.
+#
+# KNOWN EXCEPTION, deliberately kept: `capability` and `deployment` in the
+# system set below are still descriptive axes rather than risk axes — the same
+# category of problem, left alone because for an AI system they correlate with
+# risk closely enough to be useful. Revisit if a technology assessment shows
+# the same score/text divergence.
+#
+# `title` matches the bold dimension names and `scale` matches the 1=.../10=...
+# anchors previously embedded in the single prompt above. `criteria` is 3-5
+# bullet points of considerations unique to that dimension, so each parallel
+# call gets a substantive, distinct rubric.
+#
+# Definitions live here once and are composed into per-subject-type sets at the
+# bottom of this file (DIMENSION_SETS / dimensions_for) — a dimension shared by
+# several sets is defined once, not copied.
+
+# ── System set: things that are built and deployed ───────────────────────────
+# Kept under the name RISK_DIMENSIONS because it is also the DEFAULT set for
+# any unrecognised analysis_type, and because the test suites import this name
+# and run with analysis_type="technology".
 RISK_DIMENSIONS: list[dict] = [
     {
         "key": "capability",
@@ -158,15 +173,22 @@ RISK_DIMENSIONS: list[dict] = [
             "Existing precedents or documented instances of misuse",
         ],
     },
+    # Shared by every set. The framing is deliberately two-sided: a subject can
+    # score high here either by violating rights or by promising protections it
+    # fails to deliver. A rights-protective subject assessed on the one-sided
+    # "harm caused" wording inverts — GDPR's own assessment had to talk its way
+    # out of it, scoring the *gap* between nominal and effective rights while
+    # the rubric asked about harm the instrument causes.
     {
         "key": "equity",
         "title": "Rights & Equity Impact",
-        "scale": "(1=negligible, 10=severe rights violations at scale)",
+        "scale": "(1=negligible, 10=severe rights violations, or protections that fail at scale)",
         "criteria": [
-            "Evidence of disparate performance or error rates across demographic groups",
-            "Exposure of fundamental rights — privacy, due process, non-discrimination, freedom of expression",
-            "Whether it operates in a domain where decisions materially affect life chances (employment, credit, housing, healthcare, education, law enforcement, migration)",
-            "Availability of recourse: can an affected person contest, appeal, or obtain an explanation of a decision",
+            "Harm to fundamental rights — privacy, due process, non-discrimination, freedom of expression — whether caused directly or left unprevented",
+            "For a subject that promises protection: the gap between the rights it nominally confers and what people actually receive",
+            "Evidence of disparate impact or unequal performance across demographic groups or jurisdictions",
+            "Whether it bears on domains where decisions materially affect life chances (employment, credit, housing, healthcare, education, law enforcement, migration)",
+            "Availability of recourse: can an affected person contest, appeal, or obtain an explanation — and does that recourse work equally for everyone",
             "Distribution of benefits vs. harms — whether the populations bearing the risk are the ones gaining the value",
         ],
     },
@@ -182,3 +204,150 @@ RISK_DIMENSIONS: list[dict] = [
         ],
     },
 ]
+
+
+# ── Instrument set: rules that are enacted and enforced ──────────────────────
+# For a regulation, law, standard or framework, three of the system set's
+# dimensions are category errors: `capability` and `deployment` describe a
+# technology's properties, and `misuse` assumes the subject confers a
+# capability rather than imposing an obligation. (GDPR's misuse score was the
+# weakest section of that assessment — 4/10 at low confidence, with claims
+# withdrawn for want of evidence.)
+#
+# `governance` is not dropped so much as DECOMPOSED. Reading GDPR's governance
+# section, everything it actually argued fell into three questions: is there
+# capacity to enforce, is the meaning settled, and is it applied consistently?
+# Those are `enforcement`, `uncertainty` and `fragmentation` below.
+_INSTRUMENT_ONLY: list[dict] = [
+    {
+        "key": "enforcement",
+        "title": "Enforcement Capacity Gap",
+        "scale": "(1=well-resourced and consistently enforced, 10=paper rule with no effective enforcement)",
+        "criteria": [
+            "Resourcing of the bodies charged with enforcement, measured against caseload rather than against national income",
+            "Specialist expertise those bodies hold for the domain being regulated",
+            "Observed enforcement outcomes — action rates, penalties actually imposed, time to final decision",
+            "Whether enforcement capacity is growing, static, or declining",
+        ],
+    },
+    {
+        "key": "uncertainty",
+        "title": "Legal & Interpretive Uncertainty",
+        "scale": "(1=settled and predictable, 10=core obligations fundamentally unresolved)",
+        "criteria": [
+            "Whether central terms and obligations have settled, authoritative interpretation",
+            "Presence of binding guidance versus case-by-case litigation as the resolution mechanism",
+            "Unresolved interfaces or doctrinal conflicts with adjacent instruments",
+            "How quickly interpretive gaps are actually closing, and by what mechanism",
+        ],
+    },
+    {
+        "key": "fragmentation",
+        "title": "Fragmentation & Inconsistent Application",
+        "scale": "(1=uniform application, 10=order-of-magnitude divergence across jurisdictions)",
+        "criteria": [
+            "Divergence in outcomes across the jurisdictions or authorities applying it",
+            "Effectiveness of the coordination and consistency mechanisms that exist",
+            "Opportunity for forum shopping toward the most permissive authority",
+            "Whether procedural reform is narrowing or widening that divergence",
+        ],
+    },
+    {
+        "key": "burden",
+        "title": "Compliance Burden & Distributional Effect",
+        "scale": "(1=proportionate across regulated entities, 10=severely regressive)",
+        "criteria": [
+            "Absolute compliance cost, and the evidentiary quality of the estimates behind it",
+            "How that cost falls across large incumbents versus smaller entities",
+            "Whether the burden entrenches existing market positions",
+            "Availability and adequacy of proportionality mechanisms or exemptions",
+        ],
+    },
+]
+
+
+# ── Organization set: actors that build, deploy or govern ────────────────────
+# `capability` and `deployment` again describe a technology rather than an
+# actor; what matters for an organization is whether anyone can hold it to
+# account and how much of the ecosystem depends on it.
+_ORGANIZATION_ONLY: list[dict] = [
+    {
+        "key": "governance_maturity",
+        "title": "Internal Governance Maturity",
+        "scale": "(1=mature and independently assured, 10=no meaningful internal governance)",
+        "criteria": [
+            "Existence of internal review, red-teaming or release-gating processes that hold real authority",
+            "Whether stated commitments are externally verifiable or self-attested only",
+            "Track record of honouring versus quietly abandoning prior public commitments",
+            "Independence of the safety/governance function from commercial pressure",
+        ],
+    },
+    {
+        "key": "accountability",
+        "title": "Accountability & Transparency",
+        "scale": "(1=auditable and answerable, 10=opaque and effectively unaccountable)",
+        "criteria": [
+            "Disclosure of capabilities, limitations, incidents and evaluation results",
+            "Existence of an external party with standing to demand answers",
+            "Availability of recourse for people affected by its systems",
+            "Jurisdictional reach of any body able to compel disclosure",
+        ],
+    },
+    {
+        "key": "concentration",
+        "title": "Market & Infrastructure Concentration",
+        "scale": "(1=one of many substitutable providers, 10=chokepoint others cannot route around)",
+        "criteria": [
+            "Share of the relevant market, compute, data or distribution that it controls",
+            "Switching cost and availability of substitutes for parties that depend on it",
+            "Degree of vertical integration across the stack",
+            "Whether downstream actors have built critical dependence on it",
+        ],
+    },
+]
+
+
+# Every dimension definition, keyed — the composition source for the sets below
+# and the lookup risk_analyzer uses to find a dimension by key.
+DIMENSION_REGISTRY: dict[str, dict] = {
+    dim["key"]: dim
+    for dim in [*RISK_DIMENSIONS, *_INSTRUMENT_ONLY, *_ORGANIZATION_ONLY]
+}
+
+
+def _compose(*keys: str) -> list[dict]:
+    return [DIMENSION_REGISTRY[k] for k in keys]
+
+
+# Subject type → the dimensions scored for it. Sets are kept at 7 dimensions
+# each so cost and latency don't change with subject type: run_risk_analysis
+# makes one parallel LLM call per dimension.
+#
+# use_case and supply_chain share the system set for now. supply_chain is the
+# weaker fit — a set built around concentration and dependency would suit it
+# better — but a bespoke set per type would be five sets to maintain, so it
+# starts here and moves out if the assessments show strain.
+DIMENSION_SETS: dict[str, list[dict]] = {
+    "technology": RISK_DIMENSIONS,
+    "use_case": RISK_DIMENSIONS,
+    "supply_chain": RISK_DIMENSIONS,
+    "policy": _compose(
+        "enforcement", "uncertainty", "fragmentation", "burden",
+        "equity", "geopolitical", "systemic",
+    ),
+    "actor": _compose(
+        "governance_maturity", "accountability", "concentration",
+        "misuse", "equity", "geopolitical", "systemic",
+    ),
+}
+
+
+def dimensions_for(analysis_type: str) -> list[dict]:
+    """The dimension set to score for a subject type.
+
+    Falls back to RISK_DIMENSIONS for anything unrecognised, which is required
+    rather than defensive: `analysis_type` is deliberately a free-form string
+    (see schemas/analysis.py) that is injected verbatim into the prompt, so it
+    is not constrained to the keys of DIMENSION_SETS.
+    """
+    return DIMENSION_SETS.get(analysis_type, RISK_DIMENSIONS)

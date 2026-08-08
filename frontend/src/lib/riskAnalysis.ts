@@ -23,15 +23,28 @@ export const ANALYSIS_TYPE_LABELS: Record<string, string> = Object.fromEntries(
   ANALYSIS_TYPES.map((t) => [t.id, t.label])
 );
 
-/** Risk-dimension key → label. Keys mirror RISK_DIMENSIONS in the backend's
- *  templates/risk_assessment.py; both pages fall back to the raw key when a
- *  dimension has no entry here, so a missing label degrades rather than breaks. */
+/** Risk-dimension key → label, for every key in every dimension set (see
+ *  DIMENSION_SETS in the backend's templates/risk_assessment.py). Which subset
+ *  an analysis actually has depends on its subject type, so this is the union,
+ *  not one set. Both pages fall back to the raw key when a dimension has no
+ *  entry here, so a missing label degrades rather than breaks. */
 export const SCORE_LABELS: Record<string, string> = {
+  // System set — technology, use case, supply chain
   capability: "Capability",
   deployment: "Deployment Speed",
   governance: "Governance Gap",
-  geopolitical: "Geopolitical Risk",
   misuse: "Misuse Potential",
+  // Instrument set — policy
+  enforcement: "Enforcement Gap",
+  uncertainty: "Legal Uncertainty",
+  fragmentation: "Fragmentation",
+  burden: "Compliance Burden",
+  // Organization set — actor
+  governance_maturity: "Governance Maturity",
+  accountability: "Accountability",
+  concentration: "Concentration",
+  // Shared across sets
+  geopolitical: "Geopolitical Risk",
   equity: "Rights & Equity",
   systemic: "Systemic Risk",
 };

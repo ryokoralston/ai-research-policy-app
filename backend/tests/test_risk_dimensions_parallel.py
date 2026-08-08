@@ -39,7 +39,12 @@ from database import Base
 from models import RiskAnalysis
 from schemas import AnalysisStartRequest
 import services.risk_analyzer as risk_analyzer
-from services.risk_analyzer import _build_dimension_prompt, RISK_DIMENSIONS
+from services.risk_analyzer import _build_dimension_prompt
+# From templates, not via risk_analyzer: the analyzer now resolves a dimension
+# set per subject type (dimensions_for) and no longer imports the default set,
+# so re-exporting it from there was incidental. These tests run the default
+# ("technology") set.
+from templates import RISK_DIMENSIONS
 
 # Unique prefix _build_dimension_prompt always emits — lets fakes tell a
 # per-dimension call apart from the other 5 (non-risk_dimensions) sections'
