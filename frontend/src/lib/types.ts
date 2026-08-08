@@ -88,6 +88,10 @@ export interface RiskAnalysis {
   /** Resolved citations. Populated by the detail endpoint only; the list
    *  endpoint returns []. */
   sources: SourceRef[];
+  /** Which sources each dimension cited, and who published them. Detail
+   *  endpoint only. Counts per tier — deliberately not a score, see
+   *  services/analysis_sources.py. */
+  dimension_citations: Record<string, { orders: number[]; tiers: Record<string, number> }>;
 }
 
 export interface SSEEvent {

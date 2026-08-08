@@ -182,7 +182,7 @@ export default function AnalysisPage() {
                     key={key}
                     label={SCORE_LABELS[key] || key}
                     score={val}
-                    confidence={dimensionConfidence?.[key]}
+                    evidenceSupport={dimensionConfidence?.[key]}
                   />
                 ))}
               </div>

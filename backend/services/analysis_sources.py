@@ -18,11 +18,13 @@ raw text and never enter the [Source N] numbering, so listing them here would
 introduce citation numbers that appear nowhere in the document.
 """
 import json
+import re
 
 from sqlalchemy.orm import Session
 
 from models import RiskAnalysis, SearchResult
-from services.source_tier import DEFAULT_TIER, tier_label
+from services.source_tier import DEFAULT_TIER, TIERS, tier_label
+from templates import DIMENSION_REGISTRY
 
 
 def resolve_sources(db: Session, analysis: RiskAnalysis) -> list[dict]:
@@ -74,6 +76,71 @@ def collect_source(result: SearchResult) -> dict:
     }
 
 
+# "[Source 9]" and "[Sources 6, 10, 15]" — the two shapes the assessments use.
+_CITATION_RE = re.compile(r"\[Sources?\s+([0-9,\s]+)\]")
+
+# Dimension sections are emitted as "### {title}" by _build_dimension_prompt.
+_DIMENSION_HEADING_RE = re.compile(r"(?m)^###\s+(.+?)\s*$")
+
+_KEY_BY_TITLE = {dim["title"]: key for key, dim in DIMENSION_REGISTRY.items()}
+
+
+def dimension_citations(content: str, sources: list[dict]) -> dict[str, dict]:
+    """Which sources each risk dimension actually cited, and their provenance.
+
+    Answers the question the grounding score cannot: a dimension can be fully
+    grounded in the retrieved material — the text faithfully reports what the
+    sources said — while those sources are all vendor marketing. GDPR's
+    Compliance Burden dimension is the worked example: grounding 8/10, and the
+    text itself says the magnitude "should be treated as unquantified rather
+    than established", because two of its six citations are vendor pages.
+
+    Deliberately returns COUNTS PER TIER, not a score. Assigning numbers to
+    provenance labels and averaging them would manufacture a precise-looking
+    figure from an ordering that has no defensible spacing — the same trap as
+    multiplying LLM-estimated ordinals. The distribution is the finding.
+
+    Returns {dimension_key: {"orders": [...], "tiers": {tier: count}}},
+    covering only dimensions that appear in the content and cite something.
+    """
+    if not content or not sources:
+        return {}
+
+    tier_by_order = {s["order"]: (s.get("tier") or DEFAULT_TIER) for s in sources}
+
+    out: dict[str, dict] = {}
+    headings = list(_DIMENSION_HEADING_RE.finditer(content))
+    for i, match in enumerate(headings):
+        key = _KEY_BY_TITLE.get(match.group(1).strip())
+        if key is None:
+            continue  # a heading that isn't a known dimension
+        end = headings[i + 1].start() if i + 1 < len(headings) else len(content)
+        section = content[match.end():end]
+
+        orders = sorted({
+            int(n)
+            for group in _CITATION_RE.findall(section)
+            for n in re.findall(r"\d+", group)
+        })
+        # A citation number with no matching source is dropped rather than
+        # counted as unknown: it means the model invented a number, and
+        # silently tallying it would overstate how much evidence there is.
+        orders = [o for o in orders if o in tier_by_order]
+        if not orders:
+            continue
+
+        tiers: dict[str, int] = {}
+        for o in orders:
+            t = tier_by_order[o]
+            tiers[t] = tiers.get(t, 0) + 1
+        out[key] = {
+            "orders": orders,
+            # Ordered by TIERS so every dimension's breakdown reads the same way.
+            "tiers": {t: tiers[t] for t in TIERS if t in tiers},
+        }
+    return out
+
+
 def format_sources_markdown(sources: list[dict]) -> str:
     """Numbered citation list appended to exported content.
 
@@ -88,3 +155,49 @@ def format_sources_markdown(sources: list[dict]) -> str:
         for s in sources
     )
     return f"\n\n---\n\n## Sources\n\n{lines}"
+
+
+def format_score_summary_markdown(
+    scores: dict, evidence_support: dict, citations: dict,
+) -> str:
+    """Score, evidence support and citation mix per dimension, for exports.
+
+    Exists because all three already existed and none of them left the app: a
+    reviewer reading an exported PDF saw the model's inline "Score: 6/10" and
+    nothing else, so the two measures that qualify that number were invisible
+    outside the UI.
+
+    The three columns answer three different questions and are deliberately
+    never combined:
+      Score            — how much this raises the risk
+      Evidence support — how well the retrieved material supports what was written
+      Sources cited    — who published the material it was written from
+    A dimension can be well supported by weak sources, which is precisely the
+    case a single blended number would hide.
+    """
+    if not scores:
+        return ""
+
+    rows = []
+    for key, score in scores.items():
+        dim = DIMENSION_REGISTRY.get(key)
+        title = dim["title"] if dim else key
+        ev = evidence_support.get(key)
+        ev_text = f"{ev}/10" if ev is not None else "not assessed"
+        mix = citations.get(key, {}).get("tiers") or {}
+        mix_text = ", ".join(f"{n} {tier_label(t).lower()}" for t, n in mix.items()) or "—"
+        rows.append(f"- {title} — score {score}/10, evidence support {ev_text}, cites: {mix_text}")
+
+    notes = [
+        "Evidence support measures how directly the retrieved source material "
+        "supports what was written. It is not a measure of source authority, "
+        "and not a probability that the assessment is correct.",
+        "Dimensions graded below 6 trigger an extra targeted research pass and "
+        "are rewritten if that improves their grounding, so published values "
+        "cluster high — the figure reports the result of that process, not the "
+        "first attempt.",
+        "Scores are conditional on the sources retrieved for this run. A "
+        "re-run gathers different sources and may score differently.",
+    ]
+    body = "\n".join(rows) + "\n\n" + "\n\n".join(notes)
+    return f"\n\n---\n\n## Score Summary\n\n{body}"

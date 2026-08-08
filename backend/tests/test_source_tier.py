@@ -53,6 +53,37 @@ def test_lookalike_domains_are_not_official():
         assert deterministic_tier(url) is None, url
 
 
+def test_encyclopedia_and_self_publishing_platforms_are_general_web():
+    """Observed misclassification this pins: en.wikipedia.org and a personal
+    medium.com post both came back "journalism", which inflates the apparent
+    quality of an evidence base. The publisher of a wiki page or a personal
+    post is structurally general-web however scholarly the page reads."""
+    for url in [
+        "https://en.wikipedia.org/wiki/General_Data_Protection_Regulation",
+        "https://medium.com/@byjoe/gdpr-compliance-cost-breakdown-for-startups-e04a158a9436",
+        "https://someone.substack.com/p/a-post",
+        "https://example.wordpress.com/2026/01/01/post",
+        "https://www.reddit.com/r/gdpr/comments/x",
+    ]:
+        assert deterministic_tier(url) == "general_web", url
+
+
+def test_general_web_rule_overrides_a_higher_model_classification():
+    summary, tier = split_tier(
+        "SOURCE_TYPE: journalism\nBody text.",
+        "https://en.wikipedia.org/wiki/X",
+    )
+    assert tier == "general_web", tier
+    assert summary == "Body text."
+
+
+def test_official_domains_outrank_nothing_else_by_accident():
+    """A general-web platform must not be reachable by the official rule, and
+    vice versa — the two deterministic lists must stay disjoint."""
+    assert deterministic_tier("https://en.wikipedia.org/wiki/X") == "general_web"
+    assert deterministic_tier("https://www.nist.gov/x") == "official"
+
+
 def test_malformed_url_does_not_raise():
     for url in ["", "not a url", "http://", "///"]:
         assert deterministic_tier(url) is None, url
@@ -177,6 +208,9 @@ if __name__ == "__main__":
 
     _run_test("gov/intergov domains are official", test_government_and_intergovernmental_domains_are_official)
     _run_test("lookalike domains are not official", test_lookalike_domains_are_not_official)
+    _run_test("wiki/self-published are general_web", test_encyclopedia_and_self_publishing_platforms_are_general_web)
+    _run_test("general_web rule overrides model", test_general_web_rule_overrides_a_higher_model_classification)
+    _run_test("deterministic lists stay disjoint", test_official_domains_outrank_nothing_else_by_accident)
     _run_test("malformed url does not raise", test_malformed_url_does_not_raise)
     _run_test("domain rule overrides lower classification", test_domain_rule_overrides_a_lower_model_classification)
     _run_test("well-formed response splits cleanly", test_well_formed_response_splits_cleanly)

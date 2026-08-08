@@ -1,3 +1,4 @@
+import json
 import re
 import uuid
 
@@ -8,7 +9,12 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import RiskAnalysis
 from schemas import AnalysisStartRequest, RiskAnalysisResponse, SourceRef
-from services.analysis_sources import format_sources_markdown, resolve_sources
+from services.analysis_sources import (
+    dimension_citations,
+    format_score_summary_markdown,
+    format_sources_markdown,
+    resolve_sources,
+)
 from utils.export import markdown_to_plain, render_pdf
 
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
@@ -49,7 +55,9 @@ def get_analysis(analysis_id: str, db: Session = Depends(get_db)):
     # a source lookup per analysis. Built into SourceRef explicitly: pydantic
     # does not validate on assignment, so assigning raw dicts would let a
     # shape change slip through to serialization time.
-    response.sources = [SourceRef(**s) for s in resolve_sources(db, analysis)]
+    sources = resolve_sources(db, analysis)
+    response.sources = [SourceRef(**s) for s in sources]
+    response.dimension_citations = dimension_citations(analysis.content or "", sources)
     return response
 
 
@@ -63,10 +71,15 @@ def export_analysis(
     if not analysis:
         raise HTTPException(status_code=404, detail="Analysis not found")
 
-    # Append the resolved citation list to both formats. Without it the
-    # exported document cites [Source N] markers a reader cannot identify —
-    # the numbers only mean something alongside this list.
-    content = (analysis.content or "") + format_sources_markdown(resolve_sources(db, analysis))
+    # Both formats gain the two things the UI shows but the document never
+    # did: the score summary that qualifies each inline "Score: X/10", and the
+    # citation list without which every [Source N] marker is unidentifiable.
+    sources = resolve_sources(db, analysis)
+    content = (analysis.content or "") + format_score_summary_markdown(
+        json.loads(analysis.risk_scores_json) if analysis.risk_scores_json else {},
+        json.loads(analysis.dimension_confidence_json) if analysis.dimension_confidence_json else {},
+        dimension_citations(analysis.content or "", sources),
+    ) + format_sources_markdown(sources)
     safe_title = re.sub(r"[^\w\s-]", "", analysis.subject).strip().replace(" ", "_") or analysis_id[:8]
 
     if format == "txt":

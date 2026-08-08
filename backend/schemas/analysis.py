@@ -38,5 +38,8 @@ class RiskAnalysisResponse(BaseModel):
     # Resolved citation list. Populated only by the detail endpoint — the list
     # endpoint leaves it empty rather than running a source lookup per row.
     sources: list[SourceRef] = []
+    # {dimension_key: {"orders": [...], "tiers": {tier: count}}} — which
+    # sources each dimension cited and who published them. Detail endpoint only.
+    dimension_citations: dict[str, dict] = {}
 
     model_config = {"from_attributes": True}

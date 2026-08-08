@@ -37,6 +37,7 @@ export const SOURCE_TIERS: { key: string; label: string; short: string; classNam
   { key: "journalism", label: "Research & Journalism", short: "Research", className: "bg-slate-700 text-slate-300" },
   { key: "advocacy", label: "Advocacy", short: "Advocacy", className: "bg-amber-900/50 text-amber-300" },
   { key: "vendor", label: "Vendor / Commercial", short: "Vendor", className: "bg-red-900/50 text-red-300" },
+  { key: "general_web", label: "General web / Self-published", short: "General web", className: "bg-purple-900/50 text-purple-300" },
   { key: "unknown", label: "Unclassified", short: "Unclassified", className: "bg-slate-800 text-slate-500" },
 ];
 

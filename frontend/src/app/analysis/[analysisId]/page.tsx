@@ -143,16 +143,32 @@ export default function AnalysisDetailPage() {
                 key={key}
                 label={SCORE_LABELS[key] || key}
                 score={val}
-                confidence={dimensionConfidence?.[key]}
+                evidenceSupport={dimensionConfidence?.[key]}
+                citationTiers={analysis.dimension_citations?.[key]?.tiers}
                 size="md"
               />
             ))}
           </div>
           {dimensionConfidence && (
-            <p className="text-xs text-slate-500 mt-4">
-              <span className="font-mono">ev</span> = grounding confidence (0-10): how well the
-              sources support that dimension, scored separately from the risk itself.
-            </p>
+            <div className="text-xs text-slate-500 mt-5 space-y-2 border-t border-slate-800 pt-4">
+              <p>
+                <span className="font-mono text-slate-400">ev</span> ={" "}
+                <span className="text-slate-400">Evidence support</span> (0-10) — how directly the
+                retrieved sources back what was written for that dimension.{" "}
+                <span className="text-slate-400">It is not source authority</span>, and not a
+                probability that the assessment is correct: a dimension can be well supported by
+                weak sources. The line beneath each bar shows who published the sources it cited.
+              </p>
+              <p>
+                Dimensions scoring below 6 trigger an extra targeted research pass and are
+                rewritten if that improves their grounding, so published values cluster high — the
+                figure reports the result of that process, not the first attempt.
+              </p>
+              <p>
+                Scores are conditional on the sources retrieved for this run. A re-run gathers
+                different sources and may score differently.
+              </p>
+            </div>
           )}
         </div>
       )}

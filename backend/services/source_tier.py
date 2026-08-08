@@ -34,6 +34,7 @@ TIERS: dict[str, str] = {
     "journalism": "Research & Journalism",
     "advocacy": "Advocacy",
     "vendor": "Vendor / Commercial",
+    "general_web": "General web / Self-published",
     "unknown": "Unclassified",
 }
 
@@ -53,7 +54,9 @@ TIER_INSTRUCTION = (
     f"peer_reviewed (an academic journal or peer-reviewed venue), "
     f"journalism (a news organisation, research institute or think tank), "
     f"advocacy (an organisation campaigning for a stated position), "
-    f"vendor (a company writing about its own market or product). "
+    f"vendor (a company writing about its own market or product), "
+    f"general_web (an encyclopedia, wiki, content platform, or a personal or "
+    f"self-published post — anything with no editorial or review process). "
     f"Judge the publisher, not whether you agree with the content. "
     f"Then output the summary, starting on the next line."
 )
@@ -70,12 +73,24 @@ _OFFICIAL_DOMAINS = (
 )
 
 
-def deterministic_tier(url: str) -> str | None:
-    """`official` when the publisher is verifiable from the domain, else None.
+# Platforms whose publisher is structurally general-web regardless of how
+# scholarly an individual page reads. Observed misclassification this fixes:
+# en.wikipedia.org and a personal medium.com post were both returned as
+# "journalism", which inflates the apparent quality of an evidence base.
+_GENERAL_WEB_DOMAINS = (
+    "wikipedia.org", "wikimedia.org", "medium.com", "substack.com",
+    "blogspot.com", "wordpress.com", "reddit.com", "quora.com",
+    "linkedin.com", "notion.site", "github.io",
+)
 
-    Kept separate from the model's judgement because this one is a fact: a
-    document served from europa.eu is published by an EU body regardless of
-    what any classifier thinks of its contents.
+
+def deterministic_tier(url: str) -> str | None:
+    """The tier fixed by the domain, or None to leave it to the model.
+
+    Kept separate from the model's judgement because these are facts rather
+    than readings: a document served from europa.eu is published by an EU body,
+    and a wikipedia.org page is an encyclopedia entry, regardless of what any
+    classifier makes of the contents.
     """
     try:
         host = (urlparse(url).hostname or "").lower().rstrip(".")
@@ -88,6 +103,9 @@ def deterministic_tier(url: str) -> str | None:
     for domain in _OFFICIAL_DOMAINS:
         if host == domain or host.endswith("." + domain):
             return "official"
+    for domain in _GENERAL_WEB_DOMAINS:
+        if host == domain or host.endswith("." + domain):
+            return "general_web"
     return None
 
 
@@ -114,8 +132,9 @@ def split_tier(raw: str, url: str = "") -> tuple[str, str]:
         summary = rest.strip() if newline else ""
 
     # The domain rule wins where it applies.
-    if deterministic_tier(url) == "official":
-        tier = "official"
+    fixed = deterministic_tier(url)
+    if fixed:
+        tier = fixed
 
     return summary or text, tier
 
