@@ -99,6 +99,38 @@ def test_counters_are_scoped_to_the_utc_day():
         quota.today_utc = real_today
 
 
+def test_every_model_calling_route_is_guarded():
+    """A route that spends money but carries no quota_guard is the failure this
+    whole module exists to prevent, and it is invisible from the outside — the
+    endpoint just works. Assert the wiring instead."""
+    from routers import analysis, data_analysis, debate, digest, documents, reports, research
+
+    expected = {
+        "/api/research/start",
+        "/api/reports/generate",
+        "/api/analysis/start",
+        "/api/debate/start",
+        "/api/datalab/analyze",
+        "/api/documents/ask",
+        "/api/documents/{doc_id}/ask-citations",
+        "/api/digest/send-now",
+    }
+
+    # Inspected per router rather than off main.app: FastAPI keeps included
+    # routers wrapped instead of flattening their routes onto the app.
+    guarded = set()
+    for module in (analysis, data_analysis, debate, digest, documents, reports, research):
+        for route in module.router.routes:
+            names = [
+                getattr(d.dependency, "__qualname__", "") for d in getattr(route, "dependencies", [])
+            ]
+            if any(n.startswith("quota_guard") for n in names):
+                guarded.add(route.path)
+
+    missing = expected - guarded
+    assert not missing, f"unguarded model-calling routes: {sorted(missing)}"
+
+
 def test_guard_is_a_noop_when_quota_is_unset():
     """Production leaves DEMO_RUN_QUOTA at 0 — no rows, no refusals, ever."""
     db = _make_db()
@@ -166,6 +198,7 @@ if __name__ == "__main__":
     _run("budget is per user", test_budget_is_per_user)
     _run("features share one budget", test_features_share_one_budget)
     _run("counters are scoped to the UTC day", test_counters_are_scoped_to_the_utc_day)
+    _run("every model-calling route is guarded", test_every_model_calling_route_is_guarded)
     _run("guard is a no-op when quota is unset", test_guard_is_a_noop_when_quota_is_unset)
     _run("guard exempts admins", test_guard_exempts_admins)
     _run("guard enforces quota for members", test_guard_enforces_quota_for_members)

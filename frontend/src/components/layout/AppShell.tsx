@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Sidebar from "./Sidebar";
+import DemoBanner from "./DemoBanner";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
@@ -23,7 +24,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar collapsed={collapsed} onToggle={toggle} />
-      <main className="flex-1 overflow-y-auto">{children}</main>
+      <main className="flex-1 overflow-y-auto">
+        <DemoBanner />
+        {children}
+      </main>
     </div>
   );
 }

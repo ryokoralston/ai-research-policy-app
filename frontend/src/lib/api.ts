@@ -251,7 +251,10 @@ export const api = {
   },
 
   auth: {
-    status: () => request<{ setup_required: boolean }>("/api/auth/status"),
+    status: () =>
+      request<{ setup_required: boolean; demo_mode: boolean; demo_run_quota: number }>(
+        "/api/auth/status"
+      ),
     bootstrap: (email: string, password: string) =>
       request<{ token: string; expires_in: number }>("/api/auth/bootstrap", {
         method: "POST",

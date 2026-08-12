@@ -17,6 +17,7 @@ from services import audit_log
 from services.anthropic_client import IMAGE_MEDIA_TYPES
 from services.auth import client_ip, get_current_user
 from services.ingestion import _extract_youtube_id, _get_youtube_transcript, _scrape_url
+from services.quota import quota_guard
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -250,7 +251,7 @@ def delete_document(
     return {"deleted": doc_id}
 
 
-@router.post("/ask")
+@router.post("/ask", dependencies=[Depends(quota_guard("documents.ask"))])
 async def ask_documents(request: DocumentAskRequest, db: Session = Depends(get_db)):
     history = (
         [{"role": m.role, "content": m.content} for m in request.chat_history]
@@ -268,7 +269,7 @@ async def ask_documents(request: DocumentAskRequest, db: Session = Depends(get_d
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
-@router.post("/{doc_id}/ask-citations")
+@router.post("/{doc_id}/ask-citations", dependencies=[Depends(quota_guard("documents.ask_citations"))])
 async def ask_document_citations(doc_id: str, request: DocumentCitedAskRequest, db: Session = Depends(get_db)):
     """Single-document Q&A with API-native citations (see
     services/document_qa.py) — distinct from /ask above, which searches

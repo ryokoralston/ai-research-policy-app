@@ -17,7 +17,9 @@ Layered on that:
 - **Login rate limiting**, per IP (`services/auth.check_login_rate_limit`).
 - **A per-user daily run cap** (`services/quota.py`), applied to every endpoint
   that spends money: research, report generation, risk analysis, debate, Data
-  Lab, and manual digest sends. Set by `DEMO_RUN_QUOTA`; admins are exempt.
+  Lab, both Document Library Q&A endpoints, and manual digest sends. Set by
+  `DEMO_RUN_QUOTA`; admins are exempt. All features draw on one shared daily
+  budget, so switching features does not buy a fresh allowance.
 - **Admin-only global settings.** `model_settings` and `digest_settings` are
   single rows shared by the whole deployment, so their writes are restricted to
   admins — a reviewer cannot swap the API key, change the model, or redirect
@@ -59,12 +61,24 @@ build command, give it its own persistent disk mounted at `/data`, and set:
 | `DATABASE_URL` | `sqlite:////data/research.db` |
 | `CHROMA_PERSIST_DIR` | `/data/chroma` |
 | `UPLOADS_DIR` | `/data/uploads` |
+| `BM25_INDEX_PATH` | `/data/bm25.db` |
 | `ANTHROPIC_API_KEY` | the demo key from step 1 |
 | `TAVILY_API_KEY` | the demo key from step 1 |
 | `SECRET_ENCRYPTION_KEY` | a fresh Fernet key, **not** production's |
 | `CORS_ORIGINS` | the demo frontend's URL (step 4) |
 | `DEMO_MODE` | `true` |
 | `DEMO_RUN_QUOTA` | e.g. `5` |
+| `CONTEXTUAL_RETRIEVAL_ENABLED` | `false` (see below) |
+
+`BM25_INDEX_PATH` matters more than it looks: it defaults to a path relative to
+the working directory, which on Render is ephemeral, so leaving it unset drops
+the keyword half of hybrid search on every redeploy without any error.
+
+`CONTEXTUAL_RETRIEVAL_ENABLED` is on by default and makes a Claude call per
+chunk at index time. That is spend triggered by *uploading*, which the run
+quota does not cover, so a reviewer uploading a large PDF is unbounded except
+by the spend cap. Turning it off for the demo costs some retrieval quality;
+leaving it on is defensible if the spend cap is tight.
 
 Generate the Fernet key with:
 
