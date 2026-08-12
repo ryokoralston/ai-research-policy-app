@@ -11,6 +11,7 @@ from models import Report
 from schemas import (
     ReportGenerateRequest, ReportResponse, ReportDetail, ReportUpdateRequest, ReportDraftRequest
 )
+from services.quota import quota_guard
 from utils.export import markdown_to_plain, render_pdf
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -18,7 +19,7 @@ router = APIRouter(prefix="/api/reports", tags=["reports"])
 ALLOWED_REPORT_STATUSES = {"draft", "in_review", "pre_approval", "completed"}
 
 
-@router.post("/generate")
+@router.post("/generate", dependencies=[Depends(quota_guard("report"))])
 async def generate_report(request: ReportGenerateRequest, db: Session = Depends(get_db)):
     report_id = str(uuid.uuid4())
     report = Report(

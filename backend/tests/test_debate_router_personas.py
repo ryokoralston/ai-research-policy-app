@@ -33,6 +33,8 @@ from sqlalchemy.pool import StaticPool
 from database import Base, get_db
 from models.custom_persona import CustomPersona
 from models.debate import Debate
+from models.user import User
+from services.auth import get_current_user
 
 
 def _make_client_and_db():
@@ -45,6 +47,13 @@ def _make_client_and_db():
     app = FastAPI()
     app.include_router(debate_router_module.router)
     app.dependency_overrides[get_db] = lambda: db
+    # POST /start hangs its run quota off the acting user (services/quota.py);
+    # in main.py the whole router also sits behind get_current_user. This bare
+    # harness has no bearer token, so stand in an admin — quota-exempt, which
+    # keeps these persona-validation tests independent of DEMO_RUN_QUOTA.
+    app.dependency_overrides[get_current_user] = lambda: User(
+        id="test-admin", email="admin@example.com", password_hash="x", role="admin", is_active=True
+    )
 
     async def _noop_run_debate_task(*args, **kwargs):
         return None

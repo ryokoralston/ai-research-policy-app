@@ -132,13 +132,15 @@ def test_bootstrap_creates_admin_and_audits():
     app.dependency_overrides[get_db] = lambda: db
     client = TestClient(app)
 
-    assert client.get("/api/auth/status").json() == {"setup_required": True}
+    # Compared field-by-field, not as a whole dict: /status also reports the
+    # demo-instance flags, which are irrelevant here.
+    assert client.get("/api/auth/status").json()["setup_required"] is True
 
     resp = client.post("/api/auth/bootstrap", json={"email": "first-admin@example.com", "password": "hunter2hunter2"})
     assert resp.status_code == 200, resp.text
     assert "token" in resp.json()
 
-    assert client.get("/api/auth/status").json() == {"setup_required": False}
+    assert client.get("/api/auth/status").json()["setup_required"] is False
 
     # Self-disabling: a second bootstrap attempt is refused.
     resp = client.post("/api/auth/bootstrap", json={"email": "second@example.com", "password": "hunter2hunter2"})

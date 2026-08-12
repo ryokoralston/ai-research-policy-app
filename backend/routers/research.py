@@ -11,6 +11,7 @@ from models import ResearchSession, SearchResult, Document
 from models.user import User
 from schemas import ResearchStartRequest, ResearchSessionResponse, ResearchSessionDetail
 from services.auth import get_current_user
+from services.quota import quota_guard
 from services.usage import usage_context
 from utils.sse import queue_event_stream, sse_event
 
@@ -20,7 +21,7 @@ router = APIRouter(prefix="/api/research", tags=["research"])
 _sse_queues: dict[str, asyncio.Queue] = {}
 
 
-@router.post("/start", response_model=dict)
+@router.post("/start", response_model=dict, dependencies=[Depends(quota_guard("research"))])
 async def start_research(
     request: ResearchStartRequest,
     background_tasks: BackgroundTasks,

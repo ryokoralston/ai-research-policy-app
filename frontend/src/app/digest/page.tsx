@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Mail, RefreshCw, Send, CheckCircle, AlertCircle, Clock, Settings } from "lucide-react";
 import { api } from "@/lib/api";
+import { useCurrentUser } from "@/components/layout/UserContext";
 
 type DigestStatus = {
   configured: boolean;
@@ -60,6 +61,11 @@ function formatDateTime(iso: string | null): string {
 }
 
 export default function DigestPage() {
+  // The digest is one global schedule with one recipient and one SMTP secret,
+  // so the backend restricts PUT /api/digest/settings to admins. Members keep
+  // the read-only view of what the workspace digest is set to.
+  const currentUser = useCurrentUser();
+  const isAdmin = currentUser?.role === "admin";
   const [status, setStatus] = useState<DigestStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -180,7 +186,7 @@ export default function DigestPage() {
       {!loading && status && (
         <>
           {/* Config status banner */}
-          {!status.configured && (
+          {!status.configured && isAdmin && (
             <div className="flex items-start gap-3 p-4 mb-6 rounded-lg bg-amber-500/10 border border-amber-500/30">
               <AlertCircle size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />
               <div className="text-sm text-amber-300">
@@ -267,7 +273,8 @@ export default function DigestPage() {
         </div>
       )}
 
-      {/* ── Settings Form ─────────────────────────────────────────────────── */}
+      {/* ── Settings Form (admin-only) ────────────────────────────────────── */}
+      {isAdmin && (
       <div className="mt-10 border-t border-slate-800 pt-8">
         <div className="flex items-center gap-2 mb-6">
           <Settings size={16} className="text-slate-400" />
@@ -383,6 +390,14 @@ export default function DigestPage() {
           </div>
         )}
       </div>
+      )}
+
+      {!isAdmin && (
+        <p className="mt-10 border-t border-slate-800 pt-6 text-xs text-slate-500">
+          The digest schedule, recipient, and topics are workspace-wide settings managed by an
+          administrator.
+        </p>
+      )}
     </div>
   );
 }

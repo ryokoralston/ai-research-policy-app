@@ -19,6 +19,15 @@ class Settings(BaseSettings):
     # (or the one-time /api/auth/bootstrap on a fresh, user-less deploy).
     session_ttl_hours: int = 12
 
+    # Demo instance controls (see docs/demo-instance.md). Both default to the
+    # production behaviour, so leaving them unset changes nothing.
+    #   demo_run_quota: billable runs allowed per non-admin user per UTC day.
+    #                   0 disables the cap entirely (services/quota.py).
+    #   demo_mode:      marks the deployment as a shared demo — currently only
+    #                   surfaced to the frontend via GET /api/auth/status.
+    demo_run_quota: int = 0
+    demo_mode: bool = False
+
     database_url: str = "sqlite:///./data/research.db"
     chroma_persist_dir: str = "./data/chroma"
     uploads_dir: str = "./data/uploads"

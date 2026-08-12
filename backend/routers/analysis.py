@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import RiskAnalysis
 from schemas import AnalysisStartRequest, RiskAnalysisResponse, SourceRef
+from services.quota import quota_guard
 from services.analysis_sources import (
     dimension_citations,
     format_score_summary_markdown,
@@ -20,7 +21,7 @@ from utils.export import markdown_to_plain, render_pdf
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
 
-@router.post("/start")
+@router.post("/start", dependencies=[Depends(quota_guard("analysis"))])
 async def start_analysis(request: AnalysisStartRequest, db: Session = Depends(get_db)):
     analysis_id = str(uuid.uuid4())
     analysis = RiskAnalysis(

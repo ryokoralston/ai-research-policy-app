@@ -2,10 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useCurrentUser } from "@/components/layout/UserContext";
 
 type ModelOption = { group: string; id: string; label: string };
 
 export default function SettingsPage() {
+  // Model choice and API keys are one global row shared by every account, so
+  // the backend only lets admins write them (PUT /api/settings/models). Members
+  // still need this page for Change Password, so hide the section, not the page.
+  const currentUser = useCurrentUser();
+  const isAdmin = currentUser?.role === "admin";
   const [mainModel, setMainModel] = useState("claude-opus-5");
   const [fastModel, setFastModel] = useState("claude-haiku-4-5-20251001");
   const [anthropicKey, setAnthropicKey] = useState("");
@@ -129,13 +135,16 @@ export default function SettingsPage() {
 
   return (
     <div className="max-w-xl mx-auto py-10 px-4">
-      <h1 className="text-2xl font-bold text-slate-100 mb-1">AI Model Settings</h1>
+      <h1 className="text-2xl font-bold text-slate-100 mb-1">
+        {isAdmin ? "AI Model Settings" : "Settings"}
+      </h1>
       <p className="text-slate-400 text-sm mb-8">
-        Choose the models used for research, reports, and analysis.
-        API keys are stored securely in the database and never exposed.
+        {isAdmin
+          ? "Choose the models used for research, reports, and analysis. API keys are stored securely in the database and never exposed."
+          : "Model choice and API keys apply to the whole workspace and are managed by an administrator."}
       </p>
 
-      {banner && (
+      {isAdmin && banner && (
         <div
           className={`mb-6 px-4 py-3 rounded-md text-sm font-medium ${
             banner.startsWith("Error")
@@ -147,6 +156,7 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {isAdmin && (
       <form onSubmit={handleSave} className="space-y-6">
         {/* Model selection */}
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-4">
@@ -220,6 +230,7 @@ export default function SettingsPage() {
           {saving ? "Saving…" : "Save Settings"}
         </button>
       </form>
+      )}
 
       {passwordBanner && (
         <div

@@ -22,7 +22,8 @@ from sqlalchemy.orm import Session
 from database import get_db, get_or_init_digest_settings
 from models.user import User
 from services import audit_log
-from services.auth import client_ip, get_current_user
+from services.auth import client_ip, require_admin
+from services.quota import quota_guard
 from services.digest_service import send_digest
 from utils.masking import MASK, mask_secret
 
@@ -92,10 +93,15 @@ async def get_settings_endpoint(db: Session = Depends(get_db)) -> dict[str, Any]
 async def save_settings_endpoint(
     body: DigestSettingsIn,
     request: Request,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Save digest settings to DB and reschedule the job if hour/timezone changed."""
+    """Save digest settings to DB and reschedule the job if hour/timezone changed.
+
+    Admin-only: `digest_settings` is a single global row holding the recipient
+    address and SMTP password, so a member saving here would redirect (and pay
+    for) the whole deployment's daily mail.
+    """
     ds = get_or_init_digest_settings(db)
 
     changed: list[str] = []
@@ -143,7 +149,7 @@ async def save_settings_endpoint(
     }
 
 
-@router.post("/send-now")
+@router.post("/send-now", dependencies=[Depends(quota_guard("digest"))])
 async def send_now(db: Session = Depends(get_db)) -> dict[str, Any]:
     """Immediately send the digest (test endpoint)."""
     ds = get_or_init_digest_settings(db)

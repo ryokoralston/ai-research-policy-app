@@ -1,8 +1,9 @@
 import logging
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
+from services.quota import quota_guard
 from services.data_analysis import (
     ALLOWED_ANALYSIS_EXTENSIONS,
     MAX_ANALYSIS_FILE_BYTES,
@@ -15,7 +16,7 @@ router = APIRouter(prefix="/api/datalab", tags=["datalab"])
 logger = logging.getLogger(__name__)
 
 
-@router.post("/analyze")
+@router.post("/analyze", dependencies=[Depends(quota_guard("datalab"))])
 async def analyze(
     file: UploadFile = File(...),
     question: str = Form(...),

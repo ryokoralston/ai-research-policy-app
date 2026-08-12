@@ -10,6 +10,7 @@ from database import get_db
 from models.debate import Debate
 from schemas.debate import DebateStartRequest, DebateResponse, DebateDetail
 from services.persona_service import get_all_personas
+from services.quota import quota_guard
 from utils.sse import queue_event_stream, sse_event
 
 router = APIRouter(prefix="/api/debate", tags=["debate"])
@@ -23,7 +24,7 @@ DEFAULT_PERSONA_ORDER = [
 ]
 
 
-@router.post("/start", response_model=dict)
+@router.post("/start", response_model=dict, dependencies=[Depends(quota_guard("debate"))])
 async def start_debate(
     request: DebateStartRequest,
     background_tasks: BackgroundTasks,

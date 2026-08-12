@@ -6,6 +6,7 @@ from .reminder import Reminder
 from .user import User
 from .audit_log import AuditLogEntry
 from .usage_event import UsageEvent
+from .run_quota import RunQuotaCounter
 
 __all__ = [
     "Document", "DocumentChunk",
@@ -16,4 +17,5 @@ __all__ = [
     "User",
     "AuditLogEntry",
     "UsageEvent",
+    "RunQuotaCounter",
 ]

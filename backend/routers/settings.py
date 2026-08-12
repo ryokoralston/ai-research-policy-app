@@ -18,7 +18,7 @@ from models.model_catalog import ModelCatalogEntry
 from models.user import User
 from services import audit_log
 from services.anthropic_client import invalidate_ai_settings_cache
-from services.auth import client_ip, get_current_user
+from services.auth import client_ip, require_admin
 from utils.masking import MASK, mask_secret
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -86,10 +86,14 @@ async def get_available_models(db: Session = Depends(get_db)) -> dict[str, Any]:
 async def save_model_settings(
     body: ModelSettingsIn,
     request: Request,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Save model settings. Empty string API keys are ignored (keep existing)."""
+    """Save model settings. Empty string API keys are ignored (keep existing).
+
+    Admin-only: `model_settings` is a single global row, so a member saving here
+    would swap the API key and model choice for every user of the deployment.
+    """
     ms = get_or_init_model_settings(db)
 
     changed: list[str] = []

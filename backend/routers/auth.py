@@ -58,7 +58,14 @@ def _setup_required(db: Session) -> bool:
 
 @router.get("/status")
 async def auth_status(db: Session = Depends(get_db)) -> dict:
-    return {"setup_required": _setup_required(db)}
+    settings = get_settings()
+    return {
+        "setup_required": _setup_required(db),
+        # Lets the frontend tell reviewers they are on the shared demo, where
+        # runs are visible to every account and capped per day.
+        "demo_mode": settings.demo_mode,
+        "demo_run_quota": settings.demo_run_quota,
+    }
 
 
 @router.post("/bootstrap")
