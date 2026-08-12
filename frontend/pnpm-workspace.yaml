@@ -28,16 +28,7 @@ ignoredBuiltDependencies:
 # red. Do NOT run `audit fix --force`: it "solves" these by downgrading next to
 # 9.3.3, far worse than the advisories.
 #
-# TEMPORARY -- REMOVE ON OR AFTER 2026-08-10.
-# GHSA-2v37-7h3g-55p8 (nanoid, high) was published 2026-08-07. The patched
-# nanoid 3.3.17 was published 2026-08-03, so it does not clear the 7-day
-# minimumReleaseAge gate above until 2026-08-10 10:39 UTC. Deliberately waiting
-# for the cooldown rather than adding a minimumReleaseAgeExclude, because this
-# advisory is not reachable here: the only path is postcss, which calls
-# nanoid(6) -- default generator, fixed non-zero size (postcss/lib/input.js) --
-# while the advisory needs a custom generator with size zero. Build-time only.
-# On/after 2026-08-10: add `nanoid: "^3.3.17"` to pnpm.overrides in
-# package.json, run pnpm install, and delete this block.
-auditConfig:
-  ignoreGhsas:
-    - GHSA-2v37-7h3g-55p8 # nanoid -- see TEMPORARY note above
+# GHSA-2v37-7h3g-55p8 (nanoid, high) was suppressed here from 2026-08-07 while
+# the patched 3.3.17 aged past the minimumReleaseAge gate above. It cleared on
+# 2026-08-10 and is now fixed for real by the nanoid override, so the
+# suppression is gone and nothing is ignored.
