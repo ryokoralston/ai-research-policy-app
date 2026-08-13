@@ -32,7 +32,7 @@ torch==2.13.0
 # (PYSEC-2026-1761/1762) to 20260107 and raises pdfplumber's own Pillow floor.
 pdfplumber==0.11.10
 python-multipart==0.0.32
-httpx==0.28.0
+httpx==0.28.1
 python-dotenv==1.2.2
 aiofiles==24.1.0
 fpdf2==2.8.7
