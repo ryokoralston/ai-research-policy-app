@@ -54,7 +54,13 @@ backend/evals/eval_dataset_generated.json
 
 # ── Claude Code ───────────────────────────────────────────────────────────────
 # Ignore personal/local Claude files, but share project-wide config
-.claude/
+# `.claude/*` rather than `.claude/` so git still descends into the directory —
+# a wholly-ignored directory cannot have its children re-included below.
+.claude/*
 !.claude/settings.json
 !.claude/claude-security-guidance.md
 !.claude/security-patterns.yaml
+# Project skills are tooling that should travel with the repo. A parent dir
+# that stays ignored can't have its children re-included, so each level is
+# un-ignored explicitly.
+!.claude/skills/
