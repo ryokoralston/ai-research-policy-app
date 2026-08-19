@@ -17,6 +17,10 @@ services:
         value: /data/chroma
       - key: UPLOADS_DIR
         value: /data/uploads
+      # BM25 keyword-search index must live on the mounted disk or it's rebuilt
+      # from scratch on every deploy, losing all previously indexed content.
+      - key: BM25_INDEX_PATH
+        value: /data/bm25.db
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: TAVILY_API_KEY

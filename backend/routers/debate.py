@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -14,6 +15,8 @@ from services.auth import get_current_user
 from services.persona_service import get_all_personas
 from services.quota import quota_guard
 from utils.sse import queue_event_stream, sse_event
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/debate", tags=["debate"])
 
@@ -153,7 +156,8 @@ async def _run_debate_task(debate_id: str, topic: str, persona_keys: list[str], 
 
     try:
         await run_debate(debate_id, topic, persona_keys, queue)
-    except Exception as e:
-        await queue.put(sse_event("error", {"message": str(e), "event_type": "error"}))
+    except Exception:
+        logger.exception("Debate failed for debate_id %s", debate_id)
+        await queue.put(sse_event("error", {"message": "Debate failed. Please try again.", "event_type": "error"}))
     finally:
         _sse_queues.pop(debate_id, None)

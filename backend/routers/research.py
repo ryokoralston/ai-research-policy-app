@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -14,6 +15,8 @@ from services.auth import get_current_user
 from services.quota import quota_guard
 from services.usage import usage_context
 from utils.sse import queue_event_stream, sse_event
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/research", tags=["research"])
 
@@ -214,8 +217,9 @@ async def _run_research(
                 queue=queue,
                 db=db,
             )
-    except Exception as e:
-        await queue.put(sse_event("error", {"message": str(e)}))
+    except Exception:
+        logger.exception("Research failed for session %s", session_id)
+        await queue.put(sse_event("error", {"message": "Research failed. Please try again."}))
         session = db.query(ResearchSession).filter(ResearchSession.id == session_id).first()
         if session:
             session.status = "error"
