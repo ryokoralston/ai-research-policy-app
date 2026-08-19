@@ -12,6 +12,7 @@ from __future__ import annotations
 import bcrypt
 from sqlalchemy.orm import Session
 
+from models.organization import Organization
 from models.user import User
 
 ROLE_ADMIN = "admin"
@@ -35,7 +36,17 @@ def get_user_by_email(db: Session, email: str) -> User | None:
 
 
 def create_user(db: Session, email: str, password: str, role: str = ROLE_MEMBER) -> User:
-    user = User(email=email, password_hash=hash_password(password), role=role)
+    """Create an account and the organization it owns.
+
+    Every user gets their own organization (name = their email) — the current
+    one-organization-per-user tenancy model (see models/organization.py). It is
+    created here, not lazily, so no content row can ever be written with a NULL
+    org_id: content inherits org_id from its author.
+    """
+    org = Organization(name=email)
+    db.add(org)
+    db.flush()
+    user = User(email=email, password_hash=hash_password(password), role=role, org_id=org.id)
     db.add(user)
     db.commit()
     db.refresh(user)

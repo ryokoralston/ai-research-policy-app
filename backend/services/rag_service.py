@@ -7,6 +7,7 @@ from typing import AsyncIterator
 from sqlalchemy.orm import Session
 
 from models import Document, DocumentChunk
+from models.user import User
 from rag.chunker import chunk_pdf, chunk_html, chunk_plain_text, TextChunk, _approx_tokens
 from rag.contextualizer import contextualize_chunks, combine
 from rag.lexical_index import LexicalIndex
@@ -17,7 +18,9 @@ from services.anthropic_client import (
     generate_text_with_image, image_media_type, generate_text_with_pdf,
 )
 from services.reminder_tools import REMINDER_TOOLS, execute_reminder_tool
-from services.text_editor_tool import TEXT_EDITOR_TOOL, TEXT_EDITOR_TOOL_NAME, execute_text_editor_tool
+from services.text_editor_tool import (
+    TEXT_EDITOR_TOOL, TEXT_EDITOR_TOOL_NAME, execute_text_editor_tool, user_workspace_dir,
+)
 from services.query_router import route_query, guidance_for
 from services.mcp_bridge import get_mcp_tool_defs, is_mcp_tool, call_mcp_tool
 
@@ -419,6 +422,8 @@ async def answer_question(
     chat_history: list[dict] | None = None,
     custom_system: str | None = None,
     prior_citations: list[dict] | None = None,
+    *,
+    user: User,
 ) -> AsyncIterator[str]:
     """Stream an answer via a manual Anthropic tool-use loop.
 
@@ -434,6 +439,15 @@ async def answer_question(
     prior_citations: cumulative citations from previous turns (the "citations"
     list of the last "complete" event), used to keep [N] numbering stable across
     turns instead of restarting at [1] every turn.
+
+    user: the acting account. Every stateful tool in this loop is keyed to it —
+    reminders are stored with it as owner, the draft workspace is that user's
+    own directory, and MCP tools are told whose library they may read.
+    `doc_ids` must ALREADY be restricted to that user's documents by the caller
+    (routers/documents.py's _owned_doc_ids); an empty list means "this user has
+    no documents" and the retriever then returns nothing (rag/retriever.py).
+    Required, not optional: a default would silently un-scope the workspace,
+    reminder ownership, and MCP document access on the app's main chat path.
     """
     from rag.retriever import Retriever
 
@@ -455,6 +469,10 @@ async def answer_question(
     # to enforce read-before-write on create.
     viewed_workspace_paths: set[str] = set()
 
+    # The caller's own draft-workspace root (WORKSPACE_DIR/<user_id>/), so the
+    # text-editor tool can neither read nor overwrite another user's drafts.
+    workspace_dir = user_workspace_dir(user.id)
+
     # Tools from any MCP servers registered in the repo-root .mcp.json (see
     # services/mcp_bridge.py) — the same registration Claude Code itself
     # uses. Resolved once per turn here so both the system prompt (which
@@ -472,7 +490,7 @@ async def answer_question(
         """
         nonlocal next_citation_index
         # Try reminder tools first; returns None if the name doesn't match any of them
-        reminder_result = await execute_reminder_tool(name, tool_input, db)
+        reminder_result = await execute_reminder_tool(name, tool_input, db, user)
         if reminder_result is not None:
             return reminder_result
 
@@ -518,9 +536,11 @@ async def answer_question(
             return f"<source_documents>\n{context}\n</source_documents>"
 
         if name == TEXT_EDITOR_TOOL_NAME:
-            return await execute_text_editor_tool(tool_input, viewed_paths=viewed_workspace_paths)
+            return await execute_text_editor_tool(
+                tool_input, workspace_dir, viewed_paths=viewed_workspace_paths
+            )
         if is_mcp_tool(name):
-            return await call_mcp_tool(name, tool_input)
+            return await call_mcp_tool(name, tool_input, user.id)
         raise ValueError(f"Unknown tool: {name}")
 
     # Build system prompt: describe the tool and citation requirements

@@ -398,10 +398,16 @@ async def run_risk_analysis(
     if request.run_web_research:
         yield sse_event("status", {"message": f"Researching '{request.subject}'..."})
 
+        # The session this analysis spawns belongs to whoever owns the
+        # analysis — otherwise it would be an ownerless row, invisible to its
+        # own author and unreachable by anyone.
+        owner = db.query(RiskAnalysis).filter(RiskAnalysis.id == analysis_id).first()
         session = ResearchSession(
             id=str(uuid.uuid4()),
             query=f"AI risk analysis: {request.subject}",
             status="pending",
+            user_id=owner.user_id if owner else None,
+            org_id=owner.org_id if owner else None,
         )
         db.add(session)
         db.commit()

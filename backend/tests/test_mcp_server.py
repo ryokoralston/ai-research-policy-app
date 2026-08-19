@@ -237,7 +237,7 @@ def test_search_library_empty_results_message():
     # populated dev DB. Monkeypatch the cached retriever with a fake that
     # returns no chunks to exercise that branch directly and honestly.
     class _EmptyRetriever:
-        def retrieve(self, question, top_k=5):
+        def retrieve(self, question, top_k=5, doc_ids=None):
             return []
 
     original = mcp_server._retriever

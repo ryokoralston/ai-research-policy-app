@@ -38,9 +38,15 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from database import Base
+from models.user import User
 import services.mcp_bridge as mcp_bridge
 import rag.retriever as retriever_module
 import services.rag_service as rag_service
+
+# answer_question requires the acting user: the chat loop keys the draft
+# workspace, reminder ownership and MCP document access to it.
+_FAKE_USER = User(id="test-user", email="user@example.com", password_hash="x", role="member")
+
 
 _SERVER_SCRIPT = os.path.join(_BACKEND_DIR, "mcp_server.py")
 
@@ -312,7 +318,7 @@ def test_call_mcp_tool_unknown_name_raises_value_error():
     mcp_bridge.reset_cache()
     raised = None
     try:
-        asyncio.run(mcp_bridge.call_mcp_tool("mcp__nope__thing", {}))
+        asyncio.run(mcp_bridge.call_mcp_tool("mcp__nope__thing", {}, _FAKE_USER.id))
     except ValueError as exc:
         raised = exc
     assert raised is not None, "expected ValueError for an unregistered prefixed name"
@@ -327,7 +333,7 @@ def test_call_mcp_tool_is_error_result_raises_runtime_error():
     try:
         raised = None
         try:
-            asyncio.run(mcp_bridge.call_mcp_tool("mcp__policy_library__read_document", {"doc_id": "x"}))
+            asyncio.run(mcp_bridge.call_mcp_tool("mcp__policy_library__read_document", {"doc_id": "x"}, _FAKE_USER.id))
         except RuntimeError as exc:
             raised = exc
         assert raised is not None, "expected RuntimeError when result.isError is True"
@@ -346,7 +352,7 @@ def test_call_mcp_tool_joins_multiple_text_content_blocks():
     )
     orig_client, orig_load = _install_cache_and_client(result)
     try:
-        text = asyncio.run(mcp_bridge.call_mcp_tool("mcp__policy_library__read_document", {"doc_id": "x"}))
+        text = asyncio.run(mcp_bridge.call_mcp_tool("mcp__policy_library__read_document", {"doc_id": "x"}, _FAKE_USER.id))
         assert text == "part one\npart two", text
     finally:
         _teardown_cache_and_client(orig_client, orig_load)
@@ -357,7 +363,7 @@ def test_call_mcp_tool_truncates_at_50000_chars():
     result = types.CallToolResult(content=[types.TextContent(type="text", text=long_text)], isError=False)
     orig_client, orig_load = _install_cache_and_client(result)
     try:
-        text = asyncio.run(mcp_bridge.call_mcp_tool("mcp__policy_library__read_document", {"doc_id": "x"}))
+        text = asyncio.run(mcp_bridge.call_mcp_tool("mcp__policy_library__read_document", {"doc_id": "x"}, _FAKE_USER.id))
         suffix = "... [truncated]"
         assert text.endswith(suffix), text[-50:]
         assert len(text) == 50_000 + len(suffix), len(text)
@@ -416,7 +422,7 @@ def _run_answer_with_mcp_fakes(fake_defs: list[dict]):
     retriever_module.Retriever = FakeRetriever
     try:
         async def collect():
-            return [e async for e in rag_service.answer_question("q?", None, 5, db)]
+            return [e async for e in rag_service.answer_question("q?", None, 5, db, user=_FAKE_USER)]
         asyncio.run(collect())
     finally:
         rag_service.get_mcp_tool_defs = orig_get_defs
@@ -503,7 +509,7 @@ def test_e2e_real_server_list_tools_and_call_list_documents():
             "mcp__policy_library__list_documents",
         }, names
 
-        text = asyncio.run(mcp_bridge.call_mcp_tool("mcp__policy_library__list_documents", {}))
+        text = asyncio.run(mcp_bridge.call_mcp_tool("mcp__policy_library__list_documents", {}, _FAKE_USER.id))
         assert text, "expected non-empty text from list_documents"
     finally:
         _restore_config(path)

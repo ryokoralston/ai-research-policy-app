@@ -28,6 +28,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from database import Base
+from models.user import User
 import services.query_router as query_router
 from services.query_router import (
     QUERY_CATEGORIES,
@@ -39,6 +40,11 @@ from services.query_router import (
 )
 import rag.retriever as retriever_module
 import services.rag_service as rag_service
+
+# answer_question requires the acting user: the chat loop keys the draft
+# workspace, reminder ownership and MCP document access to it.
+_FAKE_USER = User(id="test-user", email="user@example.com", password_hash="x", role="member")
+
 
 
 # ── parse_category ───────────────────────────────────────────────────────────
@@ -202,7 +208,7 @@ def _run_answer_question_with_fakes(fixed_category: str):
     retriever_module.Retriever = FakeRetriever
     try:
         async def collect():
-            return [e async for e in rag_service.answer_question("q?", None, 5, db)]
+            return [e async for e in rag_service.answer_question("q?", None, 5, db, user=_FAKE_USER)]
         events = asyncio.run(collect())
     finally:
         rag_service.route_query = orig_route_query

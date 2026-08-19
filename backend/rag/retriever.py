@@ -88,6 +88,16 @@ class Retriever:
         doc_ids: list[str] | None = None,
         candidate_k: int = 20,
     ) -> list[RetrievedChunk]:
+        # doc_ids semantics — the difference matters for data isolation:
+        #   None  → no document filter (search the whole index)
+        #   []    → search NOTHING, return nothing
+        # Request paths always pass a concrete list of the caller's own
+        # document ids, so a caller with no documents (an empty list) must get
+        # no results rather than falling through to an unfiltered search of
+        # everyone's library.
+        if doc_ids is not None and not doc_ids:
+            return []
+
         query_embedding = self._embed.embed_query(question)
 
         where = None

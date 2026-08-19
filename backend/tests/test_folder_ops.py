@@ -54,10 +54,13 @@ def _make_client_and_db():
     return TestClient(app), db
 
 
-def _doc(db, metadata_json=None):
+def _doc(db, metadata_json=None, user_id=_FAKE_ADMIN.id):
     doc_id = str(uuid.uuid4())
+    # Documents are owner-scoped: every endpoint filters by user_id, so a
+    # fixture document must belong to the acting user to be visible at all.
     db.add(Document(id=doc_id, filename="a.txt", source_type="upload",
-                    status="indexed", metadata_json=metadata_json))
+                    status="indexed", metadata_json=metadata_json,
+                    user_id=user_id))
     db.commit()
     return doc_id
 

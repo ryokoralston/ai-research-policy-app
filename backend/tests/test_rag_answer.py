@@ -29,10 +29,16 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from database import Base
+from models.user import User
 from models import Document
 from rag.vector_store import RetrievedChunk
 import rag.retriever as retriever_module
 import services.rag_service as rag_service
+
+# answer_question requires the acting user: the chat loop keys the draft
+# workspace, reminder ownership and MCP document access to it.
+_FAKE_USER = User(id="test-user", email="user@example.com", password_hash="x", role="member")
+
 
 
 def _chunk(chunk_id, doc_id, content, page=3, section="Findings", context=""):
@@ -84,7 +90,7 @@ def _run_answer_multi(chunk_batches: list[list]):
     rag_service.stream_chat_with_tools = fake_stream_chat_with_tools
     try:
         async def collect():
-            return [e async for e in rag_service.answer_question("q?", None, 5, db)]
+            return [e async for e in rag_service.answer_question("q?", None, 5, db, user=_FAKE_USER)]
         events = asyncio.run(collect())
     finally:
         retriever_module.Retriever = orig_retriever

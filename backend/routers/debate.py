@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models.debate import Debate
+from models.user import User
 from schemas.debate import DebateStartRequest, DebateResponse, DebateDetail
+from services.auth import get_current_user
 from services.persona_service import get_all_personas
 from services.quota import quota_guard
 from utils.sse import queue_event_stream, sse_event
@@ -24,10 +26,24 @@ DEFAULT_PERSONA_ORDER = [
 ]
 
 
+def _owned_debate(debate_id: str, current_user: User, db: Session) -> Debate:
+    """Return the caller's debate, or 404 — someone else's debate is
+    indistinguishable from a nonexistent one, and admins are not exempt."""
+    debate = (
+        db.query(Debate)
+        .filter(Debate.id == debate_id, Debate.user_id == current_user.id)
+        .first()
+    )
+    if not debate:
+        raise HTTPException(status_code=404, detail="Debate not found")
+    return debate
+
+
 @router.post("/start", response_model=dict, dependencies=[Depends(quota_guard("debate"))])
 async def start_debate(
     request: DebateStartRequest,
     background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     # Validate and resolve persona keys — checked against the merged
@@ -60,6 +76,8 @@ async def start_debate(
         topic=request.topic.strip(),
         status="pending",
         personas=json.dumps(persona_keys),
+        user_id=current_user.id,
+        org_id=current_user.org_id,
     )
     db.add(debate)
     db.commit()
@@ -73,10 +91,12 @@ async def start_debate(
 
 
 @router.get("/{debate_id}/stream")
-async def stream_debate(debate_id: str, db: Session = Depends(get_db)):
-    debate = db.query(Debate).filter(Debate.id == debate_id).first()
-    if not debate:
-        raise HTTPException(status_code=404, detail="Debate not found")
+async def stream_debate(
+    debate_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _owned_debate(debate_id, current_user, db)
 
     async def event_generator():
         queue = _sse_queues.get(debate_id)
@@ -90,9 +110,14 @@ async def stream_debate(debate_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/", response_model=list[DebateResponse])
-def list_debates(limit: int = 20, db: Session = Depends(get_db)):
+def list_debates(
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     debates = (
         db.query(Debate)
+        .filter(Debate.user_id == current_user.id)
         .order_by(Debate.created_at.desc())
         .limit(limit)
         .all()
@@ -101,18 +126,21 @@ def list_debates(limit: int = 20, db: Session = Depends(get_db)):
 
 
 @router.get("/{debate_id}", response_model=DebateDetail)
-def get_debate(debate_id: str, db: Session = Depends(get_db)):
-    debate = db.query(Debate).filter(Debate.id == debate_id).first()
-    if not debate:
-        raise HTTPException(status_code=404, detail="Debate not found")
-    return debate
+def get_debate(
+    debate_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return _owned_debate(debate_id, current_user, db)
 
 
 @router.delete("/{debate_id}", response_model=dict)
-def delete_debate(debate_id: str, db: Session = Depends(get_db)):
-    debate = db.query(Debate).filter(Debate.id == debate_id).first()
-    if not debate:
-        raise HTTPException(status_code=404, detail="Debate not found")
+def delete_debate(
+    debate_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    debate = _owned_debate(debate_id, current_user, db)
     db.delete(debate)
     db.commit()
     _sse_queues.pop(debate_id, None)

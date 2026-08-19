@@ -29,7 +29,11 @@ async def generate_report_stream(
         return
 
     # ── Gather source material ────────────────────────────────────────────────
-    source_material = await _gather_source_material(request, db)
+    # Sources are looked up by ids the caller supplied, so they must be
+    # restricted to the report owner's own sessions/debates/documents —
+    # otherwise naming someone else's session_id here would read it.
+    owner_id = _report_owner_id(report_id, db)
+    source_material = await _gather_source_material(request, db, owner_id)
 
     if not source_material:
         yield sse_event("error", {"message": "No source material found. Provide a session_id, debate_id, or doc_ids."})
@@ -375,13 +379,30 @@ async def _generate_single_pass(
     })
 
 
-async def _gather_source_material(request: ReportGenerateRequest, db: Session) -> str:
-    """Build a source material string from session, debate, or documents."""
+def _report_owner_id(report_id: str, db: Session) -> str | None:
+    """user_id of the report being generated — the owner every source lookup
+    below is scoped to. None only for a report row written without an owner,
+    which no current code path produces (the router always sets it)."""
+    report = db.query(Report).filter(Report.id == report_id).first()
+    return report.user_id if report else None
+
+
+async def _gather_source_material(
+    request: ReportGenerateRequest, db: Session, owner_id: str | None = None
+) -> str:
+    """Build a source material string from session, debate, or documents.
+
+    Every lookup is filtered by `owner_id`: the ids come straight from the
+    request body, so an unscoped lookup would let any signed-in user pull
+    another user's research session, debate transcript, or document text into
+    a report they can then read.
+    """
     parts: list[str] = []
 
     if request.session_id:
         session = db.query(ResearchSession).filter(
-            ResearchSession.id == request.session_id
+            ResearchSession.id == request.session_id,
+            ResearchSession.user_id == owner_id,
         ).first()
         if session:
             if session.summary:
@@ -393,7 +414,9 @@ async def _gather_source_material(request: ReportGenerateRequest, db: Session) -
                     )
 
     if request.debate_id:
-        debate = db.query(Debate).filter(Debate.id == request.debate_id).first()
+        debate = db.query(Debate).filter(
+            Debate.id == request.debate_id, Debate.user_id == owner_id
+        ).first()
         if debate:
             parts.append(f"## Policy Debate Transcript\nTopic: {debate.topic}\n")
             # Group arguments by round
@@ -414,7 +437,9 @@ async def _gather_source_material(request: ReportGenerateRequest, db: Session) -
 
     if request.doc_ids:
         for doc_id in request.doc_ids:
-            doc = db.query(Document).filter(Document.id == doc_id).first()
+            doc = db.query(Document).filter(
+                Document.id == doc_id, Document.user_id == owner_id
+            ).first()
             if not doc:
                 continue
             # Get first few chunks as representative content

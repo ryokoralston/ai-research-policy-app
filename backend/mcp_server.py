@@ -89,6 +89,27 @@ mcp = FastMCP("PolicyLibraryMCP", log_level="ERROR")
 MAX_SEARCH_CONTENT_CHARS = 1200
 MAX_READ_DOCUMENT_CHARS = 50_000
 
+# Set by services/mcp_bridge.py on every call made on behalf of a signed-in
+# user (see its ACTING_USER_ENV_VAR). When present, every lookup below is
+# restricted to that user's documents — this process has its own DB session
+# and no request context, so the environment is how ownership travels.
+# When absent, the server is being run standalone (the mcp_client.py harness,
+# a local Claude Desktop/Claude Code config, the tests) and stays unscoped as
+# before; the app's own bridge always sets it.
+ACTING_USER_ENV_VAR = "MCP_ACTING_USER_ID"
+
+
+def _acting_user_id() -> str | None:
+    return os.environ.get(ACTING_USER_ENV_VAR) or None
+
+
+def _scope_to_acting_user(query):
+    """Apply the acting-user filter to a Document query, if one is set."""
+    user_id = _acting_user_id()
+    if user_id is None:
+        return query
+    return query.filter(Document.user_id == user_id)
+
 # Lazy, module-level cache: constructing Retriever() loads the local
 # sentence-transformers embedding model and (on first search) the
 # cross-encoder reranker, ~10-20s combined — fine to pay once, not on
@@ -117,8 +138,9 @@ def _indexed_documents(db) -> list[Document]:
     sync as documents are added.
     """
     return (
-        db.query(Document)
-        .filter(Document.status == "indexed")
+        _scope_to_acting_user(
+            db.query(Document).filter(Document.status == "indexed")
+        )
         .order_by(Document.created_at)
         .all()
     )
@@ -136,8 +158,10 @@ def _document_full_text(doc_id: str) -> str:
     """
     db = SessionLocal()
     try:
-        doc = db.get(Document, doc_id)
+        doc = _scope_to_acting_user(db.query(Document).filter(Document.id == doc_id)).first()
         if doc is None:
+            # Same message whether the id is unknown or simply not the acting
+            # user's — no existence leak, matching the API's 404 policy.
             raise ValueError(f"Unknown doc_id: {doc_id!r}")
         if doc.status != "indexed":
             raise ValueError(
@@ -187,7 +211,18 @@ def search_library(
     top_k: int = Field(default=5, description="Number of results to return."),
 ) -> str:
     retriever = _get_retriever()
-    chunks = retriever.retrieve(query, top_k=top_k)
+    # doc_ids=None searches the whole index; when an acting user is set the
+    # search is confined to their own documents (an empty list means they have
+    # none, which rag/retriever.py answers with no results rather than an
+    # unfiltered search).
+    doc_ids = None
+    if _acting_user_id() is not None:
+        db = SessionLocal()
+        try:
+            doc_ids = [d.id for d in _indexed_documents(db)]
+        finally:
+            db.close()
+    chunks = retriever.retrieve(query, top_k=top_k, doc_ids=doc_ids)
 
     if not chunks:
         return f"No results found in the document library for: {query!r}"

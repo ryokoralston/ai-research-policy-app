@@ -33,7 +33,7 @@ def get_db():
 
 def init_db():
     # Import all models so Base knows about them
-    from models import document, report, research_session, debate, digest_settings, model_settings, reminder, user, audit_log, custom_persona, model_catalog, usage_event  # noqa: F401
+    from models import document, report, research_session, debate, digest_settings, model_settings, reminder, user, organization, audit_log, custom_persona, model_catalog, usage_event  # noqa: F401
     Base.metadata.create_all(bind=engine)
     encrypt_legacy_secrets()
     normalize_legacy_report_status()
@@ -41,6 +41,7 @@ def init_db():
     add_debate_consensus_column()
     add_dimension_confidence_column()
     add_source_tier_column()
+    add_ownership_columns()
     print("Database initialized.")
 
 
@@ -137,6 +138,128 @@ def add_source_tier_column():
             conn.execute(text("ALTER TABLE search_results ADD COLUMN source_tier VARCHAR"))
         except Exception:
             pass  # column already exists, or table doesn't exist yet
+
+
+# Content tables that carry ownership (user_id + org_id). Their child tables
+# (document_chunks, report_sections, search_results, debate_arguments) are
+# deliberately NOT listed: they are reachable only through their scoped parent,
+# so scoping the parent scopes them.
+OWNERSHIP_TABLES = (
+    "documents", "reports", "research_sessions", "risk_analyses", "debates", "reminders",
+)
+
+
+def _table_columns(conn, table: str) -> set[str]:
+    """Column names of `table`, or an empty set if the table doesn't exist."""
+    from sqlalchemy import text
+
+    try:
+        rows = conn.execute(text(f"PRAGMA table_info({table})")).fetchall()
+    except Exception:
+        return set()
+    return {r[1] for r in rows}
+
+
+def add_ownership_columns():
+    """Idempotent migration: give every content row an owner.
+
+    Three steps, each safe to re-run:
+
+      1. Add users.org_id and user_id/org_id (+ their indexes) to each of
+         OWNERSHIP_TABLES, skipping any column that already exists.
+      2. Create one organization per user (name = the user's email) and point
+         users.org_id at it, skipping users that already have one. One
+         organization per user is the current tenancy model — see
+         models/organization.py.
+      3. Backfill: every content row still lacking an owner is assigned to the
+         OLDEST admin account and that admin's organization. Pre-migration rows
+         have no recorded author, and the oldest admin is the account that
+         (in this single-tenant deployment) created them.
+
+    A database with no users at all — a fresh deploy, or a test DB — is a
+    no-op: the columns are added and steps 2/3 are skipped. Same if there are
+    users but no admin to assign to (logged, never raised): init_db must not
+    fail because of an unusual user table.
+    """
+    import uuid as _uuid
+    from datetime import datetime as _datetime
+
+    from sqlalchemy import text
+
+    added_columns: list[str] = []
+    orgs_created = 0
+    rows_backfilled: dict[str, int] = {}
+    note = ""
+
+    with engine.begin() as conn:
+        # 1. columns + indexes
+        for table in ("users",) + OWNERSHIP_TABLES:
+            existing = _table_columns(conn, table)
+            if not existing:
+                continue  # table not created yet
+            wanted = ("org_id",) if table == "users" else ("user_id", "org_id")
+            for col in wanted:
+                if col not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} VARCHAR"))
+                    added_columns.append(f"{table}.{col}")
+                # SQLAlchemy's create_all only indexes tables it creates, so an
+                # existing table needs its index created here. Name matches
+                # SQLAlchemy's ix_<table>_<column> convention so create_all on a
+                # fresh database produces the same schema.
+                conn.execute(
+                    text(f"CREATE INDEX IF NOT EXISTS ix_{table}_{col} ON {table} ({col})")
+                )
+
+        # 2. one organization per user
+        if not _table_columns(conn, "users"):
+            return
+        users = conn.execute(
+            text("SELECT id, email, role, org_id FROM users ORDER BY created_at")
+        ).fetchall()
+        if not users:
+            print("Ownership migration: no users yet — columns only.")
+            return
+
+        for user_id, email, _role, org_id in users:
+            if org_id:
+                continue
+            new_org_id = str(_uuid.uuid4())
+            conn.execute(
+                text("INSERT INTO organizations (id, name, created_at) VALUES (:id, :name, :ts)"),
+                {"id": new_org_id, "name": email, "ts": _datetime.utcnow()},
+            )
+            conn.execute(
+                text("UPDATE users SET org_id = :org WHERE id = :id"),
+                {"org": new_org_id, "id": user_id},
+            )
+            orgs_created += 1
+
+        # 3. backfill content rows to the oldest admin
+        owner = conn.execute(
+            text("SELECT id, org_id FROM users WHERE role = 'admin' ORDER BY created_at LIMIT 1")
+        ).first()
+        if owner is None:
+            note = " (no admin account — content rows left unowned)"
+        else:
+            for table in OWNERSHIP_TABLES:
+                if not _table_columns(conn, table):
+                    continue
+                result = conn.execute(
+                    text(
+                        f"UPDATE {table} SET user_id = :uid, org_id = :oid "
+                        f"WHERE user_id IS NULL"
+                    ),
+                    {"uid": owner[0], "oid": owner[1]},
+                )
+                if result.rowcount:
+                    rows_backfilled[table] = result.rowcount
+
+    backfilled = ", ".join(f"{t}={n}" for t, n in rows_backfilled.items()) or "none"
+    print(
+        f"Ownership migration: columns added={len(added_columns)} "
+        f"({', '.join(added_columns) or 'none'}), organizations created={orgs_created}, "
+        f"rows backfilled: {backfilled}{note}"
+    )
 
 
 def encrypt_legacy_secrets():

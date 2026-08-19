@@ -34,6 +34,10 @@ from sqlalchemy.orm import sessionmaker
 import database
 from database import Base
 from models import Report, ResearchSession  # registers tables with Base
+from models.user import User
+
+# Owner of every fixture row below, and the caller the PATCH tests act as.
+_FAKE_USER = User(id="test-user", email="user@example.com", password_hash="x", role="member")
 from schemas import ReportGenerateRequest
 import services.report_generator as report_generator
 
@@ -67,12 +71,17 @@ def _make_test_session():
 
 
 def _seed_report_and_session(db):
-    """Insert a ResearchSession (source material) and a draft Report row."""
+    """Insert a ResearchSession (source material) and a draft Report row.
+
+    Both rows belong to _FAKE_USER: reports and their source material are
+    owner-scoped, so an ownerless report would be invisible to every caller.
+    """
     session = ResearchSession(
         id=str(uuid.uuid4()),
         query="AI policy test query",
         status="complete",
         summary="A short research synthesis used as source material.",
+        user_id=_FAKE_USER.id,
     )
     db.add(session)
     report_id = str(uuid.uuid4())
@@ -82,6 +91,7 @@ def _seed_report_and_session(db):
         report_type="policy_memo",
         status="draft",
         session_id=session.id,
+        user_id=_FAKE_USER.id,
     )
     db.add(report)
     db.commit()
@@ -195,11 +205,13 @@ def _make_test_client(db):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from database import get_db
+    from services.auth import get_current_user
     from routers import reports as reports_router
 
     app = FastAPI()
     app.include_router(reports_router.router)
     app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: _FAKE_USER
     return TestClient(app)
 
 

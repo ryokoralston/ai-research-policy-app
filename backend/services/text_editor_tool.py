@@ -36,6 +36,21 @@ WORKSPACE_DIR = os.path.normpath(
 MAX_FILE_BYTES = 262144
 
 
+def user_workspace_dir(user_id: str) -> str:
+    """Return one user's private draft-workspace root: WORKSPACE_DIR/<user_id>/.
+
+    WORKSPACE_DIR itself is never used as a working root by a request path —
+    it is only the parent of the per-user roots, so one user's drafts are
+    neither listable nor readable by another. The id is validated (it is a
+    uuid4 from the users table, but this function must not be the place a
+    path segment sneaks in) and the containment check in
+    resolve_workspace_path still applies inside the returned root.
+    """
+    if not user_id or user_id in (".", "..") or any(c in user_id for c in "/\\"):
+        raise ValueError("invalid user id for workspace path")
+    return os.path.join(WORKSPACE_DIR, user_id)
+
+
 def _ensure_dir(root: Path) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     return root

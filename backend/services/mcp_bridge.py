@@ -22,6 +22,8 @@ import os
 import sys
 
 import mcp.types as types
+from mcp.client.stdio import get_default_environment
+
 from mcp_client import MCPClient
 
 _SERVICES_DIR = os.path.dirname(os.path.abspath(__file__))  # backend/services
@@ -43,6 +45,13 @@ MCP_CONFIG_PATH = os.path.join(_REPO_ROOT, ".mcp.json")
 EXCLUDED_TOOLS: dict[str, set[str]] = {"policy-library": {"search_library"}}
 
 TOOL_PREFIX = "mcp__"
+
+# Environment variable carrying the acting user's id into every MCP server
+# subprocess. mcp_server.py (this repo's policy-library server) reads it and
+# restricts every document lookup to that user — the server runs as a separate
+# process with its own DB session, so it has no other way to know who is
+# asking. Set on every call_mcp_tool invocation; see that function.
+ACTING_USER_ENV_VAR = "MCP_ACTING_USER_ID"
 
 # Truncation guard on call_mcp_tool's returned text — read_document can
 # return an entire document. mcp_server.py already caps read_document at
@@ -188,13 +197,21 @@ def is_mcp_tool(name: str) -> bool:
     return name in _tool_cache["index"]
 
 
-async def call_mcp_tool(prefixed_name: str, tool_input: dict) -> str:
+async def call_mcp_tool(prefixed_name: str, tool_input: dict, user_id: str) -> str:
     """Call one MCP tool by its prefixed name and return its text result.
 
     Opens a fresh MCPClient, connects, calls, and cleans up within this one
     coroutine call (see module docstring re: the anyio same-task
     constraint) — no connection is reused from get_mcp_tool_defs's caching
     pass.
+
+    `user_id` is the acting account, passed to the server subprocess as
+    ACTING_USER_ENV_VAR so document-reading tools return only that user's
+    library. It is a required argument precisely so a future caller cannot
+    forget it and silently reopen cross-user access. The environment is the
+    MCP SDK's default minimal one plus that variable — the parent process's
+    own env (API keys, DB URL) is deliberately not handed to third-party
+    servers.
     """
     if _tool_cache is None or prefixed_name not in _tool_cache["index"]:
         raise ValueError(f"Unknown MCP tool: {prefixed_name}")
@@ -206,7 +223,8 @@ async def call_mcp_tool(prefixed_name: str, tool_input: dict) -> str:
         # Server was removed from .mcp.json since the cache was populated.
         raise ValueError(f"Unknown MCP tool: {prefixed_name}")
 
-    client = MCPClient(params["command"], params["args"], cwd=params["cwd"])
+    env = {**get_default_environment(), ACTING_USER_ENV_VAR: user_id}
+    client = MCPClient(params["command"], params["args"], env=env, cwd=params["cwd"])
     try:
         await client.connect()
         result = await client.call_tool(bare_name, tool_input)

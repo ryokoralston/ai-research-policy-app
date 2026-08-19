@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import RiskAnalysis
+from models.user import User
 from schemas import AnalysisStartRequest, RiskAnalysisResponse, SourceRef
+from services.auth import get_current_user
 from services.quota import quota_guard
 from services.analysis_sources import (
     dimension_citations,
@@ -21,13 +23,32 @@ from utils.export import markdown_to_plain, render_pdf
 router = APIRouter(prefix="/api/analysis", tags=["analysis"])
 
 
+def _owned_analysis(analysis_id: str, current_user: User, db: Session) -> RiskAnalysis:
+    """Return the caller's risk analysis, or 404 — another user's analysis is
+    reported as missing rather than forbidden, and admins get no exemption."""
+    analysis = (
+        db.query(RiskAnalysis)
+        .filter(RiskAnalysis.id == analysis_id, RiskAnalysis.user_id == current_user.id)
+        .first()
+    )
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    return analysis
+
+
 @router.post("/start", dependencies=[Depends(quota_guard("analysis"))])
-async def start_analysis(request: AnalysisStartRequest, db: Session = Depends(get_db)):
+async def start_analysis(
+    request: AnalysisStartRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     analysis_id = str(uuid.uuid4())
     analysis = RiskAnalysis(
         id=analysis_id,
         subject=request.subject,
         analysis_type=request.analysis_type,
+        user_id=current_user.id,
+        org_id=current_user.org_id,
     )
     db.add(analysis)
     db.commit()
@@ -41,16 +62,26 @@ async def start_analysis(request: AnalysisStartRequest, db: Session = Depends(ge
 
 
 @router.get("/", response_model=list[RiskAnalysisResponse])
-def list_analyses(db: Session = Depends(get_db)):
-    analyses = db.query(RiskAnalysis).order_by(RiskAnalysis.created_at.desc()).all()
+def list_analyses(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    analyses = (
+        db.query(RiskAnalysis)
+        .filter(RiskAnalysis.user_id == current_user.id)
+        .order_by(RiskAnalysis.created_at.desc())
+        .all()
+    )
     return analyses
 
 
 @router.get("/{analysis_id}", response_model=RiskAnalysisResponse)
-def get_analysis(analysis_id: str, db: Session = Depends(get_db)):
-    analysis = db.query(RiskAnalysis).filter(RiskAnalysis.id == analysis_id).first()
-    if not analysis:
-        raise HTTPException(status_code=404, detail="Analysis not found")
+def get_analysis(
+    analysis_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    analysis = _owned_analysis(analysis_id, current_user, db)
     response = RiskAnalysisResponse.model_validate(analysis)
     # Resolved here rather than on the model so the list endpoint doesn't pay
     # a source lookup per analysis. Built into SourceRef explicitly: pydantic
@@ -66,11 +97,10 @@ def get_analysis(analysis_id: str, db: Session = Depends(get_db)):
 def export_analysis(
     analysis_id: str,
     format: str = Query(default="txt", pattern="^(txt|pdf)$"),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    analysis = db.query(RiskAnalysis).filter(RiskAnalysis.id == analysis_id).first()
-    if not analysis:
-        raise HTTPException(status_code=404, detail="Analysis not found")
+    analysis = _owned_analysis(analysis_id, current_user, db)
 
     # Both formats gain the two things the UI shows but the document never
     # did: the score summary that qualifies each inline "Score: X/10", and the
@@ -101,10 +131,12 @@ def export_analysis(
 
 
 @router.delete("/{analysis_id}")
-def delete_analysis(analysis_id: str, db: Session = Depends(get_db)):
-    analysis = db.query(RiskAnalysis).filter(RiskAnalysis.id == analysis_id).first()
-    if not analysis:
-        raise HTTPException(status_code=404, detail="Analysis not found")
+def delete_analysis(
+    analysis_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    analysis = _owned_analysis(analysis_id, current_user, db)
     db.delete(analysis)
     db.commit()
     return {"deleted": analysis_id}

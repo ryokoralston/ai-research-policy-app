@@ -21,6 +21,23 @@ router = APIRouter(prefix="/api/research", tags=["research"])
 _sse_queues: dict[str, asyncio.Queue] = {}
 
 
+def _owned_session(session_id: str, current_user: User, db: Session) -> ResearchSession:
+    """Return the caller's research session, or 404.
+
+    Someone else's session is a 404, never a 403 — a 403 would confirm the id
+    exists. Admins get no exemption: their privilege covers user and audit
+    administration, not other people's research.
+    """
+    session = (
+        db.query(ResearchSession)
+        .filter(ResearchSession.id == session_id, ResearchSession.user_id == current_user.id)
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
 @router.post("/start", response_model=dict, dependencies=[Depends(quota_guard("research"))])
 async def start_research(
     request: ResearchStartRequest,
@@ -32,6 +49,8 @@ async def start_research(
         id=str(uuid.uuid4()),
         query=request.query,
         status="pending",
+        user_id=current_user.id,
+        org_id=current_user.org_id,
     )
     db.add(session)
     db.commit()
@@ -50,10 +69,12 @@ async def start_research(
 
 
 @router.get("/{session_id}/stream")
-async def stream_research(session_id: str, db: Session = Depends(get_db)):
-    session = db.query(ResearchSession).filter(ResearchSession.id == session_id).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+async def stream_research(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    _owned_session(session_id, current_user, db)
 
     async def event_generator():
         queue = _sse_queues.get(session_id)
@@ -67,9 +88,14 @@ async def stream_research(session_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/", response_model=list[ResearchSessionResponse])
-def list_sessions(limit: int = 20, db: Session = Depends(get_db)):
+def list_sessions(
+    limit: int = 20,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     sessions = (
         db.query(ResearchSession)
+        .filter(ResearchSession.user_id == current_user.id)
         .order_by(ResearchSession.created_at.desc())
         .limit(limit)
         .all()
@@ -84,22 +110,22 @@ def list_sessions(limit: int = 20, db: Session = Depends(get_db)):
 
 
 @router.get("/{session_id}", response_model=ResearchSessionDetail)
-def get_session(session_id: str, db: Session = Depends(get_db)):
-    session = db.query(ResearchSession).filter(ResearchSession.id == session_id).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return session
+def get_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return _owned_session(session_id, current_user, db)
 
 
 @router.post("/{session_id}/save-to-library", response_model=dict)
 async def save_session_to_library(
     session_id: str,
     background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    session = db.query(ResearchSession).filter(ResearchSession.id == session_id).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    session = _owned_session(session_id, current_user, db)
 
     results = db.query(SearchResult).filter(SearchResult.session_id == session_id).all()
     if not results:
@@ -120,6 +146,8 @@ async def save_session_to_library(
             url=result.url,
             status="processing",
             metadata_json=collection_meta,
+            user_id=current_user.id,
+            org_id=current_user.org_id,
         )
         db.add(doc)
         db.flush()
@@ -134,10 +162,12 @@ async def save_session_to_library(
 
 
 @router.delete("/{session_id}", response_model=dict)
-def delete_session(session_id: str, db: Session = Depends(get_db)):
-    session = db.query(ResearchSession).filter(ResearchSession.id == session_id).first()
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+def delete_session(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    session = _owned_session(session_id, current_user, db)
     db.delete(session)
     db.commit()
     return {"deleted": session_id}

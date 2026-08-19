@@ -31,12 +31,47 @@ ALLOWED_EXTENSIONS = {".pdf", ".txt", ".html", ".htm"} | set(IMAGE_MEDIA_TYPES.k
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024   # 25 MB cap on uploaded files
 
 
+def _owned_document(doc_id: str, current_user: User, db: Session) -> Document:
+    """Return the caller's document, or 404.
+
+    Another user's document is a 404, not a 403 — a 403 would confirm the id
+    exists. Admins included: admin privilege is user/audit administration, not
+    access to other people's library.
+    """
+    doc = (
+        db.query(Document)
+        .filter(Document.id == doc_id, Document.user_id == current_user.id)
+        .first()
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return doc
+
+
+def _owned_doc_ids(current_user: User, db: Session, requested: list[str] | None) -> list[str]:
+    """The doc_ids a retrieval request may search: the caller's own documents,
+    intersected with `requested` when the caller asked for a subset.
+
+    Always a concrete list, never None — an empty list means "this user has
+    nothing to search", which rag/retriever.py honors by returning no chunks
+    (None, meaning "search everything", must never reach the retriever from a
+    request path).
+    """
+    owned = {
+        row[0] for row in db.query(Document.id).filter(Document.user_id == current_user.id).all()
+    }
+    if requested:
+        return [doc_id for doc_id in requested if doc_id in owned]
+    return sorted(owned)
+
+
 # ── endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/upload", response_model=dict)
 async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     settings = get_settings()
@@ -68,6 +103,8 @@ async def upload_document(
         source_type="upload",
         file_path=file_path,
         status="processing",
+        user_id=current_user.id,
+        org_id=current_user.org_id,
     )
     db.add(document)
     db.commit()
@@ -80,6 +117,7 @@ async def upload_document(
 async def ingest_url(
     request: IngestUrlRequest,
     background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     url = request.url.strip()
@@ -116,6 +154,8 @@ async def ingest_url(
         file_path=file_path,
         url=url,
         status="processing",
+        user_id=current_user.id,
+        org_id=current_user.org_id,
     )
     db.add(document)
     db.commit()
@@ -125,15 +165,21 @@ async def ingest_url(
 
 
 @router.get("/", response_model=list[DocumentResponse])
-def list_documents(status: str | None = None, db: Session = Depends(get_db)):
-    q = db.query(Document)
+def list_documents(
+    status: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    q = db.query(Document).filter(Document.user_id == current_user.id)
     if status:
         q = q.filter(Document.status == status)
     docs = q.order_by(Document.created_at.desc()).all()
 
-    # One aggregate query for all chunk counts instead of one COUNT per document.
+    # One aggregate query for all chunk counts instead of one COUNT per document,
+    # restricted to the documents actually being returned.
     chunk_counts = dict(
         db.query(DocumentChunk.document_id, func.count(DocumentChunk.id))
+        .filter(DocumentChunk.document_id.in_([d.id for d in docs]))
         .group_by(DocumentChunk.document_id)
         .all()
     )
@@ -147,10 +193,12 @@ def list_documents(status: str | None = None, db: Session = Depends(get_db)):
 
 
 @router.get("/{doc_id}", response_model=DocumentDetail)
-def get_document(doc_id: str, db: Session = Depends(get_db)):
-    doc = db.query(Document).filter(Document.id == doc_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+def get_document(
+    doc_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    doc = _owned_document(doc_id, current_user, db)
     chunk_count = db.query(DocumentChunk).filter(DocumentChunk.document_id == doc_id).count()
     resp = DocumentDetail.model_validate(doc)
     resp.chunk_count = chunk_count
@@ -158,11 +206,21 @@ def get_document(doc_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/assign-folder", response_model=dict)
-def assign_folder(body: DocumentFolderRequest, db: Session = Depends(get_db)):
+def assign_folder(
+    body: DocumentFolderRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     import json
     updated = 0
     for doc_id in body.doc_ids:
-        doc = db.query(Document).filter(Document.id == doc_id).first()
+        # Ids come from the request body, so this write path is scoped like
+        # every read path: ids the caller does not own are silently skipped.
+        doc = (
+            db.query(Document)
+            .filter(Document.id == doc_id, Document.user_id == current_user.id)
+            .first()
+        )
         if doc:
             # Merge into existing metadata instead of overwriting it wholesale,
             # so any other keys a document may carry survive a folder assignment.
@@ -186,10 +244,14 @@ def assign_folder(body: DocumentFolderRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/rename-folder", response_model=dict)
-def rename_folder(body: FolderRenameRequest, db: Session = Depends(get_db)):
+def rename_folder(
+    body: FolderRenameRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     import json
     updated = 0
-    for doc in db.query(Document).all():
+    for doc in db.query(Document).filter(Document.user_id == current_user.id).all():
         if doc.metadata_json:
             try:
                 meta = json.loads(doc.metadata_json)
@@ -213,9 +275,7 @@ def delete_document(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    doc = db.query(Document).filter(Document.id == doc_id).first()
-    if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+    doc = _owned_document(doc_id, current_user, db)
     filename = doc.filename
 
     # Remove from ChromaDB (best effort — the DB delete proceeds regardless)
@@ -252,17 +312,25 @@ def delete_document(
 
 
 @router.post("/ask", dependencies=[Depends(quota_guard("documents.ask"))])
-async def ask_documents(request: DocumentAskRequest, db: Session = Depends(get_db)):
+async def ask_documents(
+    request: DocumentAskRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     history = (
         [{"role": m.role, "content": m.content} for m in request.chat_history]
         if request.chat_history else None
     )
+    # Retrieval is confined to the caller's own documents (see _owned_doc_ids);
+    # the chat loop's other stateful tools — reminders and the draft workspace —
+    # are keyed to the caller by the user passed through here.
+    doc_ids = _owned_doc_ids(current_user, db, request.doc_ids)
 
     async def event_generator():
         from services.rag_service import answer_question
         async for event in answer_question(
-            request.question, request.doc_ids, request.top_k, db, history, request.custom_system,
-            prior_citations=request.prior_citations,
+            request.question, doc_ids, request.top_k, db, history, request.custom_system,
+            prior_citations=request.prior_citations, user=current_user,
         ):
             yield event
 
@@ -270,11 +338,19 @@ async def ask_documents(request: DocumentAskRequest, db: Session = Depends(get_d
 
 
 @router.post("/{doc_id}/ask-citations", dependencies=[Depends(quota_guard("documents.ask_citations"))])
-async def ask_document_citations(doc_id: str, request: DocumentCitedAskRequest, db: Session = Depends(get_db)):
+async def ask_document_citations(
+    doc_id: str,
+    request: DocumentCitedAskRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     """Single-document Q&A with API-native citations (see
     services/document_qa.py) — distinct from /ask above, which searches
     across the whole (or a selected subset of the) document library via a
     tool-use loop and assigns its own sentence-level [N] citations."""
+    # 404 before any work happens if the document isn't the caller's.
+    _owned_document(doc_id, current_user, db)
+
     async def event_generator():
         from services.document_qa import ask_document_with_citations
         async for event in ask_document_with_citations(doc_id, request.question, db):

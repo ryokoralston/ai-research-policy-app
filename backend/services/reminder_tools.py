@@ -13,6 +13,7 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 
 from models.reminder import Reminder
+from models.user import User
 
 
 # ── Tool schemas (Anthropic tool_use format) ──────────────────────────────────
@@ -164,7 +165,7 @@ def _add_duration_to_datetime(tool_input: dict) -> str:
     )
 
 
-async def _set_reminder(tool_input: dict, db: Session) -> str:
+async def _set_reminder(tool_input: dict, db: Session, user: "User | None" = None) -> str:
     content = tool_input.get("content", "").strip()
     timestamp = tool_input.get("timestamp", "").strip()
 
@@ -182,10 +183,15 @@ async def _set_reminder(tool_input: dict, db: Session) -> str:
     except ValueError as exc:
         return f"Error: could not parse timestamp {timestamp!r}: {exc}"
 
+    # Reminders are set from inside a chat turn, not by a request handler, so
+    # the acting user is threaded in from the caller (see execute_reminder_tool)
+    # — a reminder with no owner would be listed by nobody.
     reminder = Reminder(
         id=str(uuid.uuid4()),
         content=content,
         due_at=due_at,
+        user_id=user.id if user else None,
+        org_id=user.org_id if user else None,
     )
     db.add(reminder)
     db.commit()
@@ -207,8 +213,8 @@ async def _set_reminder(tool_input: dict, db: Session) -> str:
 # already async.
 
 def _sync_handler(fn):
-    """Wrap a sync (tool_input) -> str handler as an async (tool_input, db) -> str."""
-    async def wrapper(tool_input: dict, db: Session) -> str:
+    """Wrap a sync (tool_input) -> str handler as an async (tool_input, db, user) -> str."""
+    async def wrapper(tool_input: dict, db: Session, user: "User | None" = None) -> str:
         return fn(tool_input)
     return wrapper
 
@@ -220,13 +226,18 @@ _REMINDER_TOOL_HANDLERS: dict[str, callable] = {
 }
 
 
-async def execute_reminder_tool(name: str, tool_input: dict, db: Session) -> str | None:
+async def execute_reminder_tool(
+    name: str, tool_input: dict, db: Session, user: "User | None" = None
+) -> str | None:
     """Execute one of the reminder tools via the handler registry.
 
     Returns a result string on success/error, or None if the tool name is not
     one of the reminder tools (so the caller can fall through to other tools).
+
+    `user` is the acting account — set_reminder stores it as the reminder's
+    owner so /api/reminders only ever lists that user's own reminders.
     """
     handler = _REMINDER_TOOL_HANDLERS.get(name)
     if handler is None:
         return None
-    return await handler(tool_input, db)
+    return await handler(tool_input, db, user)
