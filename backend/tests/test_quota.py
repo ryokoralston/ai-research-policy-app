@@ -103,14 +103,13 @@ def test_every_model_calling_route_is_guarded():
     """A route that spends money but carries no quota_guard is the failure this
     whole module exists to prevent, and it is invisible from the outside — the
     endpoint just works. Assert the wiring instead."""
-    from routers import analysis, data_analysis, debate, digest, documents, reports, research
+    from routers import analysis, debate, digest, documents, reports, research
 
     expected = {
         "/api/research/start",
         "/api/reports/generate",
         "/api/analysis/start",
         "/api/debate/start",
-        "/api/datalab/analyze",
         "/api/documents/ask",
         "/api/documents/{doc_id}/ask-citations",
         "/api/digest/send-now",
@@ -119,7 +118,7 @@ def test_every_model_calling_route_is_guarded():
     # Inspected per router rather than off main.app: FastAPI keeps included
     # routers wrapped instead of flattening their routes onto the app.
     guarded = set()
-    for module in (analysis, data_analysis, debate, digest, documents, reports, research):
+    for module in (analysis, debate, digest, documents, reports, research):
         for route in module.router.routes:
             names = [
                 getattr(d.dependency, "__qualname__", "") for d in getattr(route, "dependencies", [])

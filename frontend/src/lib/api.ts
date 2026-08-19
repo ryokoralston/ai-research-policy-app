@@ -342,10 +342,6 @@ export const api = {
       >(`/api/audit-log/?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ""}`),
   },
 
-  datalab: {
-    analyzeUrl: () => `${BASE_URL}/api/datalab/analyze`, // multipart POST (file + question), returns SSE
-  },
-
   digest: {
     sendNow: () =>
       request<{

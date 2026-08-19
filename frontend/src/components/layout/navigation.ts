@@ -6,7 +6,6 @@ import {
   Users,
   Mail,
   Settings,
-  FlaskConical,
   UserCog,
   History,
   Drama,
@@ -30,7 +29,6 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/reports", label: "Reports", icon: FileText },
   { href: "/library", label: "Library", icon: BookOpen },
   { href: "/analysis", label: "Risk Analysis", icon: Shield },
-  { href: "/datalab", label: "Data Lab", icon: FlaskConical },
   { href: "/debate", label: "Debate", icon: Users },
   { href: "/digest", label: "Daily Digest", icon: Mail },
 ];
