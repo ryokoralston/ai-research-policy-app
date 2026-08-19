@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import AppShell from "@/components/layout/AppShell";
@@ -13,11 +14,16 @@ export const metadata: Metadata = {
   description: "AI Policy Research Assistant",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Nonce for the nonce-based CSP set in src/middleware.ts. Reading a request
+  // header here opts every route out of static prerendering — that is the
+  // cost of a per-request nonce.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
+
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <ThemeScript />
+        <ThemeScript nonce={nonce} />
       </head>
       <body
         className={`${inter.className} bg-slate-950 text-slate-100 min-h-screen`}

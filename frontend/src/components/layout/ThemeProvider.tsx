@@ -56,13 +56,17 @@ export default function ThemeProvider({ children }: { children: React.ReactNode 
 /**
  * Inline script for <head> to prevent flash of wrong theme.
  * Must be rendered as a server component or in <head>.
+ *
+ * The CSP set in src/middleware.ts is nonce-based, so this script only
+ * executes if it carries the current request's nonce. The root layout reads
+ * it from the x-nonce request header and passes it in.
  */
-export function ThemeScript() {
+export function ThemeScript({ nonce }: { nonce?: string }) {
   const script = `(function(){
     var t=localStorage.getItem('theme')||'system';
     var d=window.matchMedia('(prefers-color-scheme: dark)').matches;
     var light=t==='light'||(t==='system'&&!d);
     document.documentElement.classList.add(light?'light':'dark');
   })();`;
-  return <script dangerouslySetInnerHTML={{ __html: script }} />;
+  return <script nonce={nonce} dangerouslySetInnerHTML={{ __html: script }} />;
 }
