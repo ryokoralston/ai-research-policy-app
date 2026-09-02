@@ -278,28 +278,48 @@ def delete_document(
     doc = _owned_document(doc_id, current_user, db)
     filename = doc.filename
 
-    # Remove from ChromaDB (best effort — the DB delete proceeds regardless)
+    # Index cleanup comes FIRST, and a failure aborts the whole delete.
+    #
+    # The invariant (see rag/reconcile.py): no Chroma or BM25 entry may exist
+    # without a backing `document_chunks` row. This ordering is what enforces
+    # it. The previous "best effort" version deleted the DB rows even when
+    # cleanup raised, which stranded index entries whose chunks no longer
+    # existed — still retrievable and citable, with nothing left to verify
+    # them against.
+    #
+    # Keeping the rows on failure is the safe direction: entries that still
+    # have their chunk rows are, by definition, not orphans. The document
+    # simply stays in the library and the caller retries. A retry is harmless
+    # even when Chroma succeeded and BM25 failed — deleting already-gone
+    # entries from either store is a no-op.
     try:
         from rag.vector_store import VectorStore
-        vs = VectorStore()
-        vs.delete_document(doc_id)
+        VectorStore().delete_document(doc_id)
     except Exception:
         logger.warning(
-            "ChromaDB cleanup failed for document %s — continuing with DB delete",
+            "ChromaDB cleanup failed for document %s — aborting delete, DB rows kept",
             doc_id, exc_info=True,
         )
+        raise HTTPException(
+            status_code=503,
+            detail="Search index cleanup failed; the document was not deleted. Please retry.",
+        )
 
-    # Remove from the BM25 lexical index (best effort, same policy as above)
     try:
         from rag.lexical_index import LexicalIndex
         LexicalIndex().delete_document(doc_id)
     except Exception:
         logger.warning(
-            "BM25 index cleanup failed for document %s — continuing with DB delete",
+            "BM25 index cleanup failed for document %s — aborting delete, DB rows kept",
             doc_id, exc_info=True,
         )
+        raise HTTPException(
+            status_code=503,
+            detail="Search index cleanup failed; the document was not deleted. Please retry.",
+        )
 
-    # Remove file
+    # Both indexes are clean — only now is the delete allowed to proceed, so
+    # the audit entry never records a deletion that did not happen.
     if doc.file_path and os.path.exists(doc.file_path):
         os.remove(doc.file_path)
 

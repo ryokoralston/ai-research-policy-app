@@ -23,6 +23,11 @@ from config import get_settings
 from rag.vector_store import RetrievedChunk
 
 
+# Max ids bound into a single DELETE — SQLite caps bound variables per
+# statement (999 on default builds).
+_DELETE_BATCH_SIZE = 500
+
+
 class LexicalIndex:
     """BM25 lexical search over document chunks, backed by SQLite FTS5.
 
@@ -224,6 +229,52 @@ class LexicalIndex:
             return row[0] if row else 0
         finally:
             conn.close()
+
+    def list_chunk_ids(self) -> list[str]:
+        """Every distinct chunk_id currently in the index. Used by
+        rag/reconcile.py to find entries with no backing document_chunks row.
+
+        Distinct, not row-for-row: FTS5 has no unique constraint, so a
+        chunk_id can legitimately appear on more than one row (e.g. a
+        re-index that was not preceded by a clear). Orphan detection is about
+        which ids exist, not how many rows carry them — count() reports rows.
+        """
+        conn = self._connect()
+        try:
+            rows = conn.execute("SELECT DISTINCT chunk_id FROM chunk_fts2").fetchall()
+        finally:
+            conn.close()
+        return [r[0] for r in rows]
+
+    def delete_by_chunk_ids(self, chunk_ids: list[str]) -> int:
+        """Delete specific chunk ids, returning the number of ROWS removed.
+
+        Distinct from delete_document (which deletes by doc_id): rag/reconcile.py
+        removes orphaned entries whose owning document row is already gone, so
+        there is no doc_id left to look them up by.
+
+        The returned count is rows, not ids, because of the duplicate-row case
+        described on list_chunk_ids — the caller wants to know what actually
+        left the index.
+        """
+        if not chunk_ids:
+            return 0
+        removed = 0
+        conn = self._connect()
+        try:
+            # Batched to stay under SQLite's bound-variable limit (999 by
+            # default on older builds).
+            for i in range(0, len(chunk_ids), _DELETE_BATCH_SIZE):
+                batch = chunk_ids[i:i + _DELETE_BATCH_SIZE]
+                placeholders = ", ".join("?" for _ in batch)
+                cursor = conn.execute(
+                    f"DELETE FROM chunk_fts2 WHERE chunk_id IN ({placeholders})", batch
+                )
+                removed += cursor.rowcount if cursor.rowcount > 0 else 0
+            conn.commit()
+        finally:
+            conn.close()
+        return removed
 
     def clear(self) -> None:
         """Delete all entries in the index (used by the backfill script to

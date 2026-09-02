@@ -51,13 +51,57 @@ async def _run_digest() -> None:
         logger.exception("Scheduled digest failed")
 
 
+def _warn_about_orphaned_index_entries() -> None:
+    """Warn if ChromaDB or the BM25 index holds entries with no backing
+    `document_chunks` row. READ-ONLY — this never deletes anything.
+
+    Deliberately warn-only, never an auto-sweep. Orphans are defined against
+    the database, so the check trusts DATABASE_URL absolutely: if it ever
+    pointed at an empty or wrong database while the indexes were intact, every
+    entry would look orphaned and an automatic cleanup would erase the entire
+    index. That is not hypothetical — this deployment has already lost its
+    Render env vars once, DATABASE_URL among them. A human runs
+    scripts/reconcile_indexes.py after confirming the counts look right.
+
+    Cheap enough for startup: it fetches ids only (no documents, metadatas, or
+    embeddings), and constructing VectorStore() does not load the embedding
+    model — services/embedding_service.py imports sentence-transformers lazily
+    inside _load_model(). Do not let that regress, or every boot pays for torch.
+
+    Wrapped whole in try/except: a missing or unreadable index is a reason to
+    log, never a reason to fail startup.
+    """
+    try:
+        from rag.reconcile import find_orphans
+
+        with SessionLocal() as db:
+            report = find_orphans(db)
+
+        chroma_orphans = len(report["chroma_orphans"])
+        bm25_orphans = len(report["bm25_orphans"])
+        if chroma_orphans or bm25_orphans:
+            logger.warning(
+                "Orphaned search-index entries detected: %d in ChromaDB (of %d), "
+                "%d in the BM25 index (of %d); the database holds %d chunk id(s). "
+                "These entries can still be retrieved and cited but their chunks no "
+                "longer exist. Run scripts/reconcile_indexes.py to inspect, and "
+                "--apply to remove them.",
+                chroma_orphans, report["chroma_total"],
+                bm25_orphans, report["bm25_total"],
+                report["sqlite_chunk_ids"],
+            )
+    except Exception:
+        logger.warning("Orphaned-index check failed — skipping it", exc_info=True)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     settings = get_settings()
     os.makedirs(settings.uploads_dir, exist_ok=True)
     os.makedirs(settings.chroma_persist_dir, exist_ok=True)
-    init_db()
+    init_db()  # prints "Database initialized."
+    _warn_about_orphaned_index_entries()
 
     with SessionLocal() as db:
         ds = get_or_init_digest_settings(db)

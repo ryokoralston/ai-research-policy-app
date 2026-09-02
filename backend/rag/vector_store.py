@@ -23,6 +23,11 @@ class RetrievedChunk:
     context: str = ""
 
 
+# Max ids bound into a single delete statement — SQLite (which Chroma's
+# persistent client uses underneath) has a hard limit on bound variables.
+_DELETE_BATCH_SIZE = 500
+
+
 class VectorStore:
     # Legacy default, kept only as a fallback / reference; the collection
     # actually used is determined per active embedding provider (see below).
@@ -98,6 +103,32 @@ class VectorStore:
 
     def count(self) -> int:
         return self._collection.count()
+
+    def list_ids(self) -> list[str]:
+        """Every chunk id currently in the collection, and nothing else.
+
+        `include=[]` is deliberate: the collection can hold thousands of
+        chunks, and pulling documents/metadatas/embeddings along with the ids
+        would load the whole corpus (and its vectors) into memory for a check
+        that only needs the keys. Used by rag/reconcile.py.
+        """
+        return self._collection.get(include=[])["ids"]
+
+    def delete_by_ids(self, chunk_ids: list[str]) -> int:
+        """Delete specific chunk ids, returning how many were requested.
+
+        Distinct from delete_document (which deletes by doc_id metadata):
+        rag/reconcile.py removes orphaned entries whose owning document row
+        is already gone, so there is no doc_id left to look them up by.
+
+        Batched because Chroma's delete goes through SQLite underneath, which
+        caps the number of bound variables per statement.
+        """
+        if not chunk_ids:
+            return 0
+        for i in range(0, len(chunk_ids), _DELETE_BATCH_SIZE):
+            self._collection.delete(ids=chunk_ids[i:i + _DELETE_BATCH_SIZE])
+        return len(chunk_ids)
 
     def get_contexts(self) -> dict[str, str]:
         """Map every chunk_id currently in the collection to its stored

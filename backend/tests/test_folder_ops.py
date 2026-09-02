@@ -1,8 +1,10 @@
 """Tests for document folder operations and swallowed-exception logging (E-4).
 
 Exercises the previously-silent except branches: malformed metadata_json
-during folder rename, ChromaDB cleanup failure during delete, and a failing
-scheduler in reschedule_digest — all must log a warning and keep going.
+during folder rename and a failing scheduler in reschedule_digest — both must
+log a warning and keep going — plus ChromaDB cleanup failure during a document
+delete, which is the one case that must NOT keep going: it now aborts the
+delete with a 503 rather than stranding index entries (see rag/reconcile.py).
 
 Run from the backend directory:
     ./venv/bin/python -m tests.test_folder_ops
@@ -171,15 +173,23 @@ def test_rename_skips_malformed_metadata_and_logs():
     db.close()
 
 
-def test_delete_survives_chroma_failure():
+def test_delete_aborts_on_chroma_failure():
+    """Inverted contract (see rag/reconcile.py): a cleanup failure used to be
+    best-effort — logged, with the DB rows deleted anyway — which stranded
+    index entries whose chunks no longer existed. The endpoint now cleans the
+    indexes first and refuses the delete if either cleanup fails, because rows
+    that still exist are what keeps their index entries from being orphans."""
     client, db = _make_client_and_db()
     doc_id = _doc(db)
 
     # chromadb stub has no PersistentClient → VectorStore() raises; the
-    # endpoint must log and still delete the DB row.
+    # endpoint must log, return 503, and leave the DB row in place.
     resp = client.delete(f"/api/documents/{doc_id}")
-    assert resp.status_code == 200, resp.text
-    assert db.query(Document).filter(Document.id == doc_id).first() is None
+    assert resp.status_code == 503, resp.text
+    assert "not deleted" in resp.json()["detail"], resp.text
+    assert db.query(Document).filter(Document.id == doc_id).first() is not None, (
+        "a refused delete must leave the document row intact"
+    )
     db.close()
 
 
@@ -222,7 +232,7 @@ if __name__ == "__main__":
     _run("assign folder overwrites malformed metadata", test_assign_folder_overwrites_malformed_metadata)
     _run("list documents chunk counts batched", test_list_documents_chunk_counts_batched)
     _run("rename skips malformed metadata and logs", test_rename_skips_malformed_metadata_and_logs)
-    _run("delete survives Chroma failure", test_delete_survives_chroma_failure)
+    _run("delete aborts on Chroma failure", test_delete_aborts_on_chroma_failure)
     _run("reschedule_digest survives scheduler failure", test_reschedule_digest_survives_scheduler_failure)
 
     total = len(_PASSED) + len(_FAILED)
