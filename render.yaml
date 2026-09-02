@@ -3,7 +3,19 @@ services:
     name: ai-research-policy-backend
     runtime: python
     rootDir: backend
-    buildCommand: pip install -r requirements.txt && python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+    # torch is installed from PyTorch's CPU index BEFORE requirements.txt.
+    # The default PyPI wheel bundles the whole CUDA runtime (nvidia-cublas,
+    # nvidia-cudnn, cuda-toolkit, triton — several GB) and this instance has
+    # no GPU, so none of it can ever be used. Installing torch==2.14.0 from
+    # the CPU index first satisfies the pin, so the requirements.txt step
+    # leaves it alone. `==2.14.0` matches the `2.14.0+cpu` local version per
+    # PEP 440. Motivation: the service was hitting its 512 MB memory limit
+    # when the embedding model loaded (Render OOM-restarted it mid-index) —
+    # this removes the CUDA shared libraries from the image.
+    buildCommand: >-
+      pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu &&
+      pip install -r requirements.txt &&
+      python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     plan: starter
     disk:
