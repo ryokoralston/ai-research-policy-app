@@ -94,8 +94,10 @@ MAX_READ_DOCUMENT_CHARS = 50_000
 # restricted to that user's documents — this process has its own DB session
 # and no request context, so the environment is how ownership travels.
 # When absent, the server is being run standalone (the mcp_client.py harness,
-# a local Claude Desktop/Claude Code config, the tests) and stays unscoped as
-# before; the app's own bridge always sets it.
+# a local Claude Desktop/Claude Code config, the tests) and sees every user's
+# documents; the app's own bridge always sets it. "Unscoped" means every
+# document row, though — never the raw vector index, which can still hold
+# chunks of documents the database no longer has (see search_library).
 ACTING_USER_ENV_VAR = "MCP_ACTING_USER_ID"
 
 
@@ -211,17 +213,24 @@ def search_library(
     top_k: int = Field(default=5, description="Number of results to return."),
 ) -> str:
     retriever = _get_retriever()
-    # doc_ids=None searches the whole index; when an acting user is set the
-    # search is confined to their own documents (an empty list means they have
-    # none, which rag/retriever.py answers with no results rather than an
-    # unfiltered search).
-    doc_ids = None
-    if _acting_user_id() is not None:
-        db = SessionLocal()
-        try:
-            doc_ids = [d.id for d in _indexed_documents(db)]
-        finally:
-            db.close()
+    # Always search a concrete list of ids, never None. With an acting user
+    # set, _indexed_documents scopes to that user; standalone it returns every
+    # indexed document, so the Claude Desktop / CLI use case still searches
+    # the whole library. What neither case can reach is a chunk whose document
+    # row is gone. The vector stores outlive the database: delete_document
+    # cleans Chroma and BM25 on a best-effort basis (see routers/documents.py)
+    # and rows deleted straight in SQL bypass that cleanup entirely, so an
+    # unfiltered index scan returns the contents of deleted documents.
+    # Measured on the dev database 2026-09-02: 954 of 976 indexed chunks had
+    # no surviving document row.
+    #
+    # An empty list means "nothing to search", which rag/retriever.py answers
+    # with no results rather than falling back to an unfiltered search.
+    db = SessionLocal()
+    try:
+        doc_ids = [d.id for d in _indexed_documents(db)]
+    finally:
+        db.close()
     chunks = retriever.retrieve(query, top_k=top_k, doc_ids=doc_ids)
 
     if not chunks:

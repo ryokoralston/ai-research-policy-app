@@ -250,6 +250,43 @@ def test_search_library_empty_results_message():
     assert "No results found" in result, result
 
 
+def test_search_library_never_searches_unfiltered():
+    """Standalone (no acting user) must still pass a concrete doc_id list.
+
+    doc_ids=None makes the retriever scan the raw vector index, which can hold
+    chunks whose document row was deleted — the contents of deleted documents.
+    The list must also match the database, not the index: every id has to come
+    from a real `documents` row.
+    """
+    seen: dict = {}
+
+    class _CapturingRetriever:
+        def retrieve(self, question, top_k=5, doc_ids=None):
+            seen["doc_ids"] = doc_ids
+            return []
+
+    original = mcp_server._retriever
+    had_user = os.environ.pop(mcp_server.ACTING_USER_ENV_VAR, None)
+    mcp_server._retriever = _CapturingRetriever()
+    try:
+        mcp_server.search_library("anything", top_k=3)
+    finally:
+        mcp_server._retriever = original
+        if had_user is not None:
+            os.environ[mcp_server.ACTING_USER_ENV_VAR] = had_user
+
+    assert seen["doc_ids"] is not None, "unfiltered index scan: doc_ids was None"
+    assert isinstance(seen["doc_ids"], list), seen["doc_ids"]
+
+    db = SessionLocal()
+    try:
+        real = {d.id for d in db.query(Document).all()}
+    finally:
+        db.close()
+    stray = [i for i in seen["doc_ids"] if i not in real]
+    assert not stray, f"doc_ids not backed by a documents row: {stray}"
+
+
 # ── Test runner ──────────────────────────────────────────────────────────────
 
 _PASSED: list[str] = []
@@ -283,6 +320,7 @@ if __name__ == "__main__":
     _run("summarize_document_prompt mentions doc_id and read_document", test_summarize_document_prompt_mentions_doc_id_and_read_document)
     _run("policy_brief_prompt mentions topic and search_library", test_policy_brief_prompt_mentions_topic_and_search_library)
     _run("search_library empty-results message path", test_search_library_empty_results_message)
+    _run("search_library never searches unfiltered", test_search_library_never_searches_unfiltered)
     # Slowest last: loads the embedding model (+ reranker on first retrieve).
     _run("search_library returns numbered results with doc_ids", test_search_library_returns_numbered_results_with_doc_ids)
 
