@@ -55,12 +55,30 @@ jobs:
         # than something to fix here. Ignored explicitly so this check stays
         # a useful signal for *new* vulnerabilities instead of being
         # permanently red over a known one.
+        #
+        # The three chromadb CVEs are all server-side: cross-tenant reads and
+        # writes (CVE-2026-45830), SimpleRBACAuthorizationProvider checking
+        # that a user holds a permission but never which tenant, database, or
+        # collection it applies to (CVE-2026-45831), and code injection via
+        # trust_remote_code on /api/v2/.../collections/{id} (CVE-2026-45833).
+        # All three need a running Chroma server with authenticated
+        # multi-tenant users; this app embeds chromadb in-process via
+        # chromadb.PersistentClient (backend/rag/vector_store.py) and never
+        # starts a server, so none of them are reachable here. Upstream has
+        # published no fix for any of them either — OSV records all three as
+        # `last_affected: *`, so every released version including 1.5.x is
+        # still flagged and no upgrade can clear them. Drop these three
+        # ignores when upstream ships a fixed release, or revisit them the
+        # next time chromadb is upgraded.
         run: |
           pip-audit --strict --progress-spinner=off \
             --ignore-vuln PYSEC-2025-217 \
             --ignore-vuln PYSEC-2026-2290 \
             --ignore-vuln PYSEC-2026-2288 \
-            --ignore-vuln PYSEC-2026-2289
+            --ignore-vuln PYSEC-2026-2289 \
+            --ignore-vuln CVE-2026-45830 \
+            --ignore-vuln CVE-2026-45831 \
+            --ignore-vuln CVE-2026-45833
 
   npm-audit:
     runs-on: ubuntu-latest
