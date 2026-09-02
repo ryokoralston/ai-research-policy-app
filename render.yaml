@@ -17,7 +17,17 @@ services:
       pip install -r requirements.txt &&
       python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
-    plan: starter
+    # NOTE: this service is NOT Blueprint-linked — the dashboard's own Build
+    # Command and Instance Type are what actually run. Changing values here
+    # does nothing on its own; mirror them in the dashboard. Kept in sync so
+    # this file doesn't lie about the deployment.
+    #
+    # starter (512 MB) could not index a single document: loading the
+    # sentence-transformers embedding model alone peaks around 400 MB (measured
+    # over 5 runs), and Render OOM-restarted the instance every time indexing
+    # reached the embedding step. Installing the CPU-only torch build first
+    # (see buildCommand) cut the image by several GB but not enough to fit.
+    plan: standard
     disk:
       name: data
       mountPath: /data
