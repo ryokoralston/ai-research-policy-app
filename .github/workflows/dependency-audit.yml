@@ -49,12 +49,19 @@ jobs:
         #
         # --ignore-vuln: transformers is capped at <5.0.0 by
         # sentence-transformers==3.3.1's own pin (see requirements.txt) —
-        # these 4 have no fix in the 4.x line, and unlocking 5.x risks
+        # these 5 have no fix in the 4.x line, and unlocking 5.x risks
         # changing embedding output and invalidating the existing ChromaDB
         # index, so it's a deliberate, documented, separate follow-up rather
         # than something to fix here. Ignored explicitly so this check stays
         # a useful signal for *new* vulnerabilities instead of being
-        # permanently red over a known one.
+        # permanently red over a known one. CVE-2026-9856 is the newest of
+        # the five (fixed only at transformers 5.10.0): a path traversal in
+        # PreTrainedTokenizerBase.save_pretrained() / ProcessorMixin, reached
+        # by downloading a malicious Hub repo and then saving its tokenizer.
+        # This app only loads one hardcoded model,
+        # SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2") in
+        # services/embedding_service.py, and never calls save_pretrained at
+        # all, so there is no path to it here.
         #
         # The three chromadb CVEs are all server-side: cross-tenant reads and
         # writes (CVE-2026-45830), SimpleRBACAuthorizationProvider checking
@@ -76,6 +83,7 @@ jobs:
             --ignore-vuln PYSEC-2026-2290 \
             --ignore-vuln PYSEC-2026-2288 \
             --ignore-vuln PYSEC-2026-2289 \
+            --ignore-vuln CVE-2026-9856 \
             --ignore-vuln CVE-2026-45830 \
             --ignore-vuln CVE-2026-45831 \
             --ignore-vuln CVE-2026-45833

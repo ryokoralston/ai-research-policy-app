@@ -18,8 +18,9 @@ sse-starlette==3.4.5
 chromadb==0.6.0
 sentence-transformers==3.3.1
 # transformers is capped at <5.0.0 by sentence-transformers==3.3.1's own
-# pin; PYSEC-2025-217 and PYSEC-2026-2290 have no fix in the 4.x line
-# (4.57.6 is the latest 4.x release) — only fixed at 5.0.0/5.3.0. Bumping
+# pin; PYSEC-2025-217, PYSEC-2026-2290 and CVE-2026-9856 have no fix in the
+# 4.x line (4.57.6 is the latest 4.x release) — only fixed at
+# 5.0.0/5.3.0/5.10.0 respectively. Bumping
 # sentence-transformers to unlock transformers 5.x is a bigger, riskier
 # change (different embedding output could invalidate the existing ChromaDB
 # index) — tracked separately, not done in this pass.
