@@ -10,6 +10,7 @@ import StreamingText from "@/components/ui/StreamingText";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import CitationConfidenceCard from "@/components/ui/CitationConfidenceCard";
 import ReasoningPanel from "@/components/ui/ReasoningPanel";
+import DownloadMenu from "@/components/ui/DownloadMenu";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -701,12 +702,7 @@ function NewReportForm() {
                   >
                     View Report
                   </button>
-                  <a
-                    href={`${BASE_URL}/api/reports/${reportId}/export`}
-                    className="bg-slate-800 hover:bg-slate-700 text-slate-100 px-5 py-2.5 rounded-lg text-sm font-medium transition-colors"
-                  >
-                    Export Markdown
-                  </a>
+                  <DownloadMenu reportId={reportId} variant="button" />
                   <button
                     onClick={() => router.push("/reports")}
                     className="text-slate-400 hover:text-white text-sm transition-colors"
