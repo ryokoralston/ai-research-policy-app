@@ -373,7 +373,8 @@ async def run_debate(
         }))
 
     except Exception as e:
-        await queue.put(sse_event("error", {"message": str(e)}))
+        logger.exception("debate failed")
+        await queue.put(sse_event("error", {"message": "Debate failed. Please try again."}))
         debate = db.query(Debate).filter(Debate.id == debate_id).first()
         if debate:
             debate.status = "error"

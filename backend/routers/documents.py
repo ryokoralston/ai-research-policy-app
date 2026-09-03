@@ -136,7 +136,8 @@ async def ingest_url(
             source_type = "url"
             title, text = await _scrape_url(url)
     except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Failed to fetch content: {e}")
+        logger.exception("URL/YouTube ingestion failed for %s", url)
+        raise HTTPException(status_code=422, detail="Could not fetch content from that URL.") from e
 
     if not text.strip():
         raise HTTPException(status_code=422, detail="No text content could be extracted from this URL")

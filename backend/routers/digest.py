@@ -24,7 +24,7 @@ from models.user import User
 from services import audit_log
 from services.auth import client_ip, require_admin
 from services.quota import quota_guard
-from services.digest_service import send_digest
+from services.digest_service import send_digest, DigestNotConfigured, DigestNoArticles
 from utils.masking import MASK, mask_secret
 
 router = APIRouter(prefix="/api/digest", tags=["digest"])
@@ -163,10 +163,18 @@ async def send_now(db: Session = Depends(get_db)) -> dict[str, Any]:
         )
         record_sent(result["sent_at"])
         return {"success": True, **result}
+    except DigestNotConfigured as exc:
+        logger.warning("Digest not configured: %s", exc)
+        raise HTTPException(status_code=400, detail="Digest email is not configured. Set the recipient, sender and SMTP password first.") from exc
+    except DigestNoArticles as exc:
+        logger.warning("No articles found for digest: %s", exc)
+        raise HTTPException(status_code=400, detail="No articles were found for the configured topics.") from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        logger.warning("Digest could not be sent: %s", exc)
+        raise HTTPException(status_code=400, detail="Digest could not be sent.") from exc
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to send digest: {exc}") from exc
+        logger.exception("Digest send failed")
+        raise HTTPException(status_code=500, detail="Failed to send digest.") from exc
 
 
 @router.get("/status")

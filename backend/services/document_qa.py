@@ -265,7 +265,8 @@ async def ask_document_with_citations(doc_id: str, question: str, db: Session) -
                     u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens,
                 )
     except Exception as exc:
-        yield sse_event("error", {"message": str(exc)})
+        logger.exception("document Q&A failed")
+        yield sse_event("error", {"message": "Answer generation failed. Please try again."})
         return
 
     yield sse_event("complete", {

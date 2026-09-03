@@ -25,6 +25,16 @@ from services.tavily_client import SearchResult, TavilyClient
 logger = logging.getLogger(__name__)
 
 
+class DigestNotConfigured(RuntimeError):
+    """Raised when digest email recipient or SMTP credentials are not configured."""
+    pass
+
+
+class DigestNoArticles(RuntimeError):
+    """Raised when no articles are found for the configured topics."""
+    pass
+
+
 async def _fetch_top_articles(topics: list[str], max_total: int = 5) -> list[SearchResult]:
     """Search all topics and return deduplicated top articles sorted by score."""
     client = TavilyClient()
@@ -196,18 +206,18 @@ async def send_digest(
     """
     Main entry point: fetch articles, generate headlines, send email.
     Returns a dict with 'sent_at', 'article_count', and 'recipient'.
-    Raises RuntimeError if required params are missing.
+    Raises DigestNotConfigured or DigestNoArticles on validation failure.
     """
     if not email_to:
-        raise RuntimeError("email_to is not configured — skipping digest.")
+        raise DigestNotConfigured("email_to is not configured — skipping digest.")
     if not email_from or not smtp_password:
-        raise RuntimeError("email_from / smtp_password not configured.")
+        raise DigestNotConfigured("email_from / smtp_password not configured.")
 
     logger.info("Fetching digest articles for topics: %s", topics)
     articles = await _fetch_top_articles(topics)
 
     if not articles:
-        raise RuntimeError("No articles found — digest not sent.")
+        raise DigestNoArticles("No articles found — digest not sent.")
 
     now = datetime.now(timezone.utc)
     yesterday_str = (now - timedelta(days=1)).strftime("%Y-%m-%d")
