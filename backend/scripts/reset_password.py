@@ -44,10 +44,13 @@ if _BACKEND_DIR not in sys.path:
 from database import SessionLocal
 from models.user import User
 from services import audit_log
-from services.user_service import get_user_by_email, hash_password, verify_password
-
-# Matches the API's minimum (routers/auth.py, routers/users.py).
-MIN_PASSWORD_LENGTH = 8
+from services.user_service import (
+    MIN_PASSWORD_LENGTH,
+    get_user_by_email,
+    hash_password,
+    validate_password,
+    verify_password,
+)
 
 # Generated passwords: no ambiguous glyphs, so one read back over a call or
 # copied off a terminal doesn't turn into a second lockout.
@@ -82,11 +85,12 @@ def reset(email: str, password: str | None, apply: bool) -> None:
             sys.exit(1)
 
         new_password = password or generate_password()
-        if len(new_password) < MIN_PASSWORD_LENGTH:
+        password_error = validate_password(new_password)
+        if password_error:
             sys.exit(
-                f"Password must be at least {MIN_PASSWORD_LENGTH} characters "
-                "— the API enforces the same minimum, so a shorter one would "
-                "log in but fail every later password change."
+                f"{password_error} "
+                "— the API enforces the same limits, so a password that violates "
+                "them would log in but fail every later password change."
             )
 
         if not apply:

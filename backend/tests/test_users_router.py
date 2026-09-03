@@ -136,6 +136,36 @@ def test_create_user_writes_audit_entry():
     assert "audited@example.com" in entries[0].detail
 
 
+def test_create_user_rejects_password_over_72_bytes():
+    client, db, _admin = _make_client_and_db()
+    # 'a' * 73 is 73 bytes in UTF-8
+    resp = client.post("/api/users/", json={"email": "long@example.com", "password": "a" * 73})
+    assert resp.status_code == 400, resp.text
+    assert "72 bytes" in resp.json()["detail"]
+
+
+def test_create_user_accepts_password_exactly_72_bytes():
+    client, db, _admin = _make_client_and_db()
+    # 'a' * 72 is exactly 72 bytes in UTF-8
+    password_72 = "a" * 72
+    resp = client.post("/api/users/", json={"email": "exact@example.com", "password": password_72})
+    assert resp.status_code == 200, resp.text
+    created = resp.json()
+
+    # Verify the user can be verified with verify_password
+    from services.user_service import verify_password
+    user = db.get(User, created["id"])
+    assert verify_password(password_72, user.password_hash)
+
+
+def test_create_user_rejects_multibyte_password_over_72_bytes():
+    client, db, _admin = _make_client_and_db()
+    # 'あ' is 3 bytes in UTF-8, so 25 characters = 75 bytes
+    resp = client.post("/api/users/", json={"email": "multibyte@example.com", "password": "あ" * 25})
+    assert resp.status_code == 400, resp.text
+    assert "72 bytes" in resp.json()["detail"]
+
+
 # ── Test runner ───────────────────────────────────────────────────────────────
 
 _PASSED: list[str] = []
@@ -164,6 +194,9 @@ if __name__ == "__main__":
     _run("can deactivate admin when another remains", test_can_deactivate_admin_when_another_admin_remains)
     _run("reset password", test_reset_password)
     _run("create user writes audit entry", test_create_user_writes_audit_entry)
+    _run("create user rejects password over 72 bytes", test_create_user_rejects_password_over_72_bytes)
+    _run("create user accepts password exactly 72 bytes", test_create_user_accepts_password_exactly_72_bytes)
+    _run("create user rejects multibyte password over 72 bytes", test_create_user_rejects_multibyte_password_over_72_bytes)
 
     total = len(_PASSED) + len(_FAILED)
     print(f"\n{'=' * 50}")

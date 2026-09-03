@@ -66,8 +66,9 @@ async def create_user(
 ) -> dict:
     if body.role not in _ROLES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"role must be one of {sorted(_ROLES)}")
-    if len(body.password) < 8:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 8 characters")
+    password_error = user_service.validate_password(body.password)
+    if password_error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=password_error)
     if user_service.get_user_by_email(db, body.email):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="A user with that email already exists")
 
@@ -111,8 +112,9 @@ async def update_user(
         user.is_active = body.is_active
 
     if body.new_password is not None:
-        if len(body.new_password) < 8:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 8 characters")
+        password_error = user_service.validate_password(body.new_password)
+        if password_error:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=password_error)
         user.password_hash = user_service.hash_password(body.new_password)
         changes.append("password reset")
 

@@ -75,8 +75,9 @@ async def bootstrap(body: BootstrapIn, request: Request, db: Session = Depends(g
     the user just opens the app once after deploy."""
     if not _setup_required(db):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Setup already completed")
-    if len(body.password) < 8:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 8 characters")
+    password_error = user_service.validate_password(body.password)
+    if password_error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=password_error)
 
     user = user_service.create_user(db, body.email, body.password, role=ROLE_ADMIN)
     user.last_login_at = datetime.utcnow()
@@ -131,8 +132,9 @@ async def change_own_password(
 ) -> dict:
     if not user_service.verify_password(body.current_password, current_user.password_hash):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Current password is incorrect")
-    if len(body.new_password) < 8:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 8 characters")
+    password_error = user_service.validate_password(body.new_password)
+    if password_error:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=password_error)
 
     current_user.password_hash = user_service.hash_password(body.new_password)
     audit_log.record(db, user=current_user, action="user.password_change", resource_type="user",

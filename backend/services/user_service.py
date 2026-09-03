@@ -18,6 +18,18 @@ from models.user import User
 ROLE_ADMIN = "admin"
 ROLE_MEMBER = "member"
 
+MIN_PASSWORD_LENGTH = 8
+MAX_PASSWORD_BYTES = 72
+
+
+def validate_password(password: str) -> str | None:
+    """Return an English error message if the password is unacceptable, else None."""
+    if len(password) < MIN_PASSWORD_LENGTH:
+        return "Password must be at least 8 characters"
+    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        return "Password must be at most 72 bytes"
+    return None
+
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
