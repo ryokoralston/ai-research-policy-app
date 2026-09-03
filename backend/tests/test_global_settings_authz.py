@@ -90,6 +90,21 @@ def test_admin_can_save_digest_settings():
     assert resp.status_code == 200, resp.text
 
 
+def test_member_cannot_send_digest_now():
+    client, _ = _make_client_and_db(ROLE_MEMBER)
+    resp = client.post("/api/digest/send-now")
+    assert resp.status_code == 403, resp.text
+
+
+def test_admin_can_send_digest_now_when_configured():
+    """Admin can trigger send-now; returns 400 only if settings missing, not 403."""
+    client, _ = _make_client_and_db(ROLE_ADMIN)
+    # send-now will fail with 400 if email settings are not configured, but
+    # not with 403 due to auth. We just confirm it's not 403.
+    resp = client.post("/api/digest/send-now")
+    assert resp.status_code != 403, f"Admin got 403: {resp.text}"
+
+
 def test_reads_stay_open_to_members():
     """Only the writes were tightened — members still see (masked) settings."""
     client, _ = _make_client_and_db(ROLE_MEMBER)
@@ -118,6 +133,8 @@ if __name__ == "__main__":
     _run("admin can save model settings", test_admin_can_save_model_settings)
     _run("member cannot redirect the digest", test_member_cannot_redirect_the_digest)
     _run("admin can save digest settings", test_admin_can_save_digest_settings)
+    _run("member cannot send digest now", test_member_cannot_send_digest_now)
+    _run("admin can send digest now when configured", test_admin_can_send_digest_now_when_configured)
     _run("reads stay open to members", test_reads_stay_open_to_members)
 
     total = len(_PASSED) + len(_FAILED)

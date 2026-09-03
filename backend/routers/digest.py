@@ -2,8 +2,8 @@
 Digest router — settings, manual trigger, and status endpoints.
 
 GET  /api/digest/settings   – get digest settings from DB
-PUT  /api/digest/settings   – save digest settings to DB and reschedule
-POST /api/digest/send-now   – send the digest immediately (for testing)
+PUT  /api/digest/settings   – save digest settings to DB and reschedule (admin-only)
+POST /api/digest/send-now   – send the digest immediately (admin-only test endpoint)
 GET  /api/digest/status     – last sent time, next scheduled time, config summary
 """
 from __future__ import annotations
@@ -150,8 +150,17 @@ async def save_settings_endpoint(
 
 
 @router.post("/send-now", dependencies=[Depends(quota_guard("digest"))])
-async def send_now(db: Session = Depends(get_db)) -> dict[str, Any]:
-    """Immediately send the digest (test endpoint)."""
+async def send_now(
+    current_user: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Immediately send the digest (admin-only test endpoint).
+
+    Admin-only: `digest_settings` is a single global row holding the recipient
+    address and SMTP password, so any member sending a digest would trigger a
+    Tavily search, Claude headline generation, and email to the admin-configured
+    recipient. This endpoint is restricted to admins to prevent abuse.
+    """
     ds = get_or_init_digest_settings(db)
     topics = [t.strip() for t in ds.topics.split(",") if t.strip()]
     try:
