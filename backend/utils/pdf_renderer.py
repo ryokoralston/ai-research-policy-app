@@ -1,12 +1,22 @@
 """
 Markdown-aware PDF renderer using fpdf2.
 Supports: headings (H1-H3), bold inline, bullet lists, horizontal rules, paragraphs.
-Uses Hiragino font on macOS for Japanese support.
+Uses Hiragino font on macOS for Japanese support, when available. DejaVu Sans is
+bundled with the repo (backend/assets/fonts/) and registered unconditionally so
+that non-latin-1 characters (em dash, arrows, ≥, etc.) and non-macOS deployments
+(e.g. Render/Linux, which has no Hiragino) never fall back to fpdf2's core
+Helvetica font — Helvetica can only encode latin-1 and raises
+FPDFUnicodeEncodingException on anything outside it.
 """
 import os
 import re
+from pathlib import Path
 
 _JP_FONT = "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc"
+
+_FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+_DEJAVU_REGULAR = _FONTS_DIR / "DejaVuSans.ttf"
+_DEJAVU_BOLD = _FONTS_DIR / "DejaVuSans-Bold.ttf"
 
 
 def make_pdf():
@@ -21,12 +31,17 @@ def make_pdf():
     pdf.set_top_margin(20)
     usable_w = pdf.w - left - right
 
+    # DejaVu is always available (bundled in the repo) so every deployment can
+    # render full Unicode. Prefer Hiragino when present (dev Mac) for nicer
+    # Japanese glyph coverage.
+    pdf.add_font("DejaVu", "", str(_DEJAVU_REGULAR))
+    pdf.add_font("DejaVu", "B", str(_DEJAVU_BOLD))
+    font = "DejaVu"
+
     if os.path.exists(_JP_FONT):
         pdf.add_font("JP", "",  _JP_FONT)
         pdf.add_font("JP", "B", _JP_FONT)
         font = "JP"
-    else:
-        font = "Helvetica"
 
     return pdf, font, left, usable_w
 
