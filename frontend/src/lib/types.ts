@@ -32,7 +32,6 @@ export interface Document {
   created_at: string;
   indexed_at: string | null;
   chunk_count: number;
-  file_path?: string | null;
   metadata_json: string | null;
 }
 

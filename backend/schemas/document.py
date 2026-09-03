@@ -20,7 +20,7 @@ class DocumentResponse(BaseModel):
 
 
 class DocumentDetail(DocumentResponse):
-    file_path: str | None
+    pass
 
 
 class DocumentFolderRequest(BaseModel):
