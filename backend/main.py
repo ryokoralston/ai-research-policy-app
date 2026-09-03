@@ -145,14 +145,16 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown(wait=False)
 
 
+settings = get_settings()
 app = FastAPI(
     title="AI Policy Research App",
     description="AI-powered policy research assistant for congressional briefings and risk analysis.",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url="/docs" if settings.expose_api_docs else None,
+    redoc_url="/redoc" if settings.expose_api_docs else None,
+    openapi_url="/openapi.json" if settings.expose_api_docs else None,
 )
-
-settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -167,7 +169,9 @@ async def security_headers(request, call_next):
     """Baseline hardening headers on every response. No Content-Security-Policy
     here (unlike the frontend) — FastAPI's own /docs and /redoc pages load
     their Swagger/ReDoc assets from a CDN, so a restrictive CSP would break
-    them; this API doesn't otherwise render browsable HTML for CSP to protect."""
+    them. These pages are disabled by default (EXPOSE_API_DOCS=true enables them
+    for local development only). This API doesn't otherwise render browsable
+    HTML for CSP to protect."""
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"

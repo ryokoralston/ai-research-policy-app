@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # when False, indexing behaves exactly as before this feature shipped.
     contextual_retrieval_enabled: bool = True
 
+    # Serve FastAPI's auto-generated /docs (Swagger UI) and /redoc pages, plus
+    # /openapi.json. Off by default in production; enable locally only.
+    expose_api_docs: bool = False
+
     # Daily digest email settings
     # Gmail app password: https://myaccount.google.com/apppasswords
     digest_email_to: str = ""
