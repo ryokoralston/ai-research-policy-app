@@ -31,6 +31,11 @@ def validate_password(password: str) -> str | None:
     return None
 
 
+def normalize_email(email: str) -> str:
+    """Normalize email: trim whitespace and convert to lowercase."""
+    return email.strip().lower()
+
+
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
@@ -44,7 +49,7 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def get_user_by_email(db: Session, email: str) -> User | None:
-    return db.query(User).filter(User.email == email).first()
+    return db.query(User).filter(User.email == normalize_email(email)).first()
 
 
 def create_user(db: Session, email: str, password: str, role: str = ROLE_MEMBER) -> User:
@@ -55,10 +60,11 @@ def create_user(db: Session, email: str, password: str, role: str = ROLE_MEMBER)
     created here, not lazily, so no content row can ever be written with a NULL
     org_id: content inherits org_id from its author.
     """
-    org = Organization(name=email)
+    normalized_email = normalize_email(email)
+    org = Organization(name=normalized_email)
     db.add(org)
     db.flush()
-    user = User(email=email, password_hash=hash_password(password), role=role, org_id=org.id)
+    user = User(email=normalized_email, password_hash=hash_password(password), role=role, org_id=org.id)
     db.add(user)
     db.commit()
     db.refresh(user)

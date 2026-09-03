@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from config import get_settings
@@ -38,12 +38,12 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 class LoginIn(BaseModel):
-    email: str
+    email: EmailStr
     password: str
 
 
 class BootstrapIn(BaseModel):
-    email: str
+    email: EmailStr
     password: str
 
 

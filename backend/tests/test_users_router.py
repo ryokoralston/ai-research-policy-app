@@ -166,6 +166,16 @@ def test_create_user_rejects_multibyte_password_over_72_bytes():
     assert "72 bytes" in resp.json()["detail"]
 
 
+def test_create_user_rejects_duplicate_email_different_case():
+    """Creating a user with Dup@Example.com after dup@example.com exists should fail."""
+    client, db, _admin = _make_client_and_db()
+    resp1 = client.post("/api/users/", json={"email": "dup@example.com", "password": "hunter2hunter2"})
+    assert resp1.status_code == 200, resp1.text
+
+    resp2 = client.post("/api/users/", json={"email": "Dup@Example.com", "password": "hunter2hunter2"})
+    assert resp2.status_code == 409, resp2.text
+
+
 # ── Test runner ───────────────────────────────────────────────────────────────
 
 _PASSED: list[str] = []
@@ -187,6 +197,7 @@ if __name__ == "__main__":
 
     _run("create and list users", test_create_and_list_users)
     _run("create user rejects duplicate email", test_create_user_rejects_duplicate_email)
+    _run("create user rejects duplicate email different case", test_create_user_rejects_duplicate_email_different_case)
     _run("create user rejects short password", test_create_user_rejects_short_password)
     _run("update role and deactivate", test_update_role_and_deactivate)
     _run("cannot deactivate last active admin", test_cannot_deactivate_last_active_admin)

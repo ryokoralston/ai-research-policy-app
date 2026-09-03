@@ -14,7 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -29,7 +29,7 @@ _ROLES = {ROLE_ADMIN, ROLE_MEMBER}
 
 
 class UserCreateIn(BaseModel):
-    email: str
+    email: EmailStr
     password: str
     role: str = ROLE_MEMBER
 

@@ -27,7 +27,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 import services.auth as auth
-from database import Base
+from database import Base, get_db
 from models.user import User
 from services.secret_crypto import _fernet
 from services.user_service import create_user
@@ -162,6 +162,77 @@ def test_login_rate_limit_window_expiry():
         auth.clear_login_failures(ip)
 
 
+# ── Router tests ──────────────────────────────────────────────────────────────
+
+def test_login_case_insensitive_email():
+    """Creating an account with mixed case, then logging in with different case should work."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routers.auth import router as auth_router
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+
+    app = FastAPI()
+    app.include_router(auth_router)
+    app.dependency_overrides[get_db] = lambda: db
+    client = TestClient(app)
+
+    # Bootstrap with mixed case email
+    resp = client.post("/api/auth/bootstrap", json={"email": "Admin@Example.com", "password": "correct-horse-battery-staple"})
+    assert resp.status_code == 200, resp.text
+    token = resp.json()["token"]
+
+    # Login with different case should work
+    resp = client.post("/api/auth/login", json={"email": "ADMIN@EXAMPLE.COM", "password": "correct-horse-battery-staple"})
+    assert resp.status_code == 200, resp.text
+    assert "token" in resp.json()
+
+    # Login with yet another case should still work
+    resp = client.post("/api/auth/login", json={"email": "admin@example.com", "password": "correct-horse-battery-staple"})
+    assert resp.status_code == 200, resp.text
+    assert "token" in resp.json()
+
+
+def test_login_rejects_invalid_email_format():
+    """Submitting an invalid email format should return 422."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routers.auth import router as auth_router
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+
+    app = FastAPI()
+    app.include_router(auth_router)
+    app.dependency_overrides[get_db] = lambda: db
+    client = TestClient(app)
+
+    resp = client.post("/api/auth/login", json={"email": "not-an-email", "password": "hunter2hunter2"})
+    assert resp.status_code == 422, resp.text
+
+
+def test_bootstrap_rejects_invalid_email_format():
+    """Bootstrap with invalid email format should return 422."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routers.auth import router as auth_router
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+
+    app = FastAPI()
+    app.include_router(auth_router)
+    app.dependency_overrides[get_db] = lambda: db
+    client = TestClient(app)
+
+    resp = client.post("/api/auth/bootstrap", json={"email": "not-an-email", "password": "hunter2hunter2"})
+    assert resp.status_code == 422, resp.text
+
+
 # ── Test runner ───────────────────────────────────────────────────────────────
 
 _PASSED: list[str] = []
@@ -192,6 +263,9 @@ if __name__ == "__main__":
     _run("login rate limit blocks after max attempts", test_login_rate_limit_blocks_after_max_attempts)
     _run("login rate limit resets on success", test_login_rate_limit_resets_on_success)
     _run("login rate limit window expiry", test_login_rate_limit_window_expiry)
+    _run("login case insensitive email", test_login_case_insensitive_email)
+    _run("login rejects invalid email format", test_login_rejects_invalid_email_format)
+    _run("bootstrap rejects invalid email format", test_bootstrap_rejects_invalid_email_format)
 
     total = len(_PASSED) + len(_FAILED)
     print(f"\n{'=' * 50}")
