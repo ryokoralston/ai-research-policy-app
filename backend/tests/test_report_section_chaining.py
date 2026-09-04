@@ -315,6 +315,92 @@ def test_synthetic_template_without_summarize_body_preserves_original_order():
         del report_generator.TEMPLATES["synthetic_no_summary"]
 
 
+# ── (i) a section cut off at max_tokens → sentinel never becomes content ─────
+
+def _run_truncated_section_generation(truncated_titles):
+    """Generate congressional_brief where every section in `truncated_titles`
+    ends its stream with the ("truncated", "") sentinel that
+    stream_text_with_thinking emits on stop_reason == "max_tokens"."""
+    template_sections = report_generator.TEMPLATES["congressional_brief"]["sections"]
+    section_contents = {s["title"]: f"CONTENT_MARKER_{s['key']}" for s in template_sections}
+
+    async def fake_stream(prompt, system="", model=None, max_tokens=8192, cached_context=None, usage_log_tag=None):
+        title = next(
+            (t for t in section_contents if f"Now write the '{t}' section" in prompt), None
+        )
+        assert title is not None, f"could not match prompt to a known section title:\n{prompt[:300]}"
+        yield ("text", section_contents[title])
+        if title in truncated_titles:
+            yield ("truncated", "")
+
+    db = _make_db()
+    report_id, session_id = _make_report_with_session(db, "congressional_brief")
+    request = ReportGenerateRequest(
+        report_type="congressional_brief", title="Test Report", session_id=session_id
+    )
+    events = _run_generation(db, report_id, request, fake_stream)
+
+    report = db.query(Report).filter(Report.id == report_id).first()
+    db.refresh(report)
+    sections = (
+        db.query(ReportSection)
+        .filter(ReportSection.report_id == report_id)
+        .order_by(ReportSection.order_index)
+        .all()
+    )
+    return {
+        "db": db, "report": report, "sections": sections, "events": events,
+        "section_contents": section_contents,
+    }
+
+
+def _assert_no_sentinel_leaked(r):
+    """The sentinel's kind string must never reach saved content or the
+    streamed tokens — it is a control signal, not text."""
+    for s in r["sections"]:
+        assert "truncated" not in s.content, f"section {s.section_key!r} content: {s.content!r}"
+        assert s.content == r["section_contents"][s.title], s.content
+    assert "truncated" not in r["report"].content, r["report"].content
+    for d in _sse_events(r["events"], "token"):
+        assert d["text"] != "", "empty sentinel token was streamed to the client"
+
+
+def test_truncated_body_section_warns_and_does_not_leak_sentinel_into_content():
+    r = _run_truncated_section_generation({"Background & Context"})
+    _assert_no_sentinel_leaked(r)
+
+    warnings = _sse_events(r["events"], "warning")
+    assert len(warnings) == 1, warnings
+    assert warnings[0]["section"] == "background", warnings[0]
+    assert warnings[0]["message"] == "This section was cut off by the output limit."
+
+    # The section still completes normally — the warning is additive, and the
+    # partial text is kept (it is what the user watched stream in).
+    ends = _sse_events(r["events"], "section_end")
+    assert "background" in [d["section"] for d in ends], ends
+    r["db"].close()
+
+
+def test_truncated_deferred_summary_section_also_warns():
+    """The deferred summarize_body loop is a second, separate stream call —
+    congressional_brief's Executive Summary goes through it."""
+    r = _run_truncated_section_generation({"Executive Summary"})
+    _assert_no_sentinel_leaked(r)
+
+    warnings = _sse_events(r["events"], "warning")
+    assert [d["section"] for d in warnings] == ["executive_summary"], warnings
+    ends = _sse_events(r["events"], "section_end")
+    assert "executive_summary" in [d["section"] for d in ends], ends
+    r["db"].close()
+
+
+def test_no_warning_event_when_nothing_is_truncated():
+    r = _run_truncated_section_generation(set())
+    _assert_no_sentinel_leaked(r)
+    assert _sse_events(r["events"], "warning") == []
+    r["db"].close()
+
+
 # ── (h) _build_section_prompt output byte-identical regression guard ─────────
 
 def test_build_section_prompt_output_unchanged_by_chaining_refactor():
@@ -377,6 +463,9 @@ if __name__ == "__main__":
     _run("congressional_brief: order_index is canonical", test_congressional_brief_order_index_is_canonical)
     _run("policy_memo: bluf generated last, canonical order restored", test_policy_memo_bluf_generated_last_and_canonical_order_restored)
     _run("synthetic template without summarize_body preserves original order", test_synthetic_template_without_summarize_body_preserves_original_order)
+    _run("truncated body section warns + no sentinel in content", test_truncated_body_section_warns_and_does_not_leak_sentinel_into_content)
+    _run("truncated deferred summary section also warns", test_truncated_deferred_summary_section_also_warns)
+    _run("no warning event when nothing is truncated", test_no_warning_event_when_nothing_is_truncated)
     _run("_build_section_prompt output unchanged by chaining refactor", test_build_section_prompt_output_unchanged_by_chaining_refactor)
 
     total = len(_PASSED) + len(_FAILED)

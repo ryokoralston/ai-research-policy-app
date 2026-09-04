@@ -560,6 +560,16 @@ async def stream_text_with_thinking(
     tuples in stream order: ("thinking", delta_text) for thinking deltas and
     ("text", delta_text) for text deltas.
 
+    Additionally yields ("truncated", "") as the LAST item when the response
+    hit max_tokens (final.stop_reason == "max_tokens") — max_tokens is shared
+    with adaptive-thinking tokens, so a long report section or whole-report
+    rewrite can be cut off mid-sentence. Without this sentinel a truncated
+    response is byte-indistinguishable from a complete one, and a caller that
+    grades or saves it treats a fragment as the finished article (see
+    services/report_quality.py). Callers that concatenate text must skip it:
+    it is a control signal, not content, and must never be appended to the
+    accumulated text or emitted as a text token.
+
     thinking={"type": "adaptive"} (no beta header needed).
     temperature is intentionally NOT sent — extended-thinking sampling
     constraint on the API; passing it alongside thinking returns a 400.
@@ -608,6 +618,14 @@ async def stream_text_with_thinking(
                     "%s usage: input=%s cache_read=%s cache_write=%s",
                     usage_log_tag, u.input_tokens, u.cache_read_input_tokens, u.cache_creation_input_tokens,
                 )
+        # Usage is recorded first: a truncated response was still generated
+        # and billed, so it must be accounted for before the sentinel goes out.
+        if getattr(final, "stop_reason", None) == "max_tokens":
+            logger.warning(
+                "%s: output truncated at max_tokens=%s",
+                usage_log_tag or "stream_text_with_thinking", max_tokens,
+            )
+            yield ("truncated", "")
 
 
 async def stream_chat(

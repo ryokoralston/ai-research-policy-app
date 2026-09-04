@@ -199,6 +199,56 @@ def test_single_pass_verification_skipped_when_source_material_empty():
     db.close()
 
 
+def test_single_pass_truncation_warns_and_does_not_leak_sentinel():
+    """The word-limit path is a third, separate stream call. A response cut
+    off at max_tokens ends with the ("truncated", "") sentinel — it must be
+    reported as a warning and must never be concatenated into the saved
+    report or streamed as an (empty) token."""
+    async def truncated_stream(prompt, system="", model=None, max_tokens=8192, cached_context=None, usage_log_tag=None):
+        yield ("text", "A single-pass report that stops mid-sen")
+        yield ("truncated", "")
+
+    async def unused_verify(content, source_material):
+        return dict(_CONFIDENCE)
+
+    db = _make_db()
+    report_id = str(uuid.uuid4())
+    db.add(Report(id=report_id, title="Truncated Report", report_type="policy_memo", status="draft"))
+    db.commit()
+
+    request = ReportGenerateRequest(
+        report_type="policy_memo", title="Truncated Report",
+        custom_instructions="150 words or less",
+    )
+
+    orig = (report_generator.stream_text_with_thinking, report_generator.verify_grounding)
+    report_generator.stream_text_with_thinking = truncated_stream
+    report_generator.verify_grounding = unused_verify
+    try:
+        async def collect():
+            return [
+                e async for e in report_generator._generate_single_pass(
+                    report_id, request, db, "", "You are a policy memo writer.",
+                    report_generator.TEMPLATES["policy_memo"], word_limit=150,
+                )
+            ]
+        events = asyncio.run(collect())
+    finally:
+        report_generator.stream_text_with_thinking, report_generator.verify_grounding = orig
+
+    warnings = [e for e in events if e.startswith("event: warning")]
+    assert len(warnings) == 1, events
+    assert '"section": "full_report"' in warnings[0], warnings[0]
+    assert "This section was cut off by the output limit." in warnings[0], warnings[0]
+
+    report = db.query(Report).filter(Report.id == report_id).first()
+    db.refresh(report)
+    assert "truncated" not in report.content, report.content
+    assert report.content == "# Truncated Report\n\nA single-pass report that stops mid-sen", report.content
+    assert not any('"text": ""' in e for e in events if e.startswith("event: token")), events
+    db.close()
+
+
 def test_single_pass_verification_success_saved():
     db = _make_db()
     report_id, session_id = _make_report_with_session(db)
@@ -237,6 +287,7 @@ if __name__ == "__main__":
     _run("verification success merges metadata without clobbering", test_verification_success_merges_metadata_without_clobbering)
     _run("verification failure does not break save/complete", test_verification_failure_does_not_break_save_or_complete)
     _run("single-pass verification skipped when source_material empty", test_single_pass_verification_skipped_when_source_material_empty)
+    _run("single-pass truncation warns + no sentinel in content", test_single_pass_truncation_warns_and_does_not_leak_sentinel)
     _run("single-pass verification success saved", test_single_pass_verification_success_saved)
 
     total = len(_PASSED) + len(_FAILED)

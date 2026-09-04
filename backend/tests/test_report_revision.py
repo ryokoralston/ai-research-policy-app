@@ -172,6 +172,58 @@ def test_revision_rejected_when_regrade_is_worse():
     assert final_payload == {"content": _ORIGINAL_CONTENT, "grade": first_grade, "revised": False}
 
 
+# ── (c2) revision cut off at max_tokens → never adopted, never re-graded ─────
+
+def test_truncated_revision_is_never_adopted_even_if_regrade_would_score_higher():
+    """A revision that hit the model's max_tokens output cap is a partial
+    document. Re-grading it is meaningless — fewer claims survive the cut, so
+    it easily out-scores the original and would be adopted, silently
+    replacing the full report with a fragment (the production bug). The
+    truncation sentinel must short-circuit the whole accept path.
+    """
+    first_grade = {
+        "confidence_score": 2,
+        "unsupported_claims": ["73% figure not in source"],
+        "notes": "one fabricated statistic",
+    }
+    regrade_calls: list[str] = []
+
+    async def fake_stream(prompt, system="", model=None, max_tokens=8192, cached_context=None, usage_log_tag=None):
+        yield ("text", "# Test Report\n\n## Background\n\nSome background text that stops mid-sen")
+        yield ("truncated", "")
+
+    async def fake_verify(content, source_material):
+        # A truncated rewrite loses claims, so a naive re-grade scores it
+        # HIGHER than the original — exactly the condition that made the
+        # fragment win before the fix.
+        regrade_calls.append(content)
+        return {"confidence_score": 9, "unsupported_claims": [], "notes": "looks clean (because it is cut short)"}
+
+    orig = _patch(fake_stream, fake_verify)
+    try:
+        events = asyncio.run(_collect(_ORIGINAL_CONTENT, _SOURCE_MATERIAL, first_grade))
+    finally:
+        _unpatch(orig)
+
+    assert regrade_calls == [], "a truncated revision must not be re-graded at all"
+
+    # The truncation sentinel is a control signal, never a content token.
+    tokens = [p for k, p in events if k == "token"]
+    assert "" not in tokens, f"truncation sentinel leaked into the token stream: {tokens}"
+
+    end_payload = next(p for k, p in events if k == "revision_end")
+    assert end_payload["accepted"] is False, end_payload
+    assert end_payload["truncated"] is True, end_payload
+
+    final_kind, final_payload = events[-1]
+    assert final_kind == "final"
+    assert final_payload["content"] == _ORIGINAL_CONTENT, (
+        "a max_tokens-truncated revision must never overwrite the full report"
+    )
+    assert final_payload["revised"] is False
+    assert final_payload["grade"] == first_grade
+
+
 # ── (d) revision raises → original kept, final sentinel still emitted ────────
 
 def test_revision_exception_keeps_original_and_still_yields_final():
@@ -274,6 +326,7 @@ if __name__ == "__main__":
     _run("no revision when unsupported_claims key missing", test_no_revision_when_unsupported_claims_key_missing)
     _run("revision accepted when regrade improves", test_revision_accepted_when_regrade_improves)
     _run("revision rejected when regrade is worse", test_revision_rejected_when_regrade_is_worse)
+    _run("truncated revision never adopted even if regrade scores higher", test_truncated_revision_is_never_adopted_even_if_regrade_would_score_higher)
     _run("revision exception keeps original + final still yielded", test_revision_exception_keeps_original_and_still_yields_final)
     _run("regrade exception keeps original + final still yielded", test_regrade_exception_keeps_original_and_still_yields_final)
     _run("build_revision_prompt contains claims/content/structure instruction", test_build_revision_prompt_contains_claims_content_and_structure_instruction)

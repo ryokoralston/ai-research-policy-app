@@ -136,6 +136,12 @@ async def _analyze_dimension(
             prompt, system=section_system, cached_context=shared_context,
             usage_log_tag="risk-dimension",
         ):
+            if kind == "truncated":
+                # Control signal, not content — must not land in content_text.
+                logger.warning(
+                    "Risk dimension %r was truncated at max_tokens", dimension["key"],
+                )
+                continue
             if kind == "thinking":
                 thinking_text += token
             else:
@@ -332,6 +338,11 @@ async def _fix_weak_dimensions(
                 revision_prompt, system=section_system, cached_context=shared_context,
                 usage_log_tag="risk-dimension-revision",
             ):
+                if kind == "truncated":
+                    logger.warning(
+                        "Weak-dimension revision for dimension=%r was truncated at max_tokens", key,
+                    )
+                    continue
                 if kind == "thinking":
                     revised_thinking += token
                 else:
@@ -562,6 +573,13 @@ async def run_risk_analysis(
             async for kind, token in stream_text_with_thinking(
                 prompt, system=section_system, cached_context=shared_context, usage_log_tag="risk-section",
             ):
+                if kind == "truncated":
+                    # Control signal, not content — never accumulated and
+                    # never emitted as an (empty) SSE token.
+                    logger.warning(
+                        "Risk section %r was truncated at max_tokens", section_key,
+                    )
+                    continue
                 if kind == "thinking":
                     yield sse_event("thinking", {"text": token, "section": section_key})
                     continue

@@ -12,7 +12,7 @@ from models import Report, ReportSection, ResearchSession, Document, DocumentChu
 from schemas import ReportGenerateRequest
 from services.anthropic_client import stream_text_with_thinking, sse_event, UNTRUSTED_CONTENT_GUARD
 from services.citation_verifier import verify_grounding
-from services.report_quality import revise_if_ungrounded
+from services.report_quality import REPORT_MAX_TOKENS, revise_if_ungrounded
 from templates import TEMPLATES
 
 logger = logging.getLogger(__name__)
@@ -111,14 +111,31 @@ async def generate_report_stream(
         )
 
         section_content = ""
+        section_truncated = False
         async for kind, token in stream_text_with_thinking(
-            prompt, system=system_prompt, cached_context=shared_context, usage_log_tag="report-section",
+            prompt, system=system_prompt, cached_context=shared_context,
+            usage_log_tag="report-section", max_tokens=REPORT_MAX_TOKENS,
         ):
+            if kind == "truncated":
+                # Control signal, not content — never accumulated, never
+                # streamed to the client as a token.
+                section_truncated = True
+                continue
             if kind == "thinking":
                 yield sse_event("thinking", {"text": token, "section": section_key})
                 continue
             section_content += token
             yield sse_event("token", {"text": token, "section": section_key})
+
+        if section_truncated:
+            logger.warning(
+                "Report section %r for report %r was truncated at max_tokens",
+                section_key, report_id,
+            )
+            yield sse_event("warning", {
+                "section": section_key,
+                "message": "This section was cut off by the output limit.",
+            })
 
         # Strip internal metadata lines (e.g. SCORES_JSON) before saving
         section_content = _strip_scores_json_lines(section_content)
@@ -161,14 +178,29 @@ async def generate_report_stream(
         )
 
         section_content = ""
+        section_truncated = False
         async for kind, token in stream_text_with_thinking(
-            prompt, system=system_prompt, cached_context=shared_context, usage_log_tag="report-section",
+            prompt, system=system_prompt, cached_context=shared_context,
+            usage_log_tag="report-section", max_tokens=REPORT_MAX_TOKENS,
         ):
+            if kind == "truncated":
+                section_truncated = True
+                continue
             if kind == "thinking":
                 yield sse_event("thinking", {"text": token, "section": section_key})
                 continue
             section_content += token
             yield sse_event("token", {"text": token, "section": section_key})
+
+        if section_truncated:
+            logger.warning(
+                "Report summary section %r for report %r was truncated at max_tokens",
+                section_key, report_id,
+            )
+            yield sse_event("warning", {
+                "section": section_key,
+                "message": "This section was cut off by the output limit.",
+            })
 
         section_content = _strip_scores_json_lines(section_content)
 
@@ -302,14 +334,28 @@ async def _generate_single_pass(
     yield sse_event("section_start", {"section": "full_report", "title": "Report"})
 
     full_content_raw = ""
+    report_truncated = False
     async for kind, token in stream_text_with_thinking(
-        prompt, system=system_prompt, cached_context=shared_context, usage_log_tag="report-section",
+        prompt, system=system_prompt, cached_context=shared_context,
+        usage_log_tag="report-section", max_tokens=REPORT_MAX_TOKENS,
     ):
+        if kind == "truncated":
+            report_truncated = True
+            continue
         if kind == "thinking":
             yield sse_event("thinking", {"text": token, "section": "full_report"})
             continue
         full_content_raw += token
         yield sse_event("token", {"text": token, "section": "full_report"})
+
+    if report_truncated:
+        logger.warning(
+            "Single-pass report %r was truncated at max_tokens", report_id,
+        )
+        yield sse_event("warning", {
+            "section": "full_report",
+            "message": "This section was cut off by the output limit.",
+        })
 
     full_content = f"# {request.title}\n\n{full_content_raw}"
 
