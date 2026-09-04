@@ -37,12 +37,25 @@ def usage_context(user_id: str | None, feature: str):
     with BackgroundTasks does not reliably inherit the request's context, and
     inheriting silently would be worse than not inheriting at all — usage would
     be attributed to whoever happened to be in context.
+
+    When an async generator using this context is finalized from a different
+    Context (e.g., an HTTP client disconnects mid-stream and aclose() runs in
+    another task), reset() raises ValueError. That case is tolerated because
+    the original context is gone anyway, and usage rows were already written
+    before the yield — there is no data loss or misattribution.
     """
     token = _context.set(UsageContext(user_id=user_id, feature=feature))
     try:
         yield
     finally:
-        _context.reset(token)
+        try:
+            _context.reset(token)
+        except ValueError:
+            # The generator that entered this block was finalized from a
+            # different Context (client disconnected mid-stream and aclose()
+            # ran elsewhere). That foreign context never had our value, so
+            # there is nothing to restore; the original context is gone.
+            pass
 
 
 def current_feature() -> str | None:

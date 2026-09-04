@@ -237,6 +237,43 @@ def test_recording_failure_does_not_raise():
         database.SessionLocal = original
 
 
+def test_context_reset_from_foreign_context():
+    """When an async generator using usage_context() is finalized from a
+    different context (e.g., when an HTTP client disconnects mid-stream and
+    aclose() runs in a different asyncio task), ContextVar.reset() should not
+    raise ValueError. The usage row is already written before the yield, so
+    there is no data loss or misattribution."""
+    import asyncio
+    import contextvars
+
+    factory = _install_db()
+
+    async def scenario():
+        async def gen():
+            with usage.usage_context(user_id="u", feature="f"):
+                usage.record_anthropic("m", _FakeUsage(input_tokens=1))
+                yield 1
+                yield 2
+
+        g = gen()
+        # Enter the with-block in this task's context.
+        first_val = await g.__anext__()
+        assert first_val == 1
+
+        # Finalize from a fresh context, as an asyncgen finalizer would
+        # when the HTTP client disconnects mid-stream.
+        # create_task(g.aclose()) copies the current context → different Context object
+        await asyncio.create_task(g.aclose())  # must not raise ValueError
+
+        # Usage row was written before the yield, so it exists.
+        rows = _rows(factory)
+        assert len(rows) == 1
+        assert rows[0].user_id == "u"
+        assert rows[0].feature == "f"
+
+    asyncio.run(scenario())
+
+
 # ── runner ────────────────────────────────────────────────────────────────────
 
 _PASSED: list[str] = []
@@ -266,6 +303,7 @@ if __name__ == "__main__":
     _run("report endpoint records usage event", test_report_endpoint_records_usage_event)
     _run("debate task records usage event", test_debate_task_records_usage_event)
     _run("recording failure does not raise", test_recording_failure_does_not_raise)
+    _run("context reset from foreign context", test_context_reset_from_foreign_context)
 
     total = len(_PASSED) + len(_FAILED)
     print(f"\n{'=' * 50}")
