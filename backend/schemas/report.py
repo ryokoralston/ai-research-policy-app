@@ -7,7 +7,7 @@ class ReportGenerateRequest(BaseModel):
     title: str = Field(max_length=500)
     session_id: str | None = None
     debate_id: str | None = None
-    doc_ids: list[str] | None = Field(None, max_length=100)
+    doc_ids: list[str] | None = Field(None, max_length=1000)  # Generous: Select All in a large folder sends every id; cost is bounded by top_k, not by this list.
     custom_instructions: str | None = Field(None, max_length=20000)
     audience: str = Field("Congressional staff", max_length=500)
 

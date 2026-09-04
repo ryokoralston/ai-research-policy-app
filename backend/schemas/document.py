@@ -44,7 +44,7 @@ class ChatMessage(BaseModel):
 
 class DocumentAskRequest(BaseModel):
     question: str = Field(max_length=20000)
-    doc_ids: list[str] | None = Field(None, max_length=100)  # None = search all documents
+    doc_ids: list[str] | None = Field(None, max_length=1000)  # Generous: Select All in a large folder sends every id; cost is bounded by top_k, not by this list. None = search all documents
     top_k: int = Field(5, ge=1, le=20)
     chat_history: list[ChatMessage] | None = None  # previous turns for multi-turn chat
     custom_system: str | None = Field(None, max_length=20000)  # optional user-defined system prompt override

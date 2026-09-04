@@ -186,13 +186,13 @@ def test_settings_put_accepts_resaving_current_default_model():
     assert resp.status_code == 200, resp.text
 
 
-def test_document_ask_rejects_more_than_100_doc_ids():
+def test_document_ask_rejects_more_than_1000_doc_ids():
     try:
-        DocumentAskRequest.model_validate({"question": "q", "doc_ids": ["x"] * 101})
-        raise AssertionError("expected ValidationError for 101 doc_ids")
+        DocumentAskRequest.model_validate({"question": "q", "doc_ids": ["x"] * 1001})
+        raise AssertionError("expected ValidationError for 1001 doc_ids")
     except ValidationError:
         pass
-    DocumentAskRequest.model_validate({"question": "q", "doc_ids": ["x"] * 100})
+    DocumentAskRequest.model_validate({"question": "q", "doc_ids": ["x"] * 1000})
 
 
 def test_debate_start_rejects_more_than_50_persona_keys():
@@ -233,7 +233,7 @@ if __name__ == "__main__":
     _run("settings put rejects unknown model id", test_settings_put_rejects_unknown_model_id)
     _run("settings put accepts fallback model id", test_settings_put_accepts_fallback_model_id)
     _run("settings put accepts resaving current default model", test_settings_put_accepts_resaving_current_default_model)
-    _run("document ask rejects more than 100 doc_ids", test_document_ask_rejects_more_than_100_doc_ids)
+    _run("document ask rejects more than 1000 doc_ids", test_document_ask_rejects_more_than_1000_doc_ids)
     _run("debate start rejects more than 50 persona_keys", test_debate_start_rejects_more_than_50_persona_keys)
 
     total = len(_PASSED) + len(_FAILED)
