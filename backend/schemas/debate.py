@@ -1,10 +1,10 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DebateStartRequest(BaseModel):
-    topic: str
-    persona_keys: list[str] | None = None  # None = all 10
+    topic: str = Field(max_length=20000)
+    persona_keys: list[str] | None = Field(None, max_length=50)  # None = all 10
 
 
 class DebateArgumentResponse(BaseModel):

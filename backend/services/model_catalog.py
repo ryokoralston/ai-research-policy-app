@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any
 
 import anthropic
+from sqlalchemy.orm import Session
 
 from database import SessionLocal
 from models.model_catalog import ModelCatalogEntry
@@ -30,6 +31,26 @@ FAMILY_SUBSTRINGS = {
 # Mythos is invitation-only (Project Glasswing) — never auto-populate it, since
 # most API keys can't actually use it even when it's listed.
 EXCLUDED_SUBSTRING = "mythos"
+
+# Used only if the catalog hasn't been populated yet (no Anthropic API key
+# configured, or the very first request before the startup refresh completed).
+FALLBACK_ANTHROPIC_MODELS = [
+    {"group": "Anthropic", "id": "claude-fable-5", "label": "Claude Fable 5"},
+    {"group": "Anthropic", "id": "claude-opus-5", "label": "Claude Opus 5"},
+    {"group": "Anthropic", "id": "claude-sonnet-5", "label": "Claude Sonnet 5"},
+    {"group": "Anthropic", "id": "claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5 (Fast)"},
+]
+
+
+def allowed_model_ids(db: Session) -> set[str]:
+    """The set of model ids acceptable anywhere a caller picks a model:
+    every model currently in the catalog (one row per family) plus the
+    hardcoded fallback ids offered when the catalog is empty. Used to reject
+    stale or fabricated model ids (e.g. a retired OpenAI id) on write paths —
+    never on read paths, where a stored value must still load."""
+    catalog_ids = {e.model_id for e in db.query(ModelCatalogEntry).all()}
+    fallback_ids = {m["id"] for m in FALLBACK_ANTHROPIC_MODELS}
+    return catalog_ids | fallback_ids
 
 
 def _family_of(model_id: str) -> str | None:

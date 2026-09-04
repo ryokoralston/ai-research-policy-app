@@ -1,11 +1,10 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ResearchStartRequest(BaseModel):
-    query: str
-    depth: str = "quick"  # "quick" | "deep"
-    max_sources: int = 5
+    query: str = Field(max_length=20000)
+    max_sources: int = Field(5, ge=1, le=20)
     # Overrides ModelSettings.main_model for this session's synthesis step only
     # (query decomposition and per-source summaries still use the fast model).
     # None falls back to the configured default.

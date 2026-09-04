@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -19,20 +19,12 @@ from models.user import User
 from services import audit_log
 from services.anthropic_client import invalidate_ai_settings_cache
 from services.auth import client_ip, require_admin
+from services.model_catalog import FALLBACK_ANTHROPIC_MODELS, allowed_model_ids
 from utils.masking import MASK, mask_secret
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 FAMILY_ORDER = ["fable", "opus", "sonnet", "haiku"]
-
-# Used only if the catalog hasn't been populated yet (no Anthropic API key
-# configured, or the very first request before the startup refresh completed).
-FALLBACK_ANTHROPIC_MODELS = [
-    {"group": "Anthropic", "id": "claude-fable-5", "label": "Claude Fable 5"},
-    {"group": "Anthropic", "id": "claude-opus-5", "label": "Claude Opus 5"},
-    {"group": "Anthropic", "id": "claude-sonnet-5", "label": "Claude Sonnet 5"},
-    {"group": "Anthropic", "id": "claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5 (Fast)"},
-]
 
 
 class ModelSettingsIn(BaseModel):
@@ -88,11 +80,27 @@ async def save_model_settings(
     """
     ms = get_or_init_model_settings(db)
 
+    # The settings form always echoes the currently-stored main_model /
+    # fast_model back in the PUT body (see frontend/src/app/settings/page.tsx),
+    # even when the admin is only rotating the API key. Only validate against
+    # the allowlist when the value is actually changing — re-saving the
+    # stored default (which may predate the allowlist, e.g. the model_settings
+    # table default "claude-opus-4-6") must not 400 a routine save. A new
+    # value that isn't allowed (e.g. a stale "gpt-4o") still 400s either way.
+    main_model_changing = body.main_model is not None and body.main_model != ms.main_model
+    fast_model_changing = body.fast_model is not None and body.fast_model != ms.fast_model
+    if main_model_changing or fast_model_changing:
+        allowed = allowed_model_ids(db)
+        if main_model_changing and body.main_model not in allowed:
+            raise HTTPException(status_code=400, detail="Unknown model id.")
+        if fast_model_changing and body.fast_model not in allowed:
+            raise HTTPException(status_code=400, detail="Unknown model id.")
+
     changed: list[str] = []
-    if body.main_model is not None and body.main_model != ms.main_model:
+    if main_model_changing:
         changed.append("main_model")
         ms.main_model = body.main_model
-    if body.fast_model is not None and body.fast_model != ms.fast_model:
+    if fast_model_changing:
         changed.append("fast_model")
         ms.fast_model = body.fast_model
     # Only update API keys when a real new value is sent — ignore empty strings

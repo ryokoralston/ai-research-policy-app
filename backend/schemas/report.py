@@ -1,15 +1,15 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ReportGenerateRequest(BaseModel):
-    report_type: str  # 'congressional_brief' | 'policy_memo' | 'risk_assessment'
-    title: str
+    report_type: str = Field(max_length=100)  # 'congressional_brief' | 'policy_memo' | 'risk_assessment'
+    title: str = Field(max_length=500)
     session_id: str | None = None
     debate_id: str | None = None
-    doc_ids: list[str] | None = None
-    custom_instructions: str | None = None
-    audience: str = "Congressional staff"
+    doc_ids: list[str] | None = Field(None, max_length=100)
+    custom_instructions: str | None = Field(None, max_length=20000)
+    audience: str = Field("Congressional staff", max_length=500)
 
 
 class ReportSectionResponse(BaseModel):
@@ -51,5 +51,5 @@ class ReportUpdateRequest(BaseModel):
 
 
 class ReportDraftRequest(BaseModel):
-    title: str
-    report_type: str
+    title: str = Field(max_length=500)
+    report_type: str = Field(max_length=100)

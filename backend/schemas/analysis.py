@@ -1,15 +1,15 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class AnalysisStartRequest(BaseModel):
-    subject: str
+    subject: str = Field(max_length=20000)
     # Free-form label describing what kind of thing is being assessed; it is
     # injected verbatim into the analysis prompt, so it is deliberately not an
     # enum. The frontend offers: 'technology' | 'policy' | 'actor' |
     # 'use_case' | 'supply_chain'.
-    analysis_type: str = "technology"
-    context: str | None = None
+    analysis_type: str = Field("technology", max_length=100)
+    context: str | None = Field(None, max_length=20000)
     run_web_research: bool = True
 
 

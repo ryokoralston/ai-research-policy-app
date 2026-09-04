@@ -1,5 +1,5 @@
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DocumentResponse(BaseModel):
@@ -43,11 +43,11 @@ class ChatMessage(BaseModel):
 
 
 class DocumentAskRequest(BaseModel):
-    question: str
-    doc_ids: list[str] | None = None  # None = search all documents
-    top_k: int = 5
+    question: str = Field(max_length=20000)
+    doc_ids: list[str] | None = Field(None, max_length=100)  # None = search all documents
+    top_k: int = Field(5, ge=1, le=20)
     chat_history: list[ChatMessage] | None = None  # previous turns for multi-turn chat
-    custom_system: str | None = None  # optional user-defined system prompt override
+    custom_system: str | None = Field(None, max_length=20000)  # optional user-defined system prompt override
     # Cumulative citations from previous turns, used to keep [N] numbering stable
     # across turns (new citations continue numbering after the max existing index).
     prior_citations: list[dict] | None = None
@@ -62,4 +62,4 @@ class DocumentCitedAskRequest(BaseModel):
     Q&A with API-native citations (see services/document_qa.py). Unlike
     DocumentAskRequest, this is single-turn (no chat_history) and scoped to
     exactly one document, so it only needs the question."""
-    question: str
+    question: str = Field(max_length=20000)

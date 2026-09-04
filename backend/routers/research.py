@@ -3,15 +3,16 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from database import get_db
+from database import get_db, get_or_init_model_settings
 from models import ResearchSession, SearchResult, Document
 from models.user import User
 from schemas import ResearchStartRequest, ResearchSessionResponse, ResearchSessionDetail
 from services.auth import get_current_user
+from services.model_catalog import allowed_model_ids
 from services.quota import quota_guard
 from services.usage import usage_context
 from utils.sse import queue_event_stream, sse_event
@@ -48,6 +49,20 @@ async def start_research(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if request.model is not None:
+        # The research page seeds its model picker from the currently
+        # configured main_model (see frontend/src/app/research/page.tsx) and
+        # always sends it explicitly, so the presently-stored value (even a
+        # pre-allowlist default like ModelSettings.main_model's
+        # "claude-opus-4-6", or one an admin picked before the catalog last
+        # refreshed) must keep working. Only a value that is neither in the
+        # catalog/fallback allowlist nor the currently configured model is
+        # rejected — that's the fabricated/stale case (e.g. "gpt-4o") D-1 is
+        # closing, not a routine resend of the default.
+        ms = get_or_init_model_settings(db)
+        if request.model not in allowed_model_ids(db) | {ms.main_model, ms.fast_model}:
+            raise HTTPException(status_code=400, detail="Unknown model id.")
+
     session = ResearchSession(
         id=str(uuid.uuid4()),
         query=request.query,
@@ -92,7 +107,7 @@ async def stream_research(
 
 @router.get("/", response_model=list[ResearchSessionResponse])
 def list_sessions(
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=100),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
