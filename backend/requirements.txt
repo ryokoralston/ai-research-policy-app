@@ -46,7 +46,7 @@ httpx==0.28.0
 python-dotenv==1.2.2
 aiofiles==24.1.0
 fpdf2==2.8.7
-apscheduler==3.10.4
+apscheduler==3.11.3
 # 3.0.1 -> 5.1.2 (PYSEC-2026-2338): only the stable aiosmtplib.send()
 # convenience call is used (services/digest_service.py), unchanged across
 # aiosmtplib's major versions.
