@@ -198,7 +198,13 @@ async def _index_web_source(doc_id: str, content: str):
 
     db = SessionLocal()
     try:
-        await index_web_content(doc_id, content, db)
+        # Same pattern as documents.py's _index_document: only doc_id travels
+        # with the task, so the owning user is read back off the row this
+        # session already opened.
+        doc = db.query(Document).filter(Document.id == doc_id).first()
+        user_id = doc.user_id if doc else None
+        with usage_context(user_id=user_id, feature="index"):
+            await index_web_content(doc_id, content, db)
     finally:
         db.close()
 

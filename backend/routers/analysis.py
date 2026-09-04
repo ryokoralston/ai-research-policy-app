@@ -12,6 +12,7 @@ from models.user import User
 from schemas import AnalysisStartRequest, RiskAnalysisResponse, SourceRef
 from services.auth import get_current_user
 from services.quota import quota_guard
+from services.usage import usage_context
 from services.analysis_sources import (
     dimension_citations,
     format_score_summary_markdown,
@@ -55,8 +56,9 @@ async def start_analysis(
 
     async def event_generator():
         from services.risk_analyzer import run_risk_analysis
-        async for event in run_risk_analysis(analysis_id, request, db):
-            yield event
+        with usage_context(user_id=current_user.id, feature="analysis"):
+            async for event in run_risk_analysis(analysis_id, request, db):
+                yield event
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

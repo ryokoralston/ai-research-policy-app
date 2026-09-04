@@ -25,6 +25,7 @@ from services import audit_log
 from services.auth import client_ip, require_admin
 from services.quota import quota_guard
 from services.digest_service import send_digest, DigestNotConfigured, DigestNoArticles
+from services.usage import usage_context
 from utils.masking import MASK, mask_secret
 
 router = APIRouter(prefix="/api/digest", tags=["digest"])
@@ -164,12 +165,13 @@ async def send_now(
     ds = get_or_init_digest_settings(db)
     topics = [t.strip() for t in ds.topics.split(",") if t.strip()]
     try:
-        result = await send_digest(
-            email_to=ds.email_to,
-            email_from=ds.email_from,
-            smtp_password=ds.smtp_password,
-            topics=topics,
-        )
+        with usage_context(user_id=current_user.id, feature="digest"):
+            result = await send_digest(
+                email_to=ds.email_to,
+                email_from=ds.email_from,
+                smtp_password=ds.smtp_password,
+                topics=topics,
+            )
         record_sent(result["sent_at"])
         return {"success": True, **result}
     except DigestNotConfigured as exc:

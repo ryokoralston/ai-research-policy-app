@@ -23,6 +23,7 @@ from routers.admin_personas import router as admin_personas_router
 from services.auth import get_current_user, require_admin
 from services.digest_service import send_digest
 from services.model_catalog import refresh_model_catalog
+from services.usage import usage_context
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +40,13 @@ async def _run_digest() -> None:
         email_from = ds.email_from
         smtp_password = ds.smtp_password
     try:
-        result = await send_digest(
-            email_to=email_to,
-            email_from=email_from,
-            smtp_password=smtp_password,
-            topics=topics,
-        )
+        with usage_context(user_id=None, feature="digest"):
+            result = await send_digest(
+                email_to=email_to,
+                email_from=email_from,
+                smtp_password=smtp_password,
+                topics=topics,
+            )
         record_sent(result["sent_at"])
         logger.info("Scheduled digest sent: %s", result)
     except Exception:

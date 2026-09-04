@@ -18,6 +18,7 @@ from services.anthropic_client import IMAGE_MEDIA_TYPES
 from services.auth import client_ip, get_current_user
 from services.ingestion import _extract_youtube_id, _get_youtube_transcript, _scrape_url
 from services.quota import quota_guard
+from services.usage import usage_context
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -349,11 +350,12 @@ async def ask_documents(
 
     async def event_generator():
         from services.rag_service import answer_question
-        async for event in answer_question(
-            request.question, doc_ids, request.top_k, db, history, request.custom_system,
-            prior_citations=request.prior_citations, user=current_user,
-        ):
-            yield event
+        with usage_context(user_id=current_user.id, feature="documents.ask"):
+            async for event in answer_question(
+                request.question, doc_ids, request.top_k, db, history, request.custom_system,
+                prior_citations=request.prior_citations, user=current_user,
+            ):
+                yield event
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -374,8 +376,9 @@ async def ask_document_citations(
 
     async def event_generator():
         from services.document_qa import ask_document_with_citations
-        async for event in ask_document_with_citations(doc_id, request.question, db):
-            yield event
+        with usage_context(user_id=current_user.id, feature="documents.ask_citations"):
+            async for event in ask_document_with_citations(doc_id, request.question, db):
+                yield event
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -386,6 +389,13 @@ async def _index_document(doc_id: str):
     from database import SessionLocal
     db = SessionLocal()
     try:
-        await index_document(doc_id, db)
+        # The task only has doc_id, not the caller — the owning user is read
+        # back off the row this same session already opened. Missing row
+        # (deleted before indexing ran) attributes the call to no one rather
+        # than failing the index.
+        doc = db.query(Document).filter(Document.id == doc_id).first()
+        user_id = doc.user_id if doc else None
+        with usage_context(user_id=user_id, feature="index"):
+            await index_document(doc_id, db)
     finally:
         db.close()

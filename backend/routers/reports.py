@@ -14,6 +14,7 @@ from schemas import (
 )
 from services.auth import get_current_user
 from services.quota import quota_guard
+from services.usage import usage_context
 from utils.export import markdown_to_plain, render_pdf
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -75,8 +76,9 @@ async def generate_report(
 
     async def event_generator():
         from services.report_generator import generate_report_stream
-        async for event in generate_report_stream(report_id, request, db):
-            yield event
+        with usage_context(user_id=current_user.id, feature="report"):
+            async for event in generate_report_stream(report_id, request, db):
+                yield event
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

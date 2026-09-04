@@ -139,6 +139,87 @@ def test_none_usage_is_ignored():
     assert _rows(factory) == []
 
 
+def test_report_endpoint_records_usage_event():
+    """routers/reports.py wraps the SSE generator body in usage_context — a
+    stubbed generate_report_stream that records an Anthropic call must land
+    exactly one UsageEvent row, attributed to the authenticated caller and
+    feature "report" (see routers/reports.py's event_generator)."""
+    factory = _install_db()
+
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from database import get_db
+    from models.user import User
+    from services.auth import get_current_user
+    from routers.reports import router as reports_router
+
+    db = factory()
+    user = User(
+        id="u-report-test",
+        email="report-test@example.com",
+        password_hash="x",
+        role="member",
+    )
+    db.add(user)
+    db.commit()
+
+    app = FastAPI()
+    app.include_router(reports_router)
+    app.dependency_overrides[get_db] = lambda: db
+    app.dependency_overrides[get_current_user] = lambda: user
+
+    async def _fake_generate_report_stream(report_id, request, db):
+        usage.record_anthropic("claude-x", _FakeUsage(input_tokens=3, output_tokens=4))
+        yield "data: {}\n\n"
+
+    import services.report_generator
+    original = services.report_generator.generate_report_stream
+    services.report_generator.generate_report_stream = _fake_generate_report_stream
+    try:
+        client = TestClient(app)
+        resp = client.post(
+            "/api/reports/generate",
+            json={"report_type": "policy_memo", "title": "Test report"},
+        )
+        assert resp.status_code == 200, resp.text
+        # Force the streaming body to run to completion.
+        list(resp.iter_lines())
+    finally:
+        services.report_generator.generate_report_stream = original
+
+    rows = _rows(factory)
+    assert len(rows) == 1, rows
+    assert rows[0].feature == "report"
+    assert rows[0].user_id == "u-report-test"
+
+
+def test_debate_task_records_usage_event():
+    """_run_debate_task wraps run_debate in usage_context(user_id=..., feature=
+    "debate") — called directly here since it's a plain background-task
+    coroutine, not something a TestClient can drive."""
+    factory = _install_db()
+
+    import asyncio
+    import services.debate_service
+    from routers.debate import _run_debate_task
+
+    async def _fake_run_debate(debate_id, topic, persona_keys, queue):
+        usage.record_anthropic("claude-x", _FakeUsage(input_tokens=1, output_tokens=1))
+
+    original = services.debate_service.run_debate
+    services.debate_service.run_debate = _fake_run_debate
+    try:
+        asyncio.run(_run_debate_task("d1", "topic", [], asyncio.Queue(), "u1"))
+    finally:
+        services.debate_service.run_debate = original
+
+    rows = _rows(factory)
+    assert len(rows) == 1, rows
+    assert rows[0].feature == "debate"
+    assert rows[0].user_id == "u1"
+
+
 def test_recording_failure_does_not_raise():
     """Accounting must never break the request it is measuring."""
     _install_db()
@@ -182,6 +263,8 @@ if __name__ == "__main__":
     _run("missing usage fields default to zero", test_missing_usage_fields_default_to_zero)
     _run("null user is allowed", test_null_user_is_allowed)
     _run("none usage is ignored", test_none_usage_is_ignored)
+    _run("report endpoint records usage event", test_report_endpoint_records_usage_event)
+    _run("debate task records usage event", test_debate_task_records_usage_event)
     _run("recording failure does not raise", test_recording_failure_does_not_raise)
 
     total = len(_PASSED) + len(_FAILED)

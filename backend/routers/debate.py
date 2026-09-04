@@ -14,6 +14,7 @@ from schemas.debate import DebateStartRequest, DebateResponse, DebateDetail
 from services.auth import get_current_user
 from services.persona_service import get_all_personas
 from services.quota import quota_guard
+from services.usage import usage_context
 from utils.sse import queue_event_stream, sse_event
 
 logger = logging.getLogger(__name__)
@@ -89,7 +90,12 @@ async def start_debate(
     queue: asyncio.Queue = asyncio.Queue()
     _sse_queues[debate.id] = queue
 
-    background_tasks.add_task(_run_debate_task, debate.id, debate.topic, persona_keys, queue)
+    # The user id travels with the task: the run happens after this request
+    # returns, so it can't read the caller off the request context (same
+    # approach as routers/research.py's _run_research).
+    background_tasks.add_task(
+        _run_debate_task, debate.id, debate.topic, persona_keys, queue, current_user.id,
+    )
     return {"debate_id": debate.id}
 
 
@@ -150,12 +156,15 @@ def delete_debate(
     return {"deleted": debate_id}
 
 
-async def _run_debate_task(debate_id: str, topic: str, persona_keys: list[str], queue: asyncio.Queue):
+async def _run_debate_task(
+    debate_id: str, topic: str, persona_keys: list[str], queue: asyncio.Queue, user_id: str,
+):
     """Background task: run the full debate and push SSE events."""
     from services.debate_service import run_debate
 
     try:
-        await run_debate(debate_id, topic, persona_keys, queue)
+        with usage_context(user_id=user_id, feature="debate"):
+            await run_debate(debate_id, topic, persona_keys, queue)
     except Exception:
         logger.exception("Debate failed for debate_id %s", debate_id)
         await queue.put(sse_event("error", {"message": "Debate failed. Please try again.", "event_type": "error"}))
