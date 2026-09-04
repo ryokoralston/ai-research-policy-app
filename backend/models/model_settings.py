@@ -14,5 +14,6 @@ class ModelSettings(Base):
     fast_model: Mapped[str] = mapped_column(String, default="claude-haiku-4-5-20251001")
     # Encrypted at rest (see services/secret_crypto.py)
     anthropic_api_key: Mapped[str] = mapped_column(EncryptedString, default="")
+    # Retained for schema compatibility; the OpenAI provider path was removed 2026-09-03 and this column is no longer read or written.
     openai_api_key: Mapped[str] = mapped_column(EncryptedString, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

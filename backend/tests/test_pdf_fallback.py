@@ -1,17 +1,13 @@
-"""Tests for scanned-PDF ingestion fallback: the pure helpers in
-services/anthropic_client.py (_pdf_message_content, generate_text_with_pdf's
-OpenAI guard) plus the pure predicates in services/rag_service.py
-(_pdf_needs_vision_fallback, _within_fallback_guards) and a sanity check on
-PDF_TRANSCRIPTION_PROMPT.
+"""Tests for scanned-PDF ingestion fallback: the pure helper in
+services/anthropic_client.py (_pdf_message_content) plus the pure predicates
+in services/rag_service.py (_pdf_needs_vision_fallback,
+_within_fallback_guards) and a sanity check on PDF_TRANSCRIPTION_PROMPT.
 
-No live API calls — generate_text_with_pdf's OpenAI-rejection path raises
-before any client is constructed, and _load_ai_settings is patched to avoid
-a real DB round-trip.
+No live API calls — every assertion here is against pure helpers.
 
 Run from the backend directory:
     ./venv/bin/python -m tests.test_pdf_fallback
 """
-import asyncio
 import base64
 import os
 import sys
@@ -52,52 +48,6 @@ def test_pdf_message_content_document_block_is_first():
     assert blocks[0]["type"] == "document", "document block must come before the text block"
     assert blocks[1]["type"] == "text"
     assert blocks[1]["text"] == "prompt text"
-
-
-# ── generate_text_with_pdf: OpenAI model rejection ────────────────────────────
-
-def test_generate_text_with_pdf_rejects_openai_model():
-    original_load = anthropic_client._load_ai_settings
-    anthropic_client._load_ai_settings = lambda: {
-        "main_model": "claude-opus-4-6",
-        "fast_model": "claude-haiku-4-5-20251001",
-        "anthropic_api_key": "",
-        "openai_api_key": "",
-    }
-    try:
-        raised = False
-        try:
-            asyncio.run(anthropic_client.generate_text_with_pdf(
-                "transcribe this pdf", b"fake-bytes", model="gpt-4o",
-            ))
-        except ValueError:
-            raised = True
-        assert raised, "expected ValueError for an OpenAI model"
-    finally:
-        anthropic_client._load_ai_settings = original_load
-
-
-def test_generate_text_with_pdf_rejects_openai_default_main_model():
-    """Same guard, but relying on the default (ai_settings['main_model']) being
-    an OpenAI model rather than an explicit model= argument."""
-    original_load = anthropic_client._load_ai_settings
-    anthropic_client._load_ai_settings = lambda: {
-        "main_model": "gpt-4o",
-        "fast_model": "gpt-4o-mini",
-        "anthropic_api_key": "",
-        "openai_api_key": "",
-    }
-    try:
-        raised = False
-        try:
-            asyncio.run(anthropic_client.generate_text_with_pdf(
-                "transcribe this pdf", b"fake-bytes",
-            ))
-        except ValueError:
-            raised = True
-        assert raised, "expected ValueError when the default main_model is an OpenAI model"
-    finally:
-        anthropic_client._load_ai_settings = original_load
 
 
 # ── _pdf_needs_vision_fallback ─────────────────────────────────────────────────
@@ -187,8 +137,6 @@ if __name__ == "__main__":
 
     _run("_pdf_message_content shape + base64 round-trip", test_pdf_message_content_shape_and_roundtrip)
     _run("_pdf_message_content document block is first", test_pdf_message_content_document_block_is_first)
-    _run("generate_text_with_pdf rejects explicit OpenAI model", test_generate_text_with_pdf_rejects_openai_model)
-    _run("generate_text_with_pdf rejects OpenAI default main_model", test_generate_text_with_pdf_rejects_openai_default_main_model)
     _run("_pdf_needs_vision_fallback: empty chunks -> True", test_needs_fallback_empty_chunks_is_true)
     _run("_pdf_needs_vision_fallback: dense text -> False", test_needs_fallback_dense_text_is_false)
     _run("_pdf_needs_vision_fallback: sparse text -> True", test_needs_fallback_sparse_text_is_true)

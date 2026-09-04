@@ -307,7 +307,6 @@ def get_or_init_model_settings(db):
             main_model=settings.claude_model,
             fast_model=settings.claude_fast_model,
             anthropic_api_key=settings.anthropic_api_key,
-            openai_api_key="",
         )
         db.add(ms)
         db.commit()

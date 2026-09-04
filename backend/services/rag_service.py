@@ -696,8 +696,9 @@ async def answer_question(
     # chat_history on the next turn so prior tool_use/tool_result blocks survive.
     # web_citations: deduped {"url", "title", "cited_text"} entries gathered from
     # any web_search results the answer drew on (see
-    # anthropic_client.extract_web_citations) — defaults to [] since the OpenAI
-    # fallback path in stream_chat_with_tools never yields a "web_citations" event.
+    # anthropic_client.extract_web_citations) — defaults to [] since the
+    # no-tools fallback path in stream_chat_with_tools never yields a
+    # "web_citations" event.
     yield sse_event("complete", {
         "citations": ordered_citations,
         "web_citations": web_citations,

@@ -312,7 +312,7 @@ def test_generate_text_sends_cache_control_block_when_cached_prefix_set():
     orig_get_client = anthropic_client._get_anthropic_client
     anthropic_client._load_ai_settings = lambda: {
         "main_model": "claude-opus-4-6", "fast_model": "claude-haiku-4-5-20251001",
-        "anthropic_api_key": "", "openai_api_key": "",
+        "anthropic_api_key": "",
     }
     anthropic_client._get_anthropic_client = lambda ai_settings: fake_client
     try:
@@ -342,7 +342,7 @@ def test_generate_text_default_cached_prefix_is_byte_identical_to_plain_prompt()
     orig_get_client = anthropic_client._get_anthropic_client
     anthropic_client._load_ai_settings = lambda: {
         "main_model": "claude-opus-4-6", "fast_model": "claude-haiku-4-5-20251001",
-        "anthropic_api_key": "", "openai_api_key": "",
+        "anthropic_api_key": "",
     }
     anthropic_client._get_anthropic_client = lambda ai_settings: fake_client
     try:

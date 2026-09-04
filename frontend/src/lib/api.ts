@@ -209,20 +209,17 @@ export const api = {
         main_model: string;
         fast_model: string;
         anthropic_api_key: string;
-        openai_api_key: string;
         updated_at: string | null;
       }>("/api/settings/models"),
     saveModels: (body: {
       main_model?: string;
       fast_model?: string;
       anthropic_api_key?: string;
-      openai_api_key?: string;
     }) =>
       request<{
         main_model: string;
         fast_model: string;
         anthropic_api_key: string;
-        openai_api_key: string;
         updated_at: string | null;
       }>("/api/settings/models", {
         method: "PUT",

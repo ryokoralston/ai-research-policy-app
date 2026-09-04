@@ -1,5 +1,5 @@
 """
-Anthropic / OpenAI wrapper with automatic provider routing.
+Anthropic API wrapper — the single provider path for this app.
 Provides both streaming (SSE) and non-streaming text generation.
 Model defaults are loaded from DB (ModelSettings) with a 60-second cache.
 """
@@ -54,7 +54,6 @@ def _load_ai_settings() -> dict:
                 "main_model": ms.main_model,
                 "fast_model": ms.fast_model,
                 "anthropic_api_key": ms.anthropic_api_key,
-                "openai_api_key": ms.openai_api_key,
             }
             _cache_ts = time.time()
     except Exception:
@@ -64,7 +63,6 @@ def _load_ai_settings() -> dict:
             "main_model": settings.claude_model,
             "fast_model": settings.claude_fast_model,
             "anthropic_api_key": settings.anthropic_api_key,
-            "openai_api_key": "",
         }
         _cache_ts = time.time()
     return _cache
@@ -73,10 +71,6 @@ def _load_ai_settings() -> dict:
 def invalidate_ai_settings_cache() -> None:
     global _cache_ts
     _cache_ts = 0
-
-
-def _is_openai(model: str) -> bool:
-    return model.startswith(("gpt-", "o1", "o3", "o4"))
 
 
 # Claude 5-generation models (Opus 5, Sonnet 5, Fable 5) and the underlying
@@ -215,17 +209,11 @@ async def _stream_events(stream) -> AsyncIterator[tuple[str, object]]:
             })
 
 
-# ── Client factories ──────────────────────────────────────────────────────────
+# ── Client factory ────────────────────────────────────────────────────────────
 
 def _get_anthropic_client(ai_settings: dict) -> anthropic.AsyncAnthropic:
     key = ai_settings.get("anthropic_api_key") or get_settings().anthropic_api_key
     return anthropic.AsyncAnthropic(api_key=key)
-
-
-def _get_openai_client(ai_settings: dict):
-    import openai as _openai
-    key = ai_settings.get("openai_api_key") or ""
-    return _openai.AsyncOpenAI(api_key=key)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -282,33 +270,11 @@ async def generate_text(
                    across many per-chunk calls, as in rag/contextualizer.py)
                    placed ahead of `prompt` in its own cache_control
                    breakpoint — see _generate_text_user_content for the exact
-                   block shape. Anthropic path only; on the OpenAI path
-                   (no cache_control support in this module) cached_prefix is
-                   simply concatenated ahead of prompt text with no cache
-                   semantics, same documented tradeoff as
-                   stream_text_with_thinking's cached_context. Default None
-                   leaves every existing call path byte-identical.
+                   block shape. Default None leaves every existing call path
+                   byte-identical.
     """
     ai_settings = _load_ai_settings()
     model = model or ai_settings["fast_model"]
-
-    if _is_openai(model):
-        effective_prompt = f"{cached_prefix}\n\n{prompt}" if cached_prefix else prompt
-        messages: list[dict] = [{"role": "user", "content": effective_prompt}]
-        if prefill:
-            messages.append({"role": "assistant", "content": prefill})
-        client = _get_openai_client(ai_settings)
-        oai_messages = []
-        if system:
-            oai_messages.append({"role": "system", "content": system})
-        oai_messages.extend(messages)
-        response = await client.chat.completions.create(
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            messages=oai_messages,
-        )
-        return response.choices[0].message.content or ""
 
     # Build messages, optionally appending a prefill assistant turn
     messages: list[dict] = [{"role": "user", "content": _generate_text_user_content(prompt, cached_prefix)}]
@@ -416,10 +382,6 @@ async def generate_text_with_image(
     text response. Used to turn an uploaded image into a searchable text
     description for RAG indexing (see rag_service.index_document).
 
-    Anthropic-only — this app has no vision path for the OpenAI provider, so
-    an OpenAI model raises ValueError rather than silently misrouting or
-    hitting an API that doesn't support the request shape.
-
     Default model is ai_settings["main_model"] (image-understanding quality
     matters most when the description becomes the document's entire
     searchable text) — pass model=ai_settings["fast_model"] explicitly for
@@ -430,9 +392,6 @@ async def generate_text_with_image(
     """
     ai_settings = _load_ai_settings()
     model = model or ai_settings["main_model"]
-
-    if _is_openai(model):
-        raise ValueError(f"generate_text_with_image does not support OpenAI models: {model}")
 
     client = _get_anthropic_client(ai_settings)
     kwargs: dict = {
@@ -474,9 +433,6 @@ async def generate_text_with_pdf(
     transcribe scanned/image-only PDFs into searchable text for RAG indexing
     (see rag_service.index_document's scanned-PDF fallback).
 
-    Anthropic-only — mirrors generate_text_with_image's OpenAI guard: an
-    OpenAI model raises ValueError rather than silently misrouting.
-
     Default model is ai_settings["main_model"], same rationale as
     generate_text_with_image — transcription quality matters most when the
     output becomes the document's entire searchable text.
@@ -491,9 +447,6 @@ async def generate_text_with_pdf(
     """
     ai_settings = _load_ai_settings()
     model = model or ai_settings["main_model"]
-
-    if _is_openai(model):
-        raise ValueError(f"generate_text_with_pdf does not support OpenAI models: {model}")
 
     client = _get_anthropic_client(ai_settings)
     kwargs: dict = {
@@ -520,25 +473,6 @@ async def stream_text(
     """
     ai_settings = _load_ai_settings()
     model = model or ai_settings["main_model"]
-
-    if _is_openai(model):
-        client = _get_openai_client(ai_settings)
-        messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-        stream = await client.chat.completions.create(
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            messages=messages,
-            stream=True,
-        )
-        async for chunk in stream:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                yield delta
-        return
 
     client = _get_anthropic_client(ai_settings)
     kwargs: dict = {
@@ -626,7 +560,7 @@ async def stream_text_with_thinking(
     tuples in stream order: ("thinking", delta_text) for thinking deltas and
     ("text", delta_text) for text deltas.
 
-    Anthropic path: thinking={"type": "adaptive"} (no beta header needed).
+    thinking={"type": "adaptive"} (no beta header needed).
     temperature is intentionally NOT sent — extended-thinking sampling
     constraint on the API; passing it alongside thinking returns a 400.
     Raw stream events are iterated directly (not stream.text_stream, which
@@ -635,47 +569,18 @@ async def stream_text_with_thinking(
     cached_context: optional large, reusable text (e.g. the source material
     shared across a loop of section-generation calls) placed in its own
     cache_control breakpoint ahead of `prompt` — see _thinking_message_content
-    for the exact block shape. Anthropic path only. On the OpenAI path (no
-    cache_control support in this module) cached_context is simply prepended
-    to the prompt text, with no cache semantics — documented behavior, not a
-    bug: OpenAI has its own automatic prompt-caching mechanism server-side.
+    for the exact block shape.
 
-    usage_log_tag: when set (Anthropic path only), logs input/cache_read/
-    cache_write token usage after the stream ends, same style as the tool
-    loop's usage log in stream_chat_with_tools — pass e.g. "report-section" /
-    "risk-section" so cache hits are observable in the logs.
-
-    OpenAI path (_is_openai(model)): no thinking support on that provider —
-    falls back to the same streaming shape as stream_text and yields
-    everything as ("text", delta).
+    usage_log_tag: when set, logs input/cache_read/cache_write token usage
+    after the stream ends, same style as the tool loop's usage log in
+    stream_chat_with_tools — pass e.g. "report-section" / "risk-section" so
+    cache hits are observable in the logs.
 
     Never use this for prefill paths (generate_text/generate_json) — thinking
     and assistant-turn prefill are incompatible.
     """
     ai_settings = _load_ai_settings()
     model = model or ai_settings["main_model"]
-
-    if _is_openai(model):
-        client = _get_openai_client(ai_settings)
-        messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        # No cache_control support on this provider — prepend cached_context
-        # to the prompt text so the model still sees it, with no cache
-        # semantics (see docstring).
-        effective_prompt = f"{cached_context}\n\n{prompt}" if cached_context else prompt
-        messages.append({"role": "user", "content": effective_prompt})
-        stream = await client.chat.completions.create(
-            model=model,
-            max_tokens=max_tokens,
-            messages=messages,
-            stream=True,
-        )
-        async for chunk in stream:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                yield ("text", delta)
-        return
 
     client = _get_anthropic_client(ai_settings)
     kwargs: dict = {
@@ -719,25 +624,6 @@ async def stream_chat(
     """
     ai_settings = _load_ai_settings()
     model = model or ai_settings["main_model"]
-
-    if _is_openai(model):
-        client = _get_openai_client(ai_settings)
-        full_messages = []
-        if system:
-            full_messages.append({"role": "system", "content": system})
-        full_messages.extend(messages)
-        stream = await client.chat.completions.create(
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            messages=full_messages,
-            stream=True,
-        )
-        async for chunk in stream:
-            delta = chunk.choices[0].delta.content
-            if delta:
-                yield delta
-        return
 
     client = _get_anthropic_client(ai_settings)
     kwargs: dict = {
@@ -801,9 +687,9 @@ async def stream_chat_with_tools(
     to force a text answer from the tool results gathered so far, so the turn always
     ends with an answer instead of silently stopping.
 
-    If tools is falsy or the model is OpenAI, falls back to stream_chat and yields
+    If tools is falsy, falls back to stream_chat and yields
     ("text", token) for each token, followed by a single-message ("turn_messages", ...)
-    with the accumulated text. (Tool use is Anthropic-only.)
+    with the accumulated text.
 
     temperature: 0.0 = deterministic, 1.0 = default (more varied).
     max_tool_iterations: cap on tool-use rounds to prevent runaway loops.
@@ -813,8 +699,8 @@ async def stream_chat_with_tools(
     ai_settings = _load_ai_settings()
     model = model or ai_settings["main_model"]
 
-    # Fall back to plain stream_chat for OpenAI models or when tools are not provided
-    if _is_openai(model) or not tools:
+    # Fall back to plain stream_chat when tools are not provided
+    if not tools:
         full_text = ""
         async for token in stream_chat(messages, system=system, model=model, max_tokens=max_tokens, temperature=temperature):
             full_text += token

@@ -25,11 +25,6 @@ router = APIRouter(prefix="/api/settings", tags=["settings"])
 
 FAMILY_ORDER = ["fable", "opus", "sonnet", "haiku"]
 
-STATIC_OPENAI_MODELS = [
-    {"group": "OpenAI", "id": "gpt-4o", "label": "ChatGPT Plus (Smartest)"},
-    {"group": "OpenAI", "id": "gpt-4o-mini", "label": "ChatGPT (Everyday, Fast)"},
-]
-
 # Used only if the catalog hasn't been populated yet (no Anthropic API key
 # configured, or the very first request before the startup refresh completed).
 FALLBACK_ANTHROPIC_MODELS = [
@@ -44,7 +39,6 @@ class ModelSettingsIn(BaseModel):
     main_model: str | None = None
     fast_model: str | None = None
     anthropic_api_key: str | None = None
-    openai_api_key: str | None = None
 
 
 @router.get("/models")
@@ -55,17 +49,15 @@ async def get_model_settings(db: Session = Depends(get_db)) -> dict[str, Any]:
         "main_model": ms.main_model,
         "fast_model": ms.fast_model,
         "anthropic_api_key": mask_secret(ms.anthropic_api_key),
-        "openai_api_key": mask_secret(ms.openai_api_key),
         "updated_at": ms.updated_at.isoformat() if ms.updated_at else None,
     }
 
 
 @router.get("/available-models")
 async def get_available_models(db: Session = Depends(get_db)) -> dict[str, Any]:
-    """Model options for the settings dropdowns. Anthropic entries reflect the
-    latest model per family as of the last scheduled catalog refresh (see
-    services.model_catalog); OpenAI entries are static since /v1/models only
-    covers Anthropic models."""
+    """Model options for the settings dropdowns. Entries reflect the latest
+    model per family as of the last scheduled catalog refresh (see
+    services.model_catalog)."""
     entries = {e.family: e for e in db.query(ModelCatalogEntry).all()}
     anthropic_models = [
         {"group": "Anthropic", "id": entries[family].model_id, "label": entries[family].display_name}
@@ -77,7 +69,7 @@ async def get_available_models(db: Session = Depends(get_db)) -> dict[str, Any]:
 
     fetched_ats = [e.fetched_at for e in entries.values() if e.fetched_at]
     return {
-        "models": anthropic_models + STATIC_OPENAI_MODELS,
+        "models": anthropic_models,
         "catalog_updated_at": max(fetched_ats).isoformat() if fetched_ats else None,
     }
 
@@ -108,9 +100,6 @@ async def save_model_settings(
     if body.anthropic_api_key and body.anthropic_api_key != MASK:
         changed.append("anthropic_api_key")
         ms.anthropic_api_key = body.anthropic_api_key
-    if body.openai_api_key and body.openai_api_key != MASK:
-        changed.append("openai_api_key")
-        ms.openai_api_key = body.openai_api_key
 
     ms.updated_at = datetime.utcnow()
 
@@ -128,6 +117,5 @@ async def save_model_settings(
         "main_model": ms.main_model,
         "fast_model": ms.fast_model,
         "anthropic_api_key": mask_secret(ms.anthropic_api_key),
-        "openai_api_key": mask_secret(ms.openai_api_key),
         "updated_at": ms.updated_at.isoformat() if ms.updated_at else None,
     }

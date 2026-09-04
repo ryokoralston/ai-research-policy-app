@@ -1,16 +1,12 @@
 """Tests for image-document ingestion: the pure helpers in
-services/anthropic_client.py (image_media_type, _image_message_content,
-generate_text_with_image's OpenAI guard) plus a sanity check on
-rag_service.IMAGE_DESCRIPTION_PROMPT.
+services/anthropic_client.py (image_media_type, _image_message_content)
+plus a sanity check on rag_service.IMAGE_DESCRIPTION_PROMPT.
 
-No live API calls — generate_text_with_image's OpenAI-rejection path raises
-before any client is constructed, and _load_ai_settings is patched to avoid
-a real DB round-trip.
+No live API calls — every assertion here is against pure helpers.
 
 Run from the backend directory:
     ./venv/bin/python -m tests.test_image_ingestion
 """
-import asyncio
 import base64
 import os
 import sys
@@ -94,52 +90,6 @@ def test_image_message_content_different_media_type():
     assert blocks[1]["text"] == "prompt text"
 
 
-# ── generate_text_with_image: OpenAI model rejection ──────────────────────────
-
-def test_generate_text_with_image_rejects_openai_model():
-    original_load = anthropic_client._load_ai_settings
-    anthropic_client._load_ai_settings = lambda: {
-        "main_model": "claude-opus-4-6",
-        "fast_model": "claude-haiku-4-5-20251001",
-        "anthropic_api_key": "",
-        "openai_api_key": "",
-    }
-    try:
-        raised = False
-        try:
-            asyncio.run(anthropic_client.generate_text_with_image(
-                "describe this image", b"fake-bytes", "image/png", model="gpt-4o",
-            ))
-        except ValueError:
-            raised = True
-        assert raised, "expected ValueError for an OpenAI model"
-    finally:
-        anthropic_client._load_ai_settings = original_load
-
-
-def test_generate_text_with_image_rejects_openai_default_main_model():
-    """Same guard, but relying on the default (ai_settings['main_model']) being
-    an OpenAI model rather than an explicit model= argument."""
-    original_load = anthropic_client._load_ai_settings
-    anthropic_client._load_ai_settings = lambda: {
-        "main_model": "gpt-4o",
-        "fast_model": "gpt-4o-mini",
-        "anthropic_api_key": "",
-        "openai_api_key": "",
-    }
-    try:
-        raised = False
-        try:
-            asyncio.run(anthropic_client.generate_text_with_image(
-                "describe this image", b"fake-bytes", "image/png",
-            ))
-        except ValueError:
-            raised = True
-        assert raised, "expected ValueError when the default main_model is an OpenAI model"
-    finally:
-        anthropic_client._load_ai_settings = original_load
-
-
 # ── Test runner ────────────────────────────────────────────────────────────────
 
 _PASSED: list[str] = []
@@ -165,8 +115,6 @@ if __name__ == "__main__":
     _run("IMAGE_DOC_MARKER exists and mentions image", test_image_doc_marker_exists)
     _run("_image_message_content shape + base64 round-trip", test_image_message_content_shape_and_roundtrip)
     _run("_image_message_content different media_type", test_image_message_content_different_media_type)
-    _run("generate_text_with_image rejects explicit OpenAI model", test_generate_text_with_image_rejects_openai_model)
-    _run("generate_text_with_image rejects OpenAI default main_model", test_generate_text_with_image_rejects_openai_default_main_model)
 
     total = len(_PASSED) + len(_FAILED)
     print(f"\n{'=' * 50}")

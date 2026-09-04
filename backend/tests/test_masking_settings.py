@@ -87,12 +87,12 @@ def test_settings_put_empty_string_keeps_existing():
     client, db = _make_client_and_db()
     from models.model_settings import ModelSettings
 
-    client.put("/api/settings/models", json={"openai_api_key": "sk-openai"})
-    client.put("/api/settings/models", json={"openai_api_key": ""})
+    client.put("/api/settings/models", json={"anthropic_api_key": "sk-ant-stored"})
+    client.put("/api/settings/models", json={"anthropic_api_key": ""})
 
     ms = db.query(ModelSettings).first()
     db.refresh(ms)
-    assert ms.openai_api_key == "sk-openai", ms.openai_api_key
+    assert ms.anthropic_api_key == "sk-ant-stored", ms.anthropic_api_key
     db.close()
 
 

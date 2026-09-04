@@ -15,7 +15,6 @@ export default function SettingsPage() {
   const [mainModel, setMainModel] = useState("claude-opus-5");
   const [fastModel, setFastModel] = useState("claude-haiku-4-5-20251001");
   const [anthropicKey, setAnthropicKey] = useState("");
-  const [openaiKey, setOpenaiKey] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
@@ -51,12 +50,10 @@ export default function SettingsPage() {
         fast_model: fastModel,
       };
       if (anthropicKey) body.anthropic_api_key = anthropicKey;
-      if (openaiKey) body.openai_api_key = openaiKey;
 
       await api.settings.saveModels(body);
       setBanner("Settings saved successfully.");
       setAnthropicKey("");
-      setOpenaiKey("");
       setTimeout(() => setBanner(null), 2500);
     } catch (err) {
       setBanner(`Error: ${err instanceof Error ? err.message : "Failed to save"}`);
@@ -200,21 +197,6 @@ export default function SettingsPage() {
               type="password"
               value={anthropicKey}
               onChange={(e) => setAnthropicKey(e.target.value)}
-              placeholder="Leave blank to keep current"
-              autoComplete="off"
-              className="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="openai_key" className="block text-sm font-medium text-slate-300 mb-1">
-              OpenAI API Key
-            </label>
-            <input
-              id="openai_key"
-              type="password"
-              value={openaiKey}
-              onChange={(e) => setOpenaiKey(e.target.value)}
               placeholder="Leave blank to keep current"
               autoComplete="off"
               className="w-full bg-slate-800 border border-slate-700 rounded-md px-3 py-2 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
