@@ -195,6 +195,49 @@ def test_login_case_insensitive_email():
     assert "token" in resp.json()
 
 
+def test_login_legacy_mixed_case_email():
+    """A user row with mixed-case email (created before T-10 normalization) should
+    still be able to login with any case variation of that email."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from routers.auth import router as auth_router
+    from models.organization import Organization
+    from services.user_service import hash_password
+
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    db = sessionmaker(bind=engine)()
+
+    app = FastAPI()
+    app.include_router(auth_router)
+    app.dependency_overrides[get_db] = lambda: db
+    client = TestClient(app)
+
+    # Simulate a legacy user row with mixed-case email (created before normalization)
+    org = Organization(name="Legacy.User@Example.com")
+    db.add(org)
+    db.flush()
+    user = User(
+        id="legacy-user-1",
+        email="Legacy.User@Example.com",  # stored as-is, not normalized
+        password_hash=hash_password("hunter2hunter2"),
+        role="member",
+        org_id=org.id
+    )
+    db.add(user)
+    db.commit()
+
+    # Login with lowercase email should work
+    resp = client.post("/api/auth/login", json={"email": "legacy.user@example.com", "password": "hunter2hunter2"})
+    assert resp.status_code == 200, resp.text
+    assert "token" in resp.json()
+
+    # Login with uppercase email should also work
+    resp = client.post("/api/auth/login", json={"email": "LEGACY.USER@EXAMPLE.COM", "password": "hunter2hunter2"})
+    assert resp.status_code == 200, resp.text
+    assert "token" in resp.json()
+
+
 def test_login_rejects_invalid_email_format():
     """Submitting an invalid email format should return 422."""
     from fastapi import FastAPI
@@ -264,6 +307,7 @@ if __name__ == "__main__":
     _run("login rate limit resets on success", test_login_rate_limit_resets_on_success)
     _run("login rate limit window expiry", test_login_rate_limit_window_expiry)
     _run("login case insensitive email", test_login_case_insensitive_email)
+    _run("login legacy mixed-case email", test_login_legacy_mixed_case_email)
     _run("login rejects invalid email format", test_login_rejects_invalid_email_format)
     _run("bootstrap rejects invalid email format", test_bootstrap_rejects_invalid_email_format)
 

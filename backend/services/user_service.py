@@ -10,6 +10,7 @@ or the first admin is created via the one-time bootstrap flow
 from __future__ import annotations
 
 import bcrypt
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from models.organization import Organization
@@ -49,7 +50,7 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def get_user_by_email(db: Session, email: str) -> User | None:
-    return db.query(User).filter(User.email == normalize_email(email)).first()
+    return db.query(User).filter(func.lower(User.email) == normalize_email(email)).first()
 
 
 def create_user(db: Session, email: str, password: str, role: str = ROLE_MEMBER) -> User:
