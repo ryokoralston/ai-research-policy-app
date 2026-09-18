@@ -4,13 +4,21 @@ end to end against the real PolicyLibraryMCP server (mcp_server.py).
 Each test spawns mcp_server.py as a real subprocess over stdio (cwd set to
 the backend directory so its data paths resolve), talks to it through
 MCPClient, and tears the subprocess down again — this is integration-level,
-not a mock. Read-only against the dev DB (backend/data/research.db): no rows
-are modified.
+not a mock.
+
+Self-contained: this runner creates its OWN temporary SQLite database and
+seeds one indexed document plus one chunk into it (see the env block below),
+so it needs nothing from backend/data/research.db and passes on a fresh
+checkout with no data directory at all. The dev/production database is never
+opened, let alone modified. Expected values are still looked up from the
+database at test time rather than hardcoded, so the test bodies are unchanged
+by the seeding.
 
 search_library is intentionally not exercised here — it loads the local
 sentence-transformers embedding model (~10-20s) and that path is already
 covered by tests/test_mcp_server.py, which calls the tool function directly
-without the extra subprocess/round-trip overhead.
+without the extra subprocess/round-trip overhead. That is also why no vector
+or lexical index is seeded here: nothing in this file searches.
 
 Run from the backend directory:
     ./venv/bin/python -m tests.test_mcp_client
@@ -18,18 +26,97 @@ Run from the backend directory:
 import asyncio
 import os
 import sys
+import tempfile
 
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
+# ── Temp database, set before `database` is imported ─────────────────────────
+#
+# Must be set first: database.py builds its engine at import time from
+# get_settings().database_url, so an override applied afterwards has no
+# effect. (os.environ outranks backend/.env in pydantic-settings, so this
+# wins on a dev machine too, not just in CI where there is no .env.)
+#
+# It must also be a real FILE, not an in-memory "sqlite://" URL: every test
+# below spawns mcp_server.py as a separate PROCESS, and an in-memory SQLite
+# database is per-process — the child would open its own empty database and
+# never see the document seeded here. Same gotcha as
+# tests/test_data_scoping.py's _MIGRATION_DB_PATH.
+#
+# Setting it here is necessary but not sufficient: the child process does NOT
+# inherit it automatically — see the env= argument in _with_client below.
+_TEST_DB_PATH = os.path.join(tempfile.mkdtemp(prefix="mcp-client-tests-"), "research.db")
+os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB_PATH}"
+
 import mcp.types as types
 from mcp.shared.exceptions import McpError
 from mcp_client import MCPClient
-from database import SessionLocal
-from models.document import Document
+import database
+from database import Base, SessionLocal
+# The whole models package (not just models.document): Document's user_id /
+# org_id are foreign keys to users / organizations, and create_all below needs
+# every referenced table registered on Base.metadata.
+from models import Document, DocumentChunk
 
 _SERVER_SCRIPT = os.path.join(_BACKEND_DIR, "mcp_server.py")
+
+
+# ── Seed the temp database (once, at import) ─────────────────────────────────
+
+_SEED_DOC_ID = "mcp-client-test-doc"
+_SEED_TITLE = "Algorithmic Accountability Ordinance (test fixture)"
+_SEED_CHUNK = (
+    "This synthetic fixture stands in for an indexed policy document. It exists "
+    "so the MCP tool, resource and prompt round-trips in this file have a real "
+    "document row and a real chunk to return, without depending on the contents "
+    "of any particular machine's library."
+)
+
+
+def _seed_temp_database() -> None:
+    """Create the schema and insert one indexed document with one chunk.
+
+    Rows are constructed directly through SQLAlchemy rather than run through
+    the ingestion pipeline: nothing in this file searches, so the chunk only
+    has to exist, not to be embedded or lexically indexed.
+    """
+    Base.metadata.create_all(bind=database.engine)
+
+    db = SessionLocal()
+    try:
+        doc = Document(
+            id=_SEED_DOC_ID,
+            filename="algorithmic-accountability-ordinance.txt",
+            title=_SEED_TITLE,
+            source_type="web",
+            page_count=1,
+            word_count=len(_SEED_CHUNK.split()),
+            status="indexed",
+        )
+        db.add(doc)
+        db.add(
+            DocumentChunk(
+                document_id=_SEED_DOC_ID,
+                chunk_index=0,
+                content=_SEED_CHUNK,
+                page_number=1,
+                section_header="Introduction",
+                token_count=len(_SEED_CHUNK) // 4,
+            )
+        )
+        db.commit()
+
+        # Loud failure here beats every test below failing with the misleading
+        # "expected at least one indexed document".
+        seeded = db.query(Document).filter(Document.status == "indexed").first()
+        assert seeded is not None, f"seeding failed: no indexed document in {_TEST_DB_PATH}"
+    finally:
+        db.close()
+
+
+_seed_temp_database()
 
 
 def _with_client(coro_fn):
@@ -43,6 +130,17 @@ def _with_client(coro_fn):
             command=sys.executable,
             args=[_SERVER_SCRIPT],
             cwd=_BACKEND_DIR,
+            # env must be passed explicitly for DATABASE_URL to reach the
+            # server process. MCPClient forwards env to the MCP SDK's
+            # StdioServerParameters, and env=None there does NOT mean
+            # "inherit the parent environment" (as it would with a bare
+            # subprocess.Popen): the SDK substitutes
+            # get_default_environment(), an allowlist of HOME/LOGNAME/PATH/
+            # SHELL/TERM/USER. Everything else — DATABASE_URL included — is
+            # dropped, so without this the child would fall back to
+            # config.py's default data/research.db and these tests would
+            # silently run against the dev machine's real library.
+            env=dict(os.environ),
         ) as client:
             return await coro_fn(client)
 

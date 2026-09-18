@@ -1,29 +1,214 @@
 """Tests for mcp_server.py — the PolicyLibraryMCP FastMCP server exposing the
 document library's hybrid retrieval and chunk storage as MCP tools.
 
-Runs the tool functions directly (they're plain sync functions) against the
-real dev DB (backend/data/research.db, 900+ chunks across 35+ indexed docs) —
-read-only usage, no rows are modified. Expected values (a document title, a
-doc_id, a chunk snippet) are looked up from the DB at test time rather than
-hardcoded, so this stays valid as the library's contents change.
+Runs the tool functions directly (they're plain sync functions), in-process.
 
-search_library loads the local sentence-transformers embedding model (and,
-on first successful retrieval, the cross-encoder reranker) — that's the one
-slow test here (~10-20s) and is run last.
+Self-contained: this runner creates its own temporary SQLite database, Chroma
+directory and BM25 index, then indexes one synthetic multi-paragraph document
+into all three through the real ingestion pipeline
+(services.rag_service.index_web_content). It therefore needs nothing from
+backend/data/ and passes on a fresh checkout, and the dev/production stores
+are never opened. Expected values (a document title, a doc_id, a chunk
+snippet) are still looked up from the database at test time rather than
+hardcoded, so the test bodies are unchanged by the seeding.
+
+Real embeddings, no stubs: search_library has to exercise actual hybrid
+retrieval, so chromadb and sentence-transformers are NOT stubbed here (unlike
+most runners in this directory). Indexing plus search loads the local
+sentence-transformers embedding model and, on first successful retrieval, the
+cross-encoder reranker — that's what makes this one of the slower runners
+(~10-30s). Contextual Retrieval is switched off below so the pipeline makes
+no Anthropic API calls.
 
 Run from the backend directory:
     ./venv/bin/python -m tests.test_mcp_server
 """
+import asyncio
 import os
 import sys
+import tempfile
 
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _BACKEND_DIR not in sys.path:
     sys.path.insert(0, _BACKEND_DIR)
 
+# ── Temp stores, set before any app import ───────────────────────────────────
+#
+# Must be set first: database.py builds its engine at import time from
+# get_settings().database_url, and get_settings() is lru_cached, so an
+# override applied after the first import has no effect. os.environ outranks
+# backend/.env in pydantic-settings, so these win on a dev machine too, not
+# just in CI where there is no .env.
+#
+# A real file path rather than an in-memory "sqlite://" URL: consistent with
+# tests/test_mcp_client.py (which needs a file because it spawns a
+# subprocess), and Chroma's PersistentClient needs a real directory anyway.
+#
+# CONTEXTUAL_RETRIEVAL_ENABLED=false is what keeps indexing offline: with it
+# on, _embed_and_store generates a situating context per chunk via a real
+# Anthropic API call. Disabled, every context is "" and the stored/embedded
+# text is byte-identical to pre-feature behavior (see rag/contextualizer.py).
+_TEST_DATA_DIR = tempfile.mkdtemp(prefix="mcp-server-tests-")
+os.environ["DATABASE_URL"] = f"sqlite:///{os.path.join(_TEST_DATA_DIR, 'research.db')}"
+os.environ["CHROMA_PERSIST_DIR"] = os.path.join(_TEST_DATA_DIR, "chroma")
+os.environ["BM25_INDEX_PATH"] = os.path.join(_TEST_DATA_DIR, "bm25.db")
+os.environ["CONTEXTUAL_RETRIEVAL_ENABLED"] = "false"
+
+from config import get_settings
+import database
 import mcp_server
-from database import SessionLocal
-from models.document import Document, DocumentChunk
+from database import Base, SessionLocal
+# The whole models package (not just models.document): Document's user_id /
+# org_id are foreign keys to users / organizations, and create_all below needs
+# every referenced table registered on Base.metadata.
+from models import Document, DocumentChunk
+from services.rag_service import index_web_content
+
+# Fail loudly on an env-name mismatch instead of silently indexing against the
+# real stores or firing paid API calls.
+_settings = get_settings()
+assert _settings.database_url.endswith("research.db") and _TEST_DATA_DIR in _settings.database_url, (
+    f"DATABASE_URL override did not take effect: {_settings.database_url}"
+)
+assert _TEST_DATA_DIR in _settings.chroma_persist_dir, _settings.chroma_persist_dir
+assert _TEST_DATA_DIR in _settings.bm25_index_path, _settings.bm25_index_path
+assert not _settings.contextual_retrieval_enabled, (
+    "CONTEXTUAL_RETRIEVAL_ENABLED=false did not take effect — indexing would "
+    "make live Anthropic API calls"
+)
+
+
+# ── Synthetic document to index ──────────────────────────────────────────────
+#
+# Deliberately long and paragraph-broken: rag/chunker.py groups whole
+# paragraphs into ~500-token chunks, so one unbroken block would produce a
+# single chunk, while test_search_library_returns_numbered_results_with_doc_ids
+# asks for top_k=3 and asserts exactly three numbered hits. The seeding below
+# verifies the realised chunk count instead of trusting this estimate.
+#
+# Two formatting constraints come from that test's regexes, which are applied
+# to rendered search output that embeds chunk text verbatim: no line may start
+# with a number followed by ". " (it would be counted as an extra result), and
+# the string "doc_id=" must not appear in the prose.
+
+_SEED_SECTION_TEMPLATE = """## {heading}
+
+Public agencies increasingly rely on artificial intelligence to triage
+casework, rank applications, forecast demand, and draft correspondence that
+was previously written by hand. This section of the fixture describes the
+obligations that attach to those systems once they influence a decision about
+a member of the public, and it deliberately restates the same themes in
+slightly different words so that the chunker has several paragraphs of
+comparable weight to group together.
+
+An agency that procures or builds an automated decision system must record its
+purpose, the categories of people it affects, the data it was trained on, and
+the human review step that stands between its output and any final action. The
+record is not a one-time artifact. It is refreshed whenever the model is
+retrained, whenever a new data source is connected, and whenever the system is
+applied to a population it was not originally evaluated against. Staff who
+operate the system are entitled to see that record in plain language.
+
+Transparency toward the public follows the same logic. A person affected by an
+automated decision should be able to learn that artificial intelligence was
+involved, what factors weighed most heavily, and how to ask a human being to
+look again. Notice written in the vocabulary of machine learning research
+satisfies the letter of the requirement and defeats its purpose, so the plain
+language standard is stated explicitly rather than left to interpretation.
+
+Vendors carry obligations of their own. A supplier whose model informs a
+governmental determination must disclose known limitations, describe the
+populations on which the system was validated, and report material changes in
+behaviour after an update. Contract language that forbids independent testing,
+or that treats every performance characteristic as a trade secret, is
+incompatible with the oversight duties an agency cannot delegate away.
+
+Monitoring turns these obligations into something observable. Agencies sample
+outputs, compare them against outcomes, and look for drift both in aggregate
+accuracy and in the distribution of errors across groups. Where a disparity
+appears, the question is not merely whether the aggregate metric still looks
+acceptable, but whether the burden of the system's mistakes has quietly
+shifted onto the people least able to contest them.
+
+Incidents are reported rather than absorbed. A system that produces an
+erroneous determination, that becomes unavailable during a statutory deadline,
+or that is found to have been applied outside its approved purpose generates a
+written report, a remediation plan, and — where an individual was harmed — a
+route to reconsideration that does not depend on that individual having
+noticed the error first.
+
+Enforcement and review close the loop. Oversight staff may request the records
+described above, commission independent evaluation, and require that a system
+be suspended until a deficiency is corrected. Periodic review asks a blunter
+question than compliance: whether the system still earns its place, or whether
+the task it automates would be better served by a simpler process, more
+staff, or no artificial intelligence at all.
+"""
+
+_SEED_TEXT = "\n\n".join(
+    _SEED_SECTION_TEMPLATE.format(heading=heading)
+    for heading in (
+        "Scope and Definitions",
+        "Transparency Obligations",
+        "Procurement and Vendor Oversight",
+        "Monitoring and Incident Reporting",
+        "Enforcement and Periodic Review",
+    )
+)
+
+_SEED_DOC_ID = "mcp-server-test-doc"
+_SEED_TITLE = "Automated Decision Systems Oversight Guidance (test fixture)"
+_MIN_SEED_CHUNKS = 3  # top_k=3 in test_search_library_returns_numbered_results...
+
+
+def _seed_temp_stores() -> None:
+    """Index one synthetic document into the temp SQLite + Chroma + BM25 stores.
+
+    Uses the real pipeline (index_web_content) rather than hand-built rows so
+    all three stores are populated consistently in one call — search_library
+    needs the vector and lexical indexes, not just the chunk table.
+
+    Done once at import, not per test: the embedding model load is the
+    expensive part and there is no reason to repeat it 16 times.
+    """
+    Base.metadata.create_all(bind=database.engine)
+
+    db = SessionLocal()
+    try:
+        doc = Document(
+            id=_SEED_DOC_ID,
+            filename="automated-decision-systems-guidance.txt",
+            title=_SEED_TITLE,
+            source_type="web",
+            status="processing",  # index_web_content flips this to "indexed"
+        )
+        db.add(doc)
+        db.commit()
+
+        asyncio.run(index_web_content(_SEED_DOC_ID, _SEED_TEXT, db))
+
+        # index_web_content is a background task: it swallows exceptions and
+        # records status="error". Without these checks a failed model load or
+        # a stray API call would surface as every test below complaining that
+        # the database has no indexed document.
+        db.expire_all()
+        seeded = db.query(Document).filter(Document.id == _SEED_DOC_ID).first()
+        assert seeded is not None and seeded.status == "indexed", (
+            f"seeding failed: index_web_content left status="
+            f"{seeded.status if seeded else None!r}"
+        )
+        chunk_count = (
+            db.query(DocumentChunk).filter(DocumentChunk.document_id == _SEED_DOC_ID).count()
+        )
+        assert chunk_count >= _MIN_SEED_CHUNKS, (
+            f"seeded only {chunk_count} chunk(s); search_library asserts 3 results, "
+            f"so _SEED_TEXT needs more paragraphs"
+        )
+    finally:
+        db.close()
+
+
+_seed_temp_stores()
 
 
 # ── Schema-level check: the 3 tools are registered on the FastMCP instance ──
