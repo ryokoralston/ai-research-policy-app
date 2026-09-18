@@ -181,7 +181,7 @@ def test_call_tool_list_documents_contains_live_doc_id():
     db = SessionLocal()
     try:
         doc = db.query(Document).filter(Document.status == "indexed").first()
-        assert doc is not None, "expected at least one indexed document in the dev DB"
+        assert doc is not None, "expected at least one indexed document in the seeded test fixture"
         expected_id = doc.id
     finally:
         db.close()
@@ -234,7 +234,7 @@ def test_read_resource_documents_returns_json_list_with_live_doc_id():
     db = SessionLocal()
     try:
         doc = db.query(Document).filter(Document.status == "indexed").first()
-        assert doc is not None, "expected at least one indexed document in the dev DB"
+        assert doc is not None, "expected at least one indexed document in the seeded test fixture"
         expected_id = doc.id
     finally:
         db.close()
@@ -255,7 +255,7 @@ def test_read_resource_document_by_id_returns_text_with_title():
     db = SessionLocal()
     try:
         doc = db.query(Document).filter(Document.status == "indexed").first()
-        assert doc is not None, "expected at least one indexed document in the dev DB"
+        assert doc is not None, "expected at least one indexed document in the seeded test fixture"
         expected_id = doc.id
         expected_label = doc.title or doc.filename
     finally:
@@ -320,7 +320,7 @@ def test_get_prompt_summarize_document_returns_user_message():
     db = SessionLocal()
     try:
         doc = db.query(Document).filter(Document.status == "indexed").first()
-        assert doc is not None, "expected at least one indexed document in the dev DB"
+        assert doc is not None, "expected at least one indexed document in the seeded test fixture"
         doc_id = doc.id
     finally:
         db.close()

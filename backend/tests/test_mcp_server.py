@@ -234,7 +234,7 @@ def test_list_documents_contains_known_title():
     db = SessionLocal()
     try:
         doc = db.query(Document).filter(Document.status == "indexed").first()
-        assert doc is not None, "expected at least one indexed document in the dev DB"
+        assert doc is not None, "expected at least one indexed document in the seeded test fixture"
         expected_label = doc.title or doc.filename
     finally:
         db.close()
@@ -246,15 +246,16 @@ def test_list_documents_contains_known_title():
 
 
 def test_list_documents_empty_library_message():
-    # Not exercising an actually-empty DB (it has real data and this test
-    # must not mutate it) — just confirm the non-empty path never accidentally
-    # returns the "no documents" sentinel while indexed docs exist.
+    # Not exercising an actually-empty DB (the module-level seed always leaves
+    # one indexed document) — just confirm the non-empty path never
+    # accidentally returns the "no documents" sentinel while indexed docs
+    # exist.
     db = SessionLocal()
     try:
         has_indexed = db.query(Document).filter(Document.status == "indexed").first() is not None
     finally:
         db.close()
-    assert has_indexed, "expected at least one indexed document in the dev DB"
+    assert has_indexed, "expected at least one indexed document in the seeded test fixture"
     result = mcp_server.list_documents()
     assert result != "No indexed documents in the library.", result
 
@@ -288,7 +289,7 @@ def test_read_document_truncates_long_documents():
     try:
         # Pick the document with the most chunks/words as the best candidate
         # for exceeding MAX_READ_DOCUMENT_CHARS; if even that one doesn't
-        # exceed the cap, skip the truncation-note assertion (small dev DB).
+        # exceed the cap, skip the truncation-note assertion (small seeded fixture).
         doc = (
             db.query(Document)
             .filter(Document.status == "indexed")
@@ -321,7 +322,7 @@ def test_list_docs_contains_live_doc_id_with_expected_shape():
     db = SessionLocal()
     try:
         doc = db.query(Document).filter(Document.status == "indexed").first()
-        assert doc is not None, "expected at least one indexed document in the dev DB"
+        assert doc is not None, "expected at least one indexed document in the seeded test fixture"
         expected_id = doc.id
     finally:
         db.close()
@@ -343,7 +344,7 @@ def test_fetch_doc_matches_read_document_tool():
     db = SessionLocal()
     try:
         doc = db.query(Document).filter(Document.status == "indexed").first()
-        assert doc is not None, "expected at least one indexed document in the dev DB"
+        assert doc is not None, "expected at least one indexed document in the seeded test fixture"
         doc_id = doc.id
     finally:
         db.close()
@@ -419,7 +420,7 @@ def test_search_library_empty_results_message():
     # Hybrid retrieval over a non-empty collection always returns *something*
     # for any non-empty query (RRF fusion has no relevance floor), so the
     # empty-results message can't be reached with a real query against the
-    # populated dev DB. Monkeypatch the cached retriever with a fake that
+    # seeded fixture. Monkeypatch the cached retriever with a fake that
     # returns no chunks to exercise that branch directly and honestly.
     class _EmptyRetriever:
         def retrieve(self, question, top_k=5, doc_ids=None):
