@@ -43,6 +43,13 @@ services:
       # from scratch on every deploy, losing all previously indexed content.
       - key: BM25_INDEX_PATH
         value: /data/bm25.db
+      # Draft workspace (text-editor tool's chat-created files) must also live
+      # on the mounted disk — otherwise every deploy wipes drafts in progress.
+      # NOTE (see comment above): this file is not Blueprint-linked, so this
+      # entry is documentation only — WORKSPACE_DIR=/data/workspace must be
+      # added in the Render dashboard's own env var settings to take effect.
+      - key: WORKSPACE_DIR
+        value: /data/workspace
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: TAVILY_API_KEY

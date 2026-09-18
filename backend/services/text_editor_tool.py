@@ -23,14 +23,17 @@ may only be overwritten if it was `view`ed earlier in the same chat turn.
 import os
 from pathlib import Path
 
+from config import get_settings
+
 TEXT_EDITOR_TOOL = {"type": "text_editor_20250728", "name": "str_replace_based_edit_tool"}
 TEXT_EDITOR_TOOL_NAME = "str_replace_based_edit_tool"
 
-# Derived from __file__ so it resolves correctly regardless of cwd.
+# Derived from settings (defaults to ./data/workspace, alongside the DB/Chroma/
+# uploads dirs) so it resolves onto the mounted persistent disk in production —
+# see T-13 in docs/audit-2026-09-03.md (this used to be __file__-relative,
+# which pointed inside the code directory Render wipes on every deploy).
 # Created lazily (see _ensure_dir) — never at import time.
-WORKSPACE_DIR = os.path.normpath(
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "workspace")
-)
+WORKSPACE_DIR = get_settings().workspace_dir
 
 # Guardrail: refuse to write files beyond this size (bytes).
 MAX_FILE_BYTES = 262144

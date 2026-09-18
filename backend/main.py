@@ -102,6 +102,7 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     os.makedirs(settings.uploads_dir, exist_ok=True)
     os.makedirs(settings.chroma_persist_dir, exist_ok=True)
+    os.makedirs(settings.workspace_dir, exist_ok=True)
     init_db()  # prints "Database initialized."
     _warn_about_orphaned_index_entries()
 
