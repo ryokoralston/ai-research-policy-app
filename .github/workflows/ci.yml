@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "frontend/**"
+      - ".github/workflows/ci.yml"
+  workflow_dispatch:
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Run backend test suite
+        working-directory: backend
+        # No backend/.env in CI: Settings (config.py) defaults every field to
+        # "" / sane values, and these test_*.py runners stub out chromadb /
+        # sentence_transformers via sys.modules injection rather than making
+        # real API calls, so an empty environment is enough to run them.
+        # `|| exit 1` is required because a bare `for` loop swallows a
+        # runner's failing exit code — without it, one broken test would
+        # leave this job green.
+        run: |
+          for t in $(ls tests/test_*.py | sed 's|tests/||;s|\.py||'); do
+            python -m tests.$t || exit 1
+          done
+
+  frontend-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Must precede setup-node so that `cache: pnpm` can find the binary.
+      # The version comes from packageManager in frontend/package.json.
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Type-check
+        working-directory: frontend
+        run: npx tsc --noEmit
+      - name: Lint
+        working-directory: frontend
+        run: pnpm lint
