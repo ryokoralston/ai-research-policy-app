@@ -41,24 +41,71 @@ _login_failures: dict[str, list[float]] = {}
 
 
 def client_ip(request: Request) -> str:
-    """The caller's IP, taken only from the raw TCP peer address.
+    """The caller's IP, taken from ``CF-Connecting-IP`` when Cloudflare is in
+    front, otherwise from the raw TCP peer address.
 
-    X-Forwarded-For is deliberately ignored. On 2026-09-18 two curl tests
-    against the live production backend showed that Render does not sanitize,
-    validate, or append to X-Forwarded-For — it forwards whatever the client
-    sends, verbatim. A request carrying a fabricated ``X-Forwarded-For:
-    203.0.113.9`` was logged under that exact value, while the same request
-    with no such header was logged under the caller's true external IP.
+    This is the second attempt at this fix. Read the whole docstring before
+    changing it — the platform behavior here is not what the deployment docs
+    for a plain uvicorn app would lead you to expect.
 
-    So in this deployment *every* XFF-based scheme is attacker-controllable:
-    the first hop, the last hop (a single spoofed value has no commas, making
-    first and last identical), and uvicorn's ``--proxy-headers
-    --forwarded-allow-ips='*'`` (which would let ProxyHeadersMiddleware
-    overwrite ``request.client.host`` from the same spoofable header). Only
-    ``request.client.host`` — the address of the socket peer, which the client
-    cannot choose — was confirmed to reflect the true client IP, and it is what
-    the failed-login throttle and the audit log depend on being honest.
+    Render fronts *all* ``*.onrender.com`` traffic with Cloudflare as its own
+    platform-level DDoS protection (nothing in this project configured it;
+    responses from the live backend carry ``server: cloudflare`` and a
+    ``cf-ray`` header). That gives us exactly one header the client cannot
+    choose, and two that look usable but are not:
+
+    * ``CF-Connecting-IP`` — trusted, and what this function returns. On
+      2026-09-18 a request that tried to supply its own ``CF-Connecting-IP:
+      5.6.7.8`` was rejected by Cloudflare's edge with a ``403`` before it
+      ever reached Render or this app (no ``x-render-origin-server`` header on
+      the response, so uvicorn never saw the request). A client therefore
+      cannot get a forged value into this header in this topology. Note this
+      is an empirically observed edge behavior, not a documented contract:
+      Cloudflare's HTTP-headers reference describes what the header *means*
+      but does not promise it overwrites a client-supplied value. It is a
+      single address (v4 or v6), never a comma-separated chain, so there is
+      nothing to split.
+    * ``X-Forwarded-For`` — never read. On a legitimate request its first hop
+      genuinely *is* the real client IP (real captured example through
+      Render+Cloudflare: ``81.97.145.24, 172.71.195.88, 10.226.90.65`` = true
+      client, Cloudflare edge, Render internal proxy). That is precisely the
+      trap: Cloudflare's own docs state it *appends* its hop to an
+      ``X-Forwarded-For`` that was already present, and nothing strips a
+      client-supplied value first. So an attacker prepends whatever they like
+      and owns the first position end to end, which is what made the original
+      ``.split(",")[0]`` logic exploitable.
+    * ``True-Client-IP`` — never read. A self-supplied ``True-Client-IP:
+      5.6.7.8`` was *not* blocked and reached the app normally, so whatever
+      protection it has on this zone/plan is unconfirmed. Cloudflare documents
+      it as equivalent to ``CF-Connecting-IP``, but the observed asymmetry
+      says otherwise here, so it stays unused.
+
+    ``request.client.host`` alone — the previous fix, commit ``7e40ba0``, which
+    was deployed to production — is ALSO insufficient and is only a fallback
+    now. After that deploy went live the original spoof was re-run against
+    production and still succeeded: ``X-Forwarded-For: 203.0.113.9`` was still
+    recorded under that exact fabricated value. This was not a deploy-timing
+    race — Render's dashboard confirmed that commit was the live deploy and
+    the test timestamps were correlated against it. Whatever sits between
+    Cloudflare and the app container appears to derive the value Starlette
+    exposes as ``request.client.host`` from the same attacker-influenced XFF
+    chain rather than from the genuine raw socket peer. That mechanism is
+    inferred, not proven, but the failure itself is measured. It is
+    Render-specific, so do not reach for uvicorn's ``--proxy-headers``: it is
+    fed by the same untrustworthy client-supplied header either way.
+
+    The fallback exists for a topology with no Cloudflare in front at all
+    (local development, or some future host), where ``CF-Connecting-IP`` is
+    simply absent. That is also this function's one trust boundary: it trusts
+    the header whenever it is present, which is safe only because Cloudflare
+    is unconditionally in front of ``*.onrender.com``. If this app ever
+    becomes reachable at an origin that bypasses Cloudflare, a client could
+    then set ``CF-Connecting-IP`` freely and both the failed-login throttle
+    and the audit log would be spoofable again.
     """
+    cf_connecting_ip = (request.headers.get("cf-connecting-ip") or "").strip()
+    if cf_connecting_ip:
+        return cf_connecting_ip
     return request.client.host if request.client else "unknown"
 
 

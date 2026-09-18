@@ -131,10 +131,33 @@ def _request(client=..., headers=None):
     return Request(scope)
 
 
+def test_client_ip_prefers_cf_connecting_ip():
+    """Regression pin for the real T-08 vulnerability. CF-Connecting-IP is the
+    only value a client cannot forge in this deployment, so it must win over
+    both a spoofed X-Forwarded-For and the (also untrustworthy on Render)
+    socket peer address."""
+    request = _request(client=("10.0.0.5", 12345),
+                       headers={"X-Forwarded-For": "203.0.113.9",
+                                "CF-Connecting-IP": "198.51.100.42"})
+    assert auth.client_ip(request) == "198.51.100.42"
+
+    # Surrounding whitespace must not create a second identity for the same IP.
+    padded = _request(client=("10.0.0.5", 12345),
+                      headers={"CF-Connecting-IP": "  198.51.100.42  "})
+    assert auth.client_ip(padded) == "198.51.100.42"
+
+
+def test_client_ip_uses_cf_connecting_ip_without_a_peer():
+    """CF-Connecting-IP must not need a socket peer to fall back on."""
+    request = _request(client=None, headers={"CF-Connecting-IP": "198.51.100.42"})
+    assert auth.client_ip(request) == "198.51.100.42"
+
+
 def test_client_ip_ignores_x_forwarded_for():
-    """Regression test for T-08. Render was confirmed to pass X-Forwarded-For
-    through from the client unmodified, so client_ip() must report the raw TCP
-    peer address and never the (attacker-supplied) header."""
+    """With no CF-Connecting-IP present, client_ip() falls through to the
+    socket peer address and must never read X-Forwarded-For — Cloudflare
+    appends its own hops after whatever the client sent, so every position in
+    that header (including the first) is attacker-controllable."""
     request = _request(client=("10.0.0.5", 12345), headers={"X-Forwarded-For": "203.0.113.9"})
     assert auth.client_ip(request) == "10.0.0.5"
 
@@ -142,6 +165,12 @@ def test_client_ip_ignores_x_forwarded_for():
     chained = _request(client=("10.0.0.5", 12345),
                        headers={"X-Forwarded-For": "203.0.113.9, 198.51.100.7"})
     assert auth.client_ip(chained) == "10.0.0.5"
+
+    # True-Client-IP passed a live spoofing attempt through unblocked, so its
+    # protection status here is unconfirmed and it is deliberately unused.
+    true_client = _request(client=("10.0.0.5", 12345),
+                           headers={"True-Client-IP": "203.0.113.9"})
+    assert auth.client_ip(true_client) == "10.0.0.5"
 
 
 def test_client_ip_falls_back_to_unknown_without_a_peer():
@@ -351,6 +380,8 @@ if __name__ == "__main__":
     _run("get_current_user rejects inactive user", test_get_current_user_rejects_inactive_user)
     _run("get_current_user rejects deleted user", test_get_current_user_rejects_deleted_user)
     _run("require_admin accepts admin, rejects member", test_require_admin_accepts_admin_rejects_member)
+    _run("client_ip prefers CF-Connecting-IP", test_client_ip_prefers_cf_connecting_ip)
+    _run("client_ip uses CF-Connecting-IP without a peer", test_client_ip_uses_cf_connecting_ip_without_a_peer)
     _run("client_ip ignores X-Forwarded-For", test_client_ip_ignores_x_forwarded_for)
     _run("client_ip falls back to unknown without a peer", test_client_ip_falls_back_to_unknown_without_a_peer)
     _run("login failure tracking is capped", test_login_failure_tracking_is_capped)
