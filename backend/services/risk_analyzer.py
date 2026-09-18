@@ -13,6 +13,7 @@ from services.analysis_sources import collect_source
 from schemas import AnalysisStartRequest
 from services.anthropic_client import generate_json, stream_text_with_thinking, sse_event, UNTRUSTED_CONTENT_GUARD
 from services.citation_verifier import verify_grounding
+from services.report_quality import REPORT_MAX_TOKENS
 from services.research_agent import run_research_agent
 from services.tavily_client import TavilyClient
 from templates import TEMPLATES, dimensions_for
@@ -134,7 +135,7 @@ async def _analyze_dimension(
     try:
         async for kind, token in stream_text_with_thinking(
             prompt, system=section_system, cached_context=shared_context,
-            usage_log_tag="risk-dimension",
+            usage_log_tag="risk-dimension", max_tokens=REPORT_MAX_TOKENS,
         ):
             if kind == "truncated":
                 # Control signal, not content — must not land in content_text.
@@ -336,7 +337,7 @@ async def _fix_weak_dimensions(
             revised_content = ""
             async for kind, token in stream_text_with_thinking(
                 revision_prompt, system=section_system, cached_context=shared_context,
-                usage_log_tag="risk-dimension-revision",
+                usage_log_tag="risk-dimension-revision", max_tokens=REPORT_MAX_TOKENS,
             ):
                 if kind == "truncated":
                     logger.warning(
@@ -571,7 +572,8 @@ async def run_risk_analysis(
         else:
             prompt = _build_section_prompt(section_title, section_def["instructions"])
             async for kind, token in stream_text_with_thinking(
-                prompt, system=section_system, cached_context=shared_context, usage_log_tag="risk-section",
+                prompt, system=section_system, cached_context=shared_context,
+                usage_log_tag="risk-section", max_tokens=REPORT_MAX_TOKENS,
             ):
                 if kind == "truncated":
                     # Control signal, not content — never accumulated and
