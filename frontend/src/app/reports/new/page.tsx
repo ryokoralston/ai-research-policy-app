@@ -98,6 +98,7 @@ function NewReportForm() {
   const [reportId, setReportId]         = useState<string | null>(null);
   const [citationConfidence, setCitationConfidence] = useState<CitationConfidence | null>(null);
   const [error, setError]               = useState<string | null>(null);
+  const [truncationWarnings, setTruncationWarnings] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
   // Evaluator-optimizer revision pass (see backend services/report_quality.py):
@@ -200,6 +201,7 @@ function NewReportForm() {
     setThinkingText("");
     setCitationConfidence(null);
     setError(null);
+    setTruncationWarnings([]);
     setRevising(false);
     setRevisionClaimCount(0);
     setRevisionResult(null);
@@ -256,6 +258,10 @@ function NewReportForm() {
           } else if (event === "error") {
             setError(d.message as string);
             setGenerating(false);
+          } else if (event === "warning") {
+            const sectionKey = (d.section as string) || "section";
+            const label = sectionKey.replace(/_/g, " ");
+            setTruncationWarnings((prev) => (prev.includes(label) ? prev : [...prev, label]));
           }
         },
         abortRef.current.signal
@@ -665,6 +671,13 @@ function NewReportForm() {
                       ? `Writing: ${currentSection}`
                       : "Starting generation..."}
                   </span>
+                </div>
+              )}
+
+              {truncationWarnings.length > 0 && (
+                <div className="bg-amber-900/30 border border-amber-800 rounded-lg p-4 text-amber-300 text-sm">
+                  Cut off by the output limit: {truncationWarnings.join(", ")}. The content above may be
+                  incomplete.
                 </div>
               )}
 
