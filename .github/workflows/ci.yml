@@ -36,8 +36,21 @@ jobs:
         # `|| exit 1` is required because a bare `for` loop swallows a
         # runner's failing exit code — without it, one broken test would
         # leave this job green.
+        #
+        # test_mcp_client and test_mcp_server both hard-require
+        # backend/data/research.db to already contain real indexed documents
+        # (35+ docs / 900+ chunks per test_mcp_server.py's own docstring) — a
+        # dev-machine-only precondition with no skip logic, known and
+        # accepted before this CI workflow existed. A fresh CI checkout has
+        # no data/ directory at all, so these two files are excluded here
+        # rather than run against an empty DB they were never designed to
+        # handle.
         run: |
+          SKIP_FILES="test_mcp_client test_mcp_server"
           for t in $(ls tests/test_*.py | sed 's|tests/||;s|\.py||'); do
+            case " $SKIP_FILES " in
+              *" $t "*) echo "Skipping $t (requires dev-machine indexed DB)"; continue ;;
+            esac
             python -m tests.$t || exit 1
           done
 
