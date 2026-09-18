@@ -92,7 +92,8 @@ def restore_report(db, report_id: str, apply: bool) -> dict:
     strictly more complete (more words) than what's currently stored. Never
     calls sys.exit — returns a result dict so both the CLI and tests can
     inspect the outcome. `status` is one of:
-        "not_found" | "no_sections" | "not_improved" | "dry_run" | "restored"
+        "not_found" | "no_sections" | "duplicate_order_index" |
+        "not_improved" | "dry_run" | "restored" | "verification_failed"
     """
     report = db.get(Report, report_id)
     if report is None:
