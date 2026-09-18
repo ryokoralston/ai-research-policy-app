@@ -24,6 +24,7 @@ import sys
 import mcp.types as types
 from mcp.client.stdio import get_default_environment
 
+from config import get_settings
 from mcp_client import MCPClient
 
 _SERVICES_DIR = os.path.dirname(os.path.abspath(__file__))  # backend/services
@@ -133,7 +134,16 @@ async def get_mcp_tool_defs() -> list[dict]:
     so a transient failure — the server coming back up — is retried and
     recovers on the very next chat turn instead of being stuck toolless for
     the rest of the process's life.
+
+    Feature flag: when settings.mcp_bridge_enabled is False (the production
+    default — see D-5 in docs/audit-2026-09-03.md), this always returns []
+    without touching _tool_cache at all, so the "no servers configured" vs
+    "all servers failed" cache distinction above never comes into play while
+    the bridge is switched off.
     """
+    if not get_settings().mcp_bridge_enabled:
+        return []
+
     global _tool_cache
     if _tool_cache is not None:
         return _tool_cache["defs"]

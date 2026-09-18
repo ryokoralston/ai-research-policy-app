@@ -55,6 +55,22 @@ _SERVER_SCRIPT = os.path.join(_BACKEND_DIR, "mcp_server.py")
 _REAL_CONFIG_PATH = mcp_bridge.MCP_CONFIG_PATH
 
 
+class _FakeSettings:
+    def __init__(self, mcp_bridge_enabled):
+        self.mcp_bridge_enabled = mcp_bridge_enabled
+
+
+# Every test in this file below exercises get_mcp_tool_defs's actual
+# connection/caching logic and predates the mcp_bridge_enabled flag (D-5) —
+# they must not be silently gated by production's mcp_bridge_enabled=False
+# default (CI runs with no backend/.env, so the real get_settings() would
+# return False here). Patch the module's bound name to an always-enabled
+# fake for the whole file; only the dedicated disabled-flag test below
+# overrides this locally and restores it afterwards.
+_REAL_GET_SETTINGS = mcp_bridge.get_settings
+mcp_bridge.get_settings = lambda: _FakeSettings(mcp_bridge_enabled=True)
+
+
 def _set_config(config: dict | None) -> str:
     """Write `config` to a fresh temp file and point mcp_bridge.MCP_CONFIG_PATH
     at it; config=None instead leaves the path pointing at a file that does
@@ -220,6 +236,29 @@ def test_get_mcp_tool_defs_prefixes_names_and_excludes_search_library():
         for d in defs:
             assert "input_schema" in d and "description" in d, d
     finally:
+        _restore_client(orig_client)
+        _restore_config(path)
+
+
+# ── Feature flag: mcp_bridge_enabled=False (D-5) ────────────────────────────
+
+def test_get_mcp_tool_defs_returns_empty_and_skips_connect_when_disabled():
+    """When the flag is off, a server that WOULD have succeeded is never
+    queried at all, and _tool_cache is left untouched (None), matching the
+    "off switch, don't touch the cache machinery" behavior D-5 calls for."""
+    path = _set_config({"mcpServers": {"policy-library": {"command": "x", "args": []}}})
+    orig_client = _install_fake_client()
+    orig_get_settings = mcp_bridge.get_settings
+    mcp_bridge.get_settings = lambda: _FakeSettings(mcp_bridge_enabled=False)
+    try:
+        _FakeMCPClient.tools = [_FakeTool("list_documents")]
+        assert mcp_bridge._tool_cache is None
+        defs = asyncio.run(mcp_bridge.get_mcp_tool_defs())
+        assert defs == [], defs
+        assert len(_FakeMCPClient.calls) == 0, "server must not be connected to while disabled"
+        assert mcp_bridge._tool_cache is None, "disabled flag must not populate the cache"
+    finally:
+        mcp_bridge.get_settings = orig_get_settings
         _restore_client(orig_client)
         _restore_config(path)
 
@@ -548,6 +587,8 @@ if __name__ == "__main__":
     _run("_server_slug normalizes hyphen", test_server_slug_normalizes_hyphen)
 
     _run("get_mcp_tool_defs: prefixes names and excludes search_library", test_get_mcp_tool_defs_prefixes_names_and_excludes_search_library)
+
+    _run("get_mcp_tool_defs: disabled flag -> [] and skips connect entirely", test_get_mcp_tool_defs_returns_empty_and_skips_connect_when_disabled)
 
     _run("cache: populated (and held) when no servers configured", test_cache_populated_when_no_servers_configured)
     _run("cache: NOT populated when all configured servers fail", test_cache_not_populated_when_all_configured_servers_fail)

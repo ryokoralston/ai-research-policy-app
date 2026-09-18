@@ -49,6 +49,12 @@ class Settings(BaseSettings):
     # /openapi.json. Off by default in production; enable locally only.
     expose_api_docs: bool = False
 
+    # Disabled by default: in production (Render), spawning the MCP bridge
+    # subprocess fails on every chat turn (no venv, and even if it started, the
+    # child process doesn't inherit DATABASE_URL/CHROMA_PERSIST_DIR — see D-5 in
+    # docs/audit-2026-09-03.md). Off by default; local dev enables it via .env.
+    mcp_bridge_enabled: bool = False
+
     # Daily digest email settings
     # Gmail app password: https://myaccount.google.com/apppasswords
     digest_email_to: str = ""
