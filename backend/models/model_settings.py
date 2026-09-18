@@ -10,7 +10,7 @@ class ModelSettings(Base):
     __tablename__ = "model_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
-    main_model: Mapped[str] = mapped_column(String, default="claude-opus-4-6")
+    main_model: Mapped[str] = mapped_column(String, default="claude-opus-5")
     fast_model: Mapped[str] = mapped_column(String, default="claude-haiku-4-5-20251001")
     # Encrypted at rest (see services/secret_crypto.py)
     anthropic_api_key: Mapped[str] = mapped_column(EncryptedString, default="")

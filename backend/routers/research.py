@@ -53,8 +53,8 @@ async def start_research(
         # The research page seeds its model picker from the currently
         # configured main_model (see frontend/src/app/research/page.tsx) and
         # always sends it explicitly, so the presently-stored value (even a
-        # pre-allowlist default like ModelSettings.main_model's
-        # "claude-opus-4-6", or one an admin picked before the catalog last
+        # value that predates the allowlist — e.g. after a future model
+        # retirement — or one an admin picked before the catalog last
         # refreshed) must keep working. Only a value that is neither in the
         # catalog/fallback allowlist nor the currently configured model is
         # rejected — that's the fabricated/stale case (e.g. "gpt-4o") D-1 is

@@ -84,9 +84,9 @@ async def save_model_settings(
     # fast_model back in the PUT body (see frontend/src/app/settings/page.tsx),
     # even when the admin is only rotating the API key. Only validate against
     # the allowlist when the value is actually changing — re-saving the
-    # stored default (which may predate the allowlist, e.g. the model_settings
-    # table default "claude-opus-4-6") must not 400 a routine save. A new
-    # value that isn't allowed (e.g. a stale "gpt-4o") still 400s either way.
+    # stored value (which may predate the allowlist, e.g. after a future
+    # model retirement) must not 400 a routine save. A new value that isn't
+    # allowed (e.g. a stale "gpt-4o") still 400s either way.
     main_model_changing = body.main_model is not None and body.main_model != ms.main_model
     fast_model_changing = body.fast_model is not None and body.fast_model != ms.fast_model
     if main_model_changing or fast_model_changing:

@@ -130,11 +130,12 @@ def test_research_start_rejects_unknown_model():
 def test_research_start_accepts_currently_configured_default_model():
     """The research page seeds its model picker from GET /api/settings/models
     and always sends that value explicitly (see frontend/src/app/research/page.tsx).
-    ModelSettings.main_model defaults to "claude-opus-4-6", which is not in
-    the catalog/fallback allowlist (the catalog only tracks the latest model
-    per family, and the fallback list has "claude-opus-5"). Rejecting the
-    currently-configured default would 400 the default research flow on any
-    deployment whose catalog hasn't refreshed yet — this must still work."""
+    This test guards against ANY future default value for
+    ModelSettings.main_model — today's or one set after a later model
+    retirement — getting rejected by validation, even if the catalog hasn't
+    refreshed yet or the default falls out of the fallback allowlist. It
+    reads ms.main_model dynamically rather than hardcoding an expected model
+    id, so it stays meaningful regardless of what the real default is."""
     db = _make_db()
     ms = get_or_init_model_settings(db)
     client = _make_research_client(db)
