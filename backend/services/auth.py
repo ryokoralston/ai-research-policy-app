@@ -31,15 +31,34 @@ from services.secret_crypto import _fernet
 # budget, which just falls back to no throttling rather than failing closed.
 _LOGIN_ATTEMPT_WINDOW_SECONDS = 300  # 5 minutes
 _LOGIN_MAX_ATTEMPTS = 5
+# Ceiling on distinct IPs tracked at once. Entries are only pruned when that
+# same IP is looked up again, so without a cap an attacker cycling through
+# source addresses could grow this dict indefinitely. Oldest-inserted entries
+# are evicted first (FIFO) — losing an old entry just means that IP starts its
+# window over, which is the same as a process restart.
+_MAX_TRACKED_IPS = 10_000
 _login_failures: dict[str, list[float]] = {}
 
 
 def client_ip(request: Request) -> str:
-    """Best-effort caller IP: first hop of X-Forwarded-For (set by Render's
-    proxy) if present, else the direct connection's address."""
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    """The caller's IP, taken only from the raw TCP peer address.
+
+    X-Forwarded-For is deliberately ignored. On 2026-09-18 two curl tests
+    against the live production backend showed that Render does not sanitize,
+    validate, or append to X-Forwarded-For — it forwards whatever the client
+    sends, verbatim. A request carrying a fabricated ``X-Forwarded-For:
+    203.0.113.9`` was logged under that exact value, while the same request
+    with no such header was logged under the caller's true external IP.
+
+    So in this deployment *every* XFF-based scheme is attacker-controllable:
+    the first hop, the last hop (a single spoofed value has no commas, making
+    first and last identical), and uvicorn's ``--proxy-headers
+    --forwarded-allow-ips='*'`` (which would let ProxyHeadersMiddleware
+    overwrite ``request.client.host`` from the same spoofable header). Only
+    ``request.client.host`` — the address of the socket peer, which the client
+    cannot choose — was confirmed to reflect the true client IP, and it is what
+    the failed-login throttle and the audit log depend on being honest.
+    """
     return request.client.host if request.client else "unknown"
 
 
@@ -65,6 +84,8 @@ def check_login_rate_limit(ip: str) -> None:
 
 def record_login_failure(ip: str) -> None:
     _login_failures.setdefault(ip, []).append(time.monotonic())
+    while len(_login_failures) > _MAX_TRACKED_IPS:
+        _login_failures.pop(next(iter(_login_failures)))
 
 
 def clear_login_failures(ip: str) -> None:

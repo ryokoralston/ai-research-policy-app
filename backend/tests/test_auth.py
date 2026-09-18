@@ -22,6 +22,7 @@ from cryptography.fernet import Fernet
 os.environ.setdefault("SECRET_ENCRYPTION_KEY", Fernet.generate_key().decode())
 
 from fastapi import HTTPException
+from starlette.requests import Request
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -119,6 +120,53 @@ def test_require_admin_accepts_admin_rejects_member():
         raise AssertionError("expected 403 for a member")
     except HTTPException as exc:
         assert exc.status_code == 403, exc.status_code
+
+
+def _request(client=..., headers=None):
+    """Minimal ASGI scope wrapped in a real Request. Pass client=None to
+    simulate a connection with no peer address."""
+    scope = {"type": "http", "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()]}
+    if client is not ...:
+        scope["client"] = client
+    return Request(scope)
+
+
+def test_client_ip_ignores_x_forwarded_for():
+    """Regression test for T-08. Render was confirmed to pass X-Forwarded-For
+    through from the client unmodified, so client_ip() must report the raw TCP
+    peer address and never the (attacker-supplied) header."""
+    request = _request(client=("10.0.0.5", 12345), headers={"X-Forwarded-For": "203.0.113.9"})
+    assert auth.client_ip(request) == "10.0.0.5"
+
+    # Multi-hop / trailing-hop spoofs must be ignored just the same.
+    chained = _request(client=("10.0.0.5", 12345),
+                       headers={"X-Forwarded-For": "203.0.113.9, 198.51.100.7"})
+    assert auth.client_ip(chained) == "10.0.0.5"
+
+
+def test_client_ip_falls_back_to_unknown_without_a_peer():
+    assert auth.client_ip(_request(client=None)) == "unknown"
+    assert auth.client_ip(_request()) == "unknown"  # no "client" key in scope at all
+
+
+def test_login_failure_tracking_is_capped():
+    """_login_failures must not grow without bound — an attacker cycling
+    through distinct source IPs would otherwise leave permanent entries."""
+    saved = dict(auth._login_failures)
+    auth._login_failures.clear()
+    try:
+        overflow = 50
+        ips = [f"198.18.{i // 256}.{i % 256}" for i in range(auth._MAX_TRACKED_IPS + overflow)]
+        for ip in ips:
+            auth.record_login_failure(ip)
+
+        assert len(auth._login_failures) <= auth._MAX_TRACKED_IPS, len(auth._login_failures)
+        # FIFO by insertion order: the oldest go first, the newest survive.
+        assert ips[0] not in auth._login_failures
+        assert ips[-1] in auth._login_failures
+    finally:
+        auth._login_failures.clear()
+        auth._login_failures.update(saved)
 
 
 def test_login_rate_limit_blocks_after_max_attempts():
@@ -303,6 +351,9 @@ if __name__ == "__main__":
     _run("get_current_user rejects inactive user", test_get_current_user_rejects_inactive_user)
     _run("get_current_user rejects deleted user", test_get_current_user_rejects_deleted_user)
     _run("require_admin accepts admin, rejects member", test_require_admin_accepts_admin_rejects_member)
+    _run("client_ip ignores X-Forwarded-For", test_client_ip_ignores_x_forwarded_for)
+    _run("client_ip falls back to unknown without a peer", test_client_ip_falls_back_to_unknown_without_a_peer)
+    _run("login failure tracking is capped", test_login_failure_tracking_is_capped)
     _run("login rate limit blocks after max attempts", test_login_rate_limit_blocks_after_max_attempts)
     _run("login rate limit resets on success", test_login_rate_limit_resets_on_success)
     _run("login rate limit window expiry", test_login_rate_limit_window_expiry)
