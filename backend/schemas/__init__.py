@@ -21,7 +21,7 @@ __all__ = [
     "ResearchSessionDetail",
     "DocumentResponse", "DocumentDetail", "DocumentAskRequest", "DocumentCitedAskRequest",
     "ReportGenerateRequest", "ReportResponse", "ReportDetail", "ReportSectionResponse",
-    "ReportUpdateRequest",
+    "ReportUpdateRequest", "ReportDraftRequest",
     "AnalysisStartRequest", "RiskAnalysisResponse", "SourceRef",
     "DebateStartRequest", "DebateResponse", "DebateDetail", "DebateArgumentResponse",
 ]
