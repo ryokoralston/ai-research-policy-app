@@ -406,11 +406,11 @@ export default function DebatePage() {
               AI policy experts debate your topic across 4 structured rounds.
             </p>
             <p className="text-slate-500 text-xs mt-1">
-              ※ All personas are entirely fictional characters created for debate simulation purposes. Any resemblance to real individuals is coincidental.
+              Note: All personas are entirely fictional characters created for debate simulation purposes. Any resemblance to real individuals is coincidental.
             </p>
             {hasCustomPersonas && (
               <p className="text-slate-500 text-xs mt-1">
-                ※ Custom personas may be modeled on real individuals within your organization for internal decision-support purposes.
+                Note: Custom personas may be modeled on real individuals within your organization for internal decision-support purposes.
               </p>
             )}
           </div>

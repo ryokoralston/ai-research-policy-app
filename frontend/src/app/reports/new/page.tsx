@@ -355,7 +355,7 @@ function NewReportForm() {
                         <p className="text-slate-100 text-sm font-medium line-clamp-1">{s.query}</p>
                         <div className="flex items-center justify-between mt-0.5">
                           <p className="text-slate-500 text-xs">
-                            {new Date(s.created_at).toLocaleDateString("ja-JP")}
+                            {new Date(s.created_at).toLocaleDateString("en-US")}
                           </p>
                           {s.latest_report_id && (
                             <span className="flex items-center gap-2">
