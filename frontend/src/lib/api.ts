@@ -94,9 +94,10 @@ export async function downloadFile(url: string, fallbackName: string): Promise<v
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const { headers, ...rest } = options ?? {};
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json", ...authHeaders(), ...options?.headers },
-    ...options,
+    ...rest,
+    headers: { "Content-Type": "application/json", ...authHeaders(), ...headers },
   });
   if (res.status === 401) {
     handleUnauthorized();
