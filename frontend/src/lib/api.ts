@@ -138,7 +138,20 @@ export const api = {
       return authFetch(`${BASE_URL}/api/documents/upload`, {
         method: "POST",
         body: form,
-      }).then((r) => r.json());
+      }).then(async (r) => {
+        if (!r.ok) {
+          let message = `Upload failed: ${r.status}`;
+          try {
+            const body = JSON.parse(await r.text());
+            if (body?.detail) message = body.detail;
+          } catch {
+            // response body wasn't JSON (e.g. a proxy-level rejection) — fall
+            // back to the generic status message above.
+          }
+          throw new Error(message);
+        }
+        return r.json();
+      });
     },
     ingestUrl: (url: string) =>
       request<{ document_id: string; status: string; title: string }>(

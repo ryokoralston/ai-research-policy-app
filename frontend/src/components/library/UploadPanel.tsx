@@ -21,6 +21,7 @@ export default function UploadPanel({ onUploaded }: UploadPanelProps) {
   const [ingestError, setIngestError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const handleUpload = async (files: File[]) => {
     const invalid = files.filter(
@@ -36,9 +37,12 @@ export default function UploadPanel({ onUploaded }: UploadPanelProps) {
       return;
     }
     setUploading(true);
+    setUploadError(null);
     try {
       await Promise.all(files.map((f) => api.documents.upload(f)));
       onUploaded();
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploading(false);
     }
@@ -120,6 +124,7 @@ export default function UploadPanel({ onUploaded }: UploadPanelProps) {
         </p>
         <p className="text-slate-600 text-xs">PDF, TXT, HTML, images (PNG/JPG/WEBP/GIF) — multiple files supported</p>
         {uploading && <div className="mt-2"><LoadingSpinner size="sm" /></div>}
+        {uploadError && <p className="mt-2 text-xs text-red-400">{uploadError}</p>}
       </div>
     </>
   );
