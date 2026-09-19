@@ -392,9 +392,9 @@ export default function FolderSection({ docs, setDocs, loading, selectedDocs, se
                   <Badge variant={statusVariant(doc.status) as "green" | "red" | "amber"}>
                     {doc.status}
                   </Badge>
-                  {doc.page_count && (
+                  {doc.page_count ? (
                     <span className="text-slate-500 text-xs">{doc.page_count} pages</span>
-                  )}
+                  ) : null}
                   {doc.chunk_count > 0 && (
                     <span className="text-slate-500 text-xs">{doc.chunk_count} chunks</span>
                   )}

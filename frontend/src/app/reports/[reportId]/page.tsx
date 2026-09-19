@@ -228,9 +228,9 @@ export default function ReportViewPage() {
               {statusSaving && <LoadingSpinner size="sm" />}
             </div>
             <Badge variant="blue">{TYPE_LABELS[report.report_type] || report.report_type}</Badge>
-            {report.word_count && (
+            {report.word_count ? (
               <span className="text-slate-500 text-xs">{report.word_count.toLocaleString()} words</span>
-            )}
+            ) : null}
             <span className="text-slate-600 text-xs">
               {new Date(report.created_at).toLocaleDateString("en-US")}
             </span>
