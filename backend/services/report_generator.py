@@ -228,75 +228,11 @@ async def generate_report_stream(
     # ── Finalize report ───────────────────────────────────────────────────────
     full_content = f"# {request.title}\n\n" + "\n\n---\n\n".join(canonical_parts)
 
-    # Citation/grounding verification: one extra LLM-as-judge call checking whether
-    # full_content is actually supported by source_material. Skipped if there's no
-    # source material; a failure degrades gracefully (logged, continue without it)
-    # rather than blocking the save/complete flow.
-    citation_confidence: dict | None = None
-    if source_material:
-        try:
-            citation_confidence = await verify_grounding(full_content, source_material)
-        except Exception:
-            logger.warning(
-                "Citation verification failed for report %r — continuing without it",
-                report_id,
-                exc_info=True,
-            )
-
-    # Evaluator-optimizer feedback loop (services/report_quality.py): if the grader
-    # above flagged unsupported claims, attempt one bounded revision pass and keep
-    # whichever version (original or revised) scores at least as well. When
-    # citation_confidence is None (no source material, or verification failed),
-    # revise_if_ungrounded short-circuits to a single "final" event with the
-    # original content — no extra API calls.
-    final_content = full_content
-    final_grade = citation_confidence
-    async for kind, payload in revise_if_ungrounded(
-        full_content, source_material, citation_confidence,
-        system_prompt=system_prompt, cached_context=shared_context, usage_log_tag="report-revision",
+    async for event in _finalize_report(
+        report_id, db, full_content, source_material, system_prompt, shared_context,
+        sections_generated=total_sections_generated,
     ):
-        if kind == "revision_start":
-            yield sse_event("revision_start", payload)
-        elif kind == "token":
-            yield sse_event("token", {"text": payload, "section": "revision"})
-        elif kind == "thinking":
-            yield sse_event("thinking", {"text": payload, "section": "revision"})
-        elif kind == "revision_end":
-            yield sse_event("revision_end", payload)
-        elif kind == "final":
-            final_content = payload["content"]
-            final_grade = payload["grade"]
-
-    word_count = len(final_content.split())
-
-    # report.content is the canonical, possibly-revised report saved below. The
-    # ReportSection rows saved during the loop above keep the pre-revision text —
-    # they're the generation-time record, not re-synced after a revision.
-    report = db.query(Report).filter(Report.id == report_id).first()
-    if report:
-        report.content = final_content
-        report.status = "completed"
-        report.word_count = word_count
-        report.updated_at = datetime.utcnow()
-        if final_grade:
-            report.metadata_json = _merge_metadata_json(
-                report.metadata_json, {"citation_confidence": final_grade}
-            )
-        db.commit()
-
-    if final_grade:
-        yield sse_event("verification", {
-            "confidence_score": final_grade.get("confidence_score"),
-            "unsupported_claims": final_grade.get("unsupported_claims", []),
-        })
-
-    yield sse_event("complete", {
-        "report_id": report_id,
-        "word_count": word_count,
-        "sections": total_sections_generated,
-        "citation_confidence": final_grade,
-        "event_type": "complete",
-    })
+        yield event
 
 
 async def _generate_single_pass(
@@ -359,9 +295,35 @@ async def _generate_single_pass(
 
     full_content = f"# {request.title}\n\n{full_content_raw}"
 
-    # Citation/grounding verification — same integration point as the section-by-
-    # section path above (this function duplicates that path's save/complete
-    # logic already; not deduplicating further here per scope).
+    async for event in _finalize_report(
+        report_id, db, full_content, source_material, system_prompt, shared_context,
+        sections_generated=1,
+    ):
+        yield event
+
+
+async def _finalize_report(
+    report_id: str,
+    db: Session,
+    full_content: str,
+    source_material: str,
+    system_prompt: str,
+    shared_context: str,
+    sections_generated: int,
+) -> AsyncIterator[str]:
+    """Verify, optionally revise, save, and announce a finished report.
+
+    Shared tail of both generation paths (the section-by-section
+    generate_report_stream and the word-limit _generate_single_pass). They
+    differ only in how `full_content` is assembled — which the caller does —
+    and in how many sections they generated. The SSE events emitted here, and
+    their order, are part of the contract the frontend's report stream handler
+    depends on.
+    """
+    # Citation/grounding verification: one extra LLM-as-judge call checking whether
+    # full_content is actually supported by source_material. Skipped if there's no
+    # source material; a failure degrades gracefully (logged, continue without it)
+    # rather than blocking the save/complete flow.
     citation_confidence: dict | None = None
     if source_material:
         try:
@@ -373,8 +335,12 @@ async def _generate_single_pass(
                 exc_info=True,
             )
 
-    # Evaluator-optimizer feedback loop — same integration point as the section-by-
-    # section path above (see services/report_quality.py and the comment there).
+    # Evaluator-optimizer feedback loop (services/report_quality.py): if the grader
+    # above flagged unsupported claims, attempt one bounded revision pass and keep
+    # whichever version (original or revised) scores at least as well. When
+    # citation_confidence is None (no source material, or verification failed),
+    # revise_if_ungrounded short-circuits to a single "final" event with the
+    # original content — no extra API calls.
     final_content = full_content
     final_grade = citation_confidence
     async for kind, payload in revise_if_ungrounded(
@@ -395,9 +361,11 @@ async def _generate_single_pass(
 
     word_count = len(final_content.split())
 
-    # report.content is the canonical, possibly-revised report. There are no
-    # ReportSection rows in this single-pass path (word-limit generation writes
-    # the whole report in one call), so there's nothing else to keep in sync.
+    # report.content is the canonical, possibly-revised report saved below.
+    # ReportSection rows, where they exist (the section-by-section path), keep
+    # the pre-revision text — they're the generation-time record, not re-synced
+    # after a revision. The single-pass path writes no ReportSection rows at
+    # all, so it has nothing else to keep in sync either way.
     report = db.query(Report).filter(Report.id == report_id).first()
     if report:
         report.content = final_content
@@ -419,7 +387,7 @@ async def _generate_single_pass(
     yield sse_event("complete", {
         "report_id": report_id,
         "word_count": word_count,
-        "sections": 1,
+        "sections": sections_generated,
         "citation_confidence": final_grade,
         "event_type": "complete",
     })
