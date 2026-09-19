@@ -236,6 +236,67 @@ def build_synthesis_prompt(query: str, summarized: list[dict]) -> str:
     )
 
 
+async def _record_source(
+    result: TavilyResult,
+    ai_summary: str,
+    source_tier: str,
+    order: int,
+    session_id: str,
+    db: Session,
+    db_results: list[SearchResult],
+    summarized: list[dict],
+    queue: asyncio.Queue,
+) -> None:
+    """Persist one summarized source and emit its source_processed event.
+
+    Shared by the initial per-source loop (Step 3) and each gap-closing round
+    (Step 5) — both do the exact same three things per source: build the
+    SearchResult row, append it to the cumulative `summarized` list that
+    build_synthesis_prompt reads, and push a source_processed SSE event.
+    `order` is the caller's job (Step 3 uses its enumerate() index, the
+    gap-closing loop uses len(summarized) to keep numbering contiguous across
+    rounds) since that's the one thing that differs between call sites.
+
+    Does not call db.commit() — callers commit once after their loop.
+    SearchResult.id is a client-generated uuid4 (assigned below, before
+    db.add), so nothing in either loop needs a server-assigned id — or any
+    other durable side effect of this row — before the next iteration runs.
+    """
+    db_result = SearchResult(
+        id=str(uuid.uuid4()),
+        session_id=session_id,
+        url=result.url,
+        title=result.title,
+        snippet=result.snippet,
+        full_content=(result.content or "")[:10000],  # store first 10k chars
+        relevance_score=result.score,
+        ai_summary=ai_summary,
+        source_tier=source_tier,
+        published_date=result.published_date,
+        result_order=order,
+    )
+    db.add(db_result)
+    db_results.append(db_result)
+
+    summarized.append({
+        "order": order + 1,
+        "title": result.title,
+        "url": result.url,
+        "summary": ai_summary,
+        "score": result.score,
+        "tier": source_tier,
+    })
+
+    await queue.put(sse_event("source_processed", {
+        "order": order + 1,
+        "title": result.title,
+        "url": result.url,
+        "snippet": result.snippet,
+        "ai_summary": ai_summary,
+        "tier": source_tier,
+    }))
+
+
 async def run_research_agent(
     session_id: str,
     query: str,
@@ -334,40 +395,11 @@ async def run_research_agent(
     )
 
     for order, (result, (ai_summary, source_tier)) in enumerate(zip(unique_results, summaries)):
-        db_result = SearchResult(
-            id=str(uuid.uuid4()),
-            session_id=session_id,
-            url=result.url,
-            title=result.title,
-            snippet=result.snippet,
-            full_content=(result.content or "")[:10000],  # store first 10k chars
-            relevance_score=result.score,
-            ai_summary=ai_summary,
-            source_tier=source_tier,
-            published_date=result.published_date,
-            result_order=order,
+        await _record_source(
+            result, ai_summary, source_tier, order,
+            session_id, db, db_results, summarized, queue,
         )
-        db.add(db_result)
-        db.commit()
-        db_results.append(db_result)
-
-        summarized.append({
-            "order": order + 1,
-            "title": result.title,
-            "url": result.url,
-            "summary": ai_summary,
-            "score": result.score,
-            "tier": source_tier,
-        })
-
-        await queue.put(sse_event("source_processed", {
-            "order": order + 1,
-            "title": result.title,
-            "url": result.url,
-            "snippet": result.snippet,
-            "ai_summary": ai_summary,
-            "tier": source_tier,
-        }))
+    db.commit()
 
     # ── Step 4: Synthesis (streaming) ─────────────────────────────────────────
     await queue.put(sse_event("status", {"message": "Synthesizing findings..."}))
@@ -455,40 +487,11 @@ async def run_research_agent(
 
         for result, (ai_summary, source_tier) in zip(new_unique, new_summaries):
             order = len(summarized)
-            db_result = SearchResult(
-                id=str(uuid.uuid4()),
-                session_id=session_id,
-                url=result.url,
-                title=result.title,
-                snippet=result.snippet,
-                full_content=(result.content or "")[:10000],
-                relevance_score=result.score,
-                ai_summary=ai_summary,
-                source_tier=source_tier,
-                published_date=result.published_date,
-                result_order=order,
+            await _record_source(
+                result, ai_summary, source_tier, order,
+                session_id, db, db_results, summarized, queue,
             )
-            db.add(db_result)
-            db.commit()
-            db_results.append(db_result)
-
-            summarized.append({
-                "order": order + 1,
-                "title": result.title,
-                "url": result.url,
-                "summary": ai_summary,
-                "score": result.score,
-                "tier": source_tier,
-            })
-
-            await queue.put(sse_event("source_processed", {
-                "order": order + 1,
-                "title": result.title,
-                "url": result.url,
-                "snippet": result.snippet,
-                "ai_summary": ai_summary,
-                "tier": source_tier,
-            }))
+        db.commit()
 
         # A brand-new synthesis is about to stream, superseding the previous
         # one — resynthesis_start lets the frontend distinguish this from
