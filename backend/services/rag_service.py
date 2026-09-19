@@ -1,4 +1,5 @@
 """RAG pipeline: document indexing and Q&A."""
+import logging
 import re
 import uuid
 from datetime import datetime
@@ -23,6 +24,8 @@ from services.text_editor_tool import (
 )
 from services.query_router import route_query, guidance_for
 from services.mcp_bridge import get_mcp_tool_defs, is_mcp_tool, call_mcp_tool
+
+logger = logging.getLogger(__name__)
 
 
 # Prompt used to turn an uploaded image into a searchable text document for
@@ -163,6 +166,20 @@ async def _embed_and_store(
     embedded/matched text is byte-identical to pre-feature behavior; only
     the harmless "context": "" Chroma metadata key differs.
 
+    WRITE ORDER (T-12) — the SQLite rows go in FIRST, the two search indexes
+    second. `bulk_save_objects` emits its INSERTs inside the open transaction
+    (the following flush() only pushes any other pending session state and
+    marks the "written but not yet durable" boundary), so the rows exist for
+    the rest of this function and vanish on rollback. Only once BOTH indexes
+    have accepted the chunks does the transaction commit. The old order
+    (Chroma -> BM25 -> commit) broke rag/reconcile.py's invariant "no index
+    entry without a backing document_chunks row" from the insertion side: a
+    failing commit left searchable, citable chunks whose rows never existed.
+    The delete side of the same invariant was fixed in c706a98; this is the
+    insert side. If either index write (or the commit) fails, whatever was
+    already written to an index is deleted by id before the exception is
+    re-raised — see the cleanup block below for which store gets cleaned when.
+
     Deliberately does NOT catch exceptions: the two callers have different
     failure policies (index_document marks status=error and re-raises;
     index_web_content marks status=error and swallows, since it runs as a
@@ -204,33 +221,84 @@ async def _embed_and_store(
         for c, ctx in zip(chunks, contexts)
     ]
 
-    # Batch add to ChromaDB. `documents` stays the ORIGINAL chunk text (the
-    # citation/display contract) — the combined (context + content) text was
-    # only needed to compute `embeddings` above.
-    vs.add_chunks(
-        chunk_ids=chunk_ids,
-        embeddings=embeddings,
-        documents=texts,
-        metadatas=metadatas,
-    )
+    # Read before the rollback below expires the instance — the cleanup
+    # logging must not trigger a refresh SELECT of its own.
+    doc_id = doc.id
 
-    # Mirror into the lexical (BM25) index: match text is `combined` (so
-    # exact-term search benefits from the situating context too), display
-    # text stays the original content, same display/match split as above.
-    lexical.add_chunks(
-        chunk_ids=chunk_ids,
-        documents=combined,
-        metadatas=metadatas,
-        display_documents=texts,
-        contexts=contexts,
-    )
-
+    # SQLite first, uncommitted (T-12 — see this function's docstring).
     db.bulk_save_objects(db_chunks)
-    doc.status = "indexed"
-    doc.page_count = page_count
-    doc.word_count = word_count
-    doc.indexed_at = datetime.utcnow()
-    db.commit()
+    db.flush()
+
+    # Which index writes actually completed, so the cleanup below deletes from
+    # the right store(s) and only the right store(s).
+    chroma_written = False
+    bm25_written = False
+    try:
+        # Batch add to ChromaDB. `documents` stays the ORIGINAL chunk text (the
+        # citation/display contract) — the combined (context + content) text was
+        # only needed to compute `embeddings` above.
+        vs.add_chunks(
+            chunk_ids=chunk_ids,
+            embeddings=embeddings,
+            documents=texts,
+            metadatas=metadatas,
+        )
+        chroma_written = True
+
+        # Mirror into the lexical (BM25) index: match text is `combined` (so
+        # exact-term search benefits from the situating context too), display
+        # text stays the original content, same display/match split as above.
+        lexical.add_chunks(
+            chunk_ids=chunk_ids,
+            documents=combined,
+            metadatas=metadatas,
+            display_documents=texts,
+            contexts=contexts,
+        )
+        bm25_written = True
+
+        doc.status = "indexed"
+        doc.page_count = page_count
+        doc.word_count = word_count
+        doc.indexed_at = datetime.utcnow()
+        db.commit()
+    except Exception:
+        # The chunk rows are not durable, so any index entry already written
+        # for them is an orphan the moment we let go. Undo the transaction,
+        # then take the entries back out of whichever store accepted them.
+        #
+        #   Chroma raises  -> nothing in either store (BM25 never ran).
+        #   BM25 raises    -> Chroma holds the ids; BM25 does not. Its
+        #                     add_chunks is one executemany + commit on its own
+        #                     connection, and the finally-close discards an
+        #                     uncommitted transaction, so it is all-or-nothing.
+        #   commit raises  -> both stores hold the ids.
+        #
+        # Chroma's single collection.add() is assumed all-or-nothing; if it
+        # ever half-wrote a batch before raising, those ids would survive here.
+        # scripts/reconcile_indexes.py is the backstop for that case.
+        db.rollback()
+        if bm25_written:
+            try:
+                lexical.delete_by_chunk_ids(chunk_ids)
+            except Exception:
+                logger.exception(
+                    "Failed to roll back BM25 entries for document %s — %d "
+                    "possible orphans: %s",
+                    doc_id, len(chunk_ids), chunk_ids,
+                )
+        if chroma_written:
+            try:
+                vs.delete_by_ids(chunk_ids)
+            except Exception:
+                logger.exception(
+                    "Failed to roll back Chroma entries for document %s — %d "
+                    "possible orphans: %s",
+                    doc_id, len(chunk_ids), chunk_ids,
+                )
+        # Cleanup never masks the failure: the callers' status="error" policy
+        # (and index_document's re-raise) depends on seeing the original.
+        raise
 
 
 async def index_document(doc_id: str, db: Session) -> None:

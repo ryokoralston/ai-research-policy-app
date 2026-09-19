@@ -14,6 +14,12 @@ from index_web_content, which the shared helper must NOT swallow:
 Also covers the normal .txt upload path end-to-end: chunk metadata persisted
 to DB + Chroma, page_count/word_count set, status="indexed".
 
+T-12 added the three failure-path tests at the bottom: the write order is
+SQLite (flushed, uncommitted) -> Chroma -> BM25 -> commit, and a failure
+anywhere after the flush must leave BOTH search indexes with none of the
+chunk ids, so rag/reconcile.py's "no index entry without a row" invariant
+survives a failed index run.
+
 chromadb / sentence-transformers are stubbed; EmbeddingService and VectorStore
 are replaced with fakes — no models, no network. Uses a real .txt file on disk
 (chunk_plain_text has no heavy deps); .pdf/.html branches are unchanged code
@@ -59,7 +65,18 @@ class _BrokenEmbeddingService:
 
 
 class _FakeVectorStore:
+    """Stateful enough to prove T-12's cleanup: `ids` is what the store would
+    actually hold, so a test can assert the index is EMPTY after a failed
+    index run rather than only that delete_by_ids happened to be called."""
     last_add = None
+    last_delete = None
+    ids: list[str] = []
+
+    @classmethod
+    def reset(cls):
+        _FakeVectorStore.last_add = None
+        _FakeVectorStore.last_delete = None
+        _FakeVectorStore.ids = []
 
     def add_chunks(self, chunk_ids, embeddings, documents, metadatas):
         _FakeVectorStore.last_add = {
@@ -68,6 +85,20 @@ class _FakeVectorStore:
             "documents": documents,
             "metadatas": metadatas,
         }
+        _FakeVectorStore.ids = _FakeVectorStore.ids + list(chunk_ids)
+
+    def delete_by_ids(self, chunk_ids):
+        _FakeVectorStore.last_delete = list(chunk_ids)
+        gone = set(chunk_ids)
+        _FakeVectorStore.ids = [i for i in _FakeVectorStore.ids if i not in gone]
+        return len(chunk_ids)
+
+
+class _ExplodingVectorStore(_FakeVectorStore):
+    """Chroma itself fails — the BM25 write must never be attempted."""
+
+    def add_chunks(self, chunk_ids, embeddings, documents, metadatas):
+        raise RuntimeError("chroma unavailable")
 
 
 class _FakeLexicalIndex:
@@ -79,6 +110,14 @@ class _FakeLexicalIndex:
     both fixes that leak and lets these tests assert on what _embed_and_store
     sends the lexical index (display/match/context split)."""
     last_add = None
+    last_delete = None
+    ids: list[str] = []
+
+    @classmethod
+    def reset(cls):
+        _FakeLexicalIndex.last_add = None
+        _FakeLexicalIndex.last_delete = None
+        _FakeLexicalIndex.ids = []
 
     def add_chunks(self, chunk_ids, documents, metadatas, display_documents=None, contexts=None):
         _FakeLexicalIndex.last_add = {
@@ -88,6 +127,22 @@ class _FakeLexicalIndex:
             "display_documents": display_documents,
             "contexts": contexts,
         }
+        _FakeLexicalIndex.ids = _FakeLexicalIndex.ids + list(chunk_ids)
+
+    def delete_by_chunk_ids(self, chunk_ids):
+        _FakeLexicalIndex.last_delete = list(chunk_ids)
+        gone = set(chunk_ids)
+        _FakeLexicalIndex.ids = [i for i in _FakeLexicalIndex.ids if i not in gone]
+        return len(chunk_ids)
+
+
+class _ExplodingLexicalIndex(_FakeLexicalIndex):
+    """BM25 fails AFTER Chroma has accepted the same ids — the asymmetric case
+    T-12 exists for (see the audit: "単に2行入れ替えるだけでは Chroma成功・
+    BM25失敗のケースで orphan が残る")."""
+
+    def add_chunks(self, chunk_ids, documents, metadatas, display_documents=None, contexts=None):
+        raise RuntimeError("bm25 index is locked")
 
 
 async def _fake_contextualize_chunks_empty(full_text, chunk_texts, concurrency=4):
@@ -126,17 +181,26 @@ def _write_txt(content: str) -> str:
     return path
 
 
-def _run_index(db, doc_id, embedding_cls=_FakeEmbeddingService, contextualize_fake=_fake_contextualize_chunks_empty):
+def _run_index(
+    db,
+    doc_id,
+    embedding_cls=_FakeEmbeddingService,
+    contextualize_fake=_fake_contextualize_chunks_empty,
+    vector_store_cls=_FakeVectorStore,
+    lexical_cls=_FakeLexicalIndex,
+):
     orig_embed, orig_vs, orig_lex, orig_ctx = (
         rag_service.EmbeddingService, rag_service.VectorStore,
         rag_service.LexicalIndex, rag_service.contextualize_chunks,
     )
     rag_service.EmbeddingService = embedding_cls
-    rag_service.VectorStore = _FakeVectorStore
-    rag_service.LexicalIndex = _FakeLexicalIndex
+    rag_service.VectorStore = vector_store_cls
+    rag_service.LexicalIndex = lexical_cls
     rag_service.contextualize_chunks = contextualize_fake
-    _FakeVectorStore.last_add = None
-    _FakeLexicalIndex.last_add = None
+    # Subclassed fakes deliberately share the base classes' state, so one
+    # reset covers both the working and the exploding variants.
+    _FakeVectorStore.reset()
+    _FakeLexicalIndex.reset()
     try:
         return asyncio.run(rag_service.index_document(doc_id, db))
     finally:
@@ -302,6 +366,115 @@ def test_contextual_retrieval_disabled_is_byte_identical_except_context_key():
         os.remove(path)
 
 
+def test_bm25_failure_removes_the_chunks_chroma_already_took():
+    """T-12, the asymmetric case: Chroma accepted the ids, then BM25 raised.
+    Without the cleanup those Chroma entries are orphans — searchable and
+    citable with no document_chunks row behind them, exactly what
+    rag/reconcile.py's invariant forbids."""
+    db = _make_db()
+    path = _write_txt(_long_content())
+    doc_id = _seed_doc(db, path)
+    try:
+        raised = None
+        try:
+            _run_index(db, doc_id, lexical_cls=_ExplodingLexicalIndex)
+        except Exception as exc:
+            raised = exc
+        assert isinstance(raised, RuntimeError), f"expected the original RuntimeError, got {raised!r}"
+        assert "bm25" in str(raised), str(raised)
+
+        written_ids = _FakeVectorStore.last_add["chunk_ids"]
+        assert written_ids, "Chroma should have been written before BM25 failed"
+        # Chroma cleaned by exact id (not delete_document by doc_id)...
+        assert _FakeVectorStore.last_delete == written_ids
+        assert _FakeVectorStore.ids == [], "no chunk ids may survive in Chroma"
+        # ...and BM25 never held anything, so it must not have been touched.
+        assert _FakeLexicalIndex.last_delete is None
+        assert _FakeLexicalIndex.ids == []
+
+        doc = db.query(Document).filter(Document.id == doc_id).first()
+        chunk_count = db.query(DocumentChunk).filter(DocumentChunk.document_id == doc_id).count()
+        assert chunk_count == 0, f"the flushed rows must roll back, found {chunk_count}"
+        assert doc.status == "error", doc.status
+        db.close()
+    finally:
+        os.remove(path)
+
+
+def test_chroma_failure_leaves_bm25_untouched():
+    """The other half of the asymmetry: when Chroma is what raises, nothing
+    reached either index, so BM25 must be neither written nor cleaned."""
+    db = _make_db()
+    path = _write_txt(_long_content())
+    doc_id = _seed_doc(db, path)
+    try:
+        raised = None
+        try:
+            _run_index(db, doc_id, vector_store_cls=_ExplodingVectorStore)
+        except Exception as exc:
+            raised = exc
+        assert isinstance(raised, RuntimeError), f"expected the original RuntimeError, got {raised!r}"
+        assert "chroma" in str(raised), str(raised)
+
+        assert _FakeLexicalIndex.last_add is None, "BM25 must not run after Chroma fails"
+        assert _FakeLexicalIndex.last_delete is None, "nothing to clean in BM25"
+        assert _FakeVectorStore.last_delete is None, "Chroma took nothing to clean"
+        assert _FakeVectorStore.ids == []
+
+        doc = db.query(Document).filter(Document.id == doc_id).first()
+        chunk_count = db.query(DocumentChunk).filter(DocumentChunk.document_id == doc_id).count()
+        assert chunk_count == 0
+        assert doc.status == "error", doc.status
+        db.close()
+    finally:
+        os.remove(path)
+
+
+def test_commit_failure_cleans_both_indexes():
+    """The failure the audit actually names: both indexes accepted the chunks
+    and the SQLite COMMIT is what fails. The flush cannot catch this one
+    (lock/disk errors surface at commit), so the commit is inside the same
+    guarded block and both stores get cleaned."""
+    db = _make_db()
+    path = _write_txt(_long_content())
+    doc_id = _seed_doc(db, path)
+    try:
+        real_commit = db.commit
+        state = {"failed": False}
+
+        def commit_failing_once():
+            # Only the indexing commit fails; the caller's own
+            # status="error" commit must still go through.
+            if not state["failed"]:
+                state["failed"] = True
+                raise RuntimeError("disk I/O error on commit")
+            return real_commit()
+
+        db.commit = commit_failing_once
+        raised = None
+        try:
+            _run_index(db, doc_id)
+        except Exception as exc:
+            raised = exc
+        db.commit = real_commit
+        assert isinstance(raised, RuntimeError), f"expected the original RuntimeError, got {raised!r}"
+        assert "commit" in str(raised), str(raised)
+
+        written_ids = _FakeVectorStore.last_add["chunk_ids"]
+        assert _FakeVectorStore.last_delete == written_ids
+        assert _FakeLexicalIndex.last_delete == written_ids
+        assert _FakeVectorStore.ids == []
+        assert _FakeLexicalIndex.ids == []
+
+        doc = db.query(Document).filter(Document.id == doc_id).first()
+        chunk_count = db.query(DocumentChunk).filter(DocumentChunk.document_id == doc_id).count()
+        assert chunk_count == 0
+        assert doc.status == "error", doc.status
+        db.close()
+    finally:
+        os.remove(path)
+
+
 def test_missing_document_or_file_path_is_a_noop():
     db = _make_db()
     # No document row at all
@@ -341,6 +514,9 @@ if __name__ == "__main__":
     _run("embedding failure marks error and reraises", test_embedding_failure_marks_error_and_reraises)
     _run("contextual retrieval integration combines text, preserves display", test_contextual_retrieval_integration_combines_text_preserves_display)
     _run("contextual retrieval disabled is byte-identical except context key", test_contextual_retrieval_disabled_is_byte_identical_except_context_key)
+    _run("bm25 failure removes the chunks chroma already took", test_bm25_failure_removes_the_chunks_chroma_already_took)
+    _run("chroma failure leaves bm25 untouched", test_chroma_failure_leaves_bm25_untouched)
+    _run("commit failure cleans both indexes", test_commit_failure_cleans_both_indexes)
     _run("missing document or file_path is a no-op", test_missing_document_or_file_path_is_a_noop)
 
     total = len(_PASSED) + len(_FAILED)
