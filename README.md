@@ -24,15 +24,15 @@ This project demonstrates how bounded, self-correcting AI agent loops can produc
 - **AI Policy Debate** — Simulate a multi-persona debate (e.g. pro-regulation vs. tech-optimist) on any AI policy topic. A Consensus Meter summarizes where participants actually agreed or diverged on each key claim
 - **Reports** — Generate PDF reports from three templates: Congressional Brief, Policy Memo, and Risk Assessment. Reports also include a citation confidence score grounding check
 - **Daily Digest** — Receive a daily email summarizing the latest developments on topics you define, including relevant federal rules and notices from the Federal Register (optional)
-- **Settings** — Configure models (claude-opus-4-6 / claude-haiku) and API keys from the browser
+- **Settings** — Configure models (auto-updated model catalog from Anthropic API) and API keys from the browser
 
 ## Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Frontend | Next.js 14 · TypeScript · Tailwind CSS |
+| Frontend | Next.js 15 · TypeScript · Tailwind CSS |
 | Backend | FastAPI · Python 3.12 |
-| AI | Anthropic Claude API (claude-opus-4-6 / claude-haiku-4-5) |
+| AI | Anthropic Claude API (auto-updated model catalog) |
 | Web Search | Tavily API |
 | Vector DB | ChromaDB + sentence-transformers |
 | Database | SQLite (SQLAlchemy) |

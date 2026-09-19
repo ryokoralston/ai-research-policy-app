@@ -27,12 +27,10 @@ Layered on that:
 
 ## What this does *not* do
 
-**Data is not scoped per user.** Research sessions, documents, reports,
-debates, and analyses are visible to every signed-in account. On a dedicated
-demo instance seeded with public material that is acceptable — reviewers see
-each other's runs — but it is the reason a demo must never be a second set of
-accounts on the production deployment. Say this plainly when handing out
-credentials, so it reads as a property of the demo rather than a surprise.
+This deployment is otherwise a full-featured replica of production. All features
+are active, data is scoped per user (as in production), and accounts share no
+visibility of each other's research sessions, documents, reports, debates, or
+analyses — the demo isolates each reviewer's work.
 
 ## Setting one up
 

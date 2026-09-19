@@ -188,7 +188,7 @@ def _build_html(
     <tr>
       <td style="padding:20px 32px; background:#f1f5f9;
                  font-size:12px; color:#94a3b8; text-align:center;">
-        Powered by <strong>IAPS Research App</strong> &nbsp;·&nbsp;
+        Powered by <strong>AI Policy Research Assistant</strong> &nbsp;·&nbsp;
         Claude Haiku + Tavily
       </td>
     </tr>

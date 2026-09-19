@@ -3,7 +3,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-echo "🚀 Starting IAPS Research App..."
+echo "🚀 Starting AI Policy Research Assistant..."
 echo ""
 
 # Check for .env
