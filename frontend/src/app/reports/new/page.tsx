@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ChevronRight, Search, Users, FileQuestion, CheckCircle } from "lucide-react";
-import { api, authFetch, postStream } from "@/lib/api";
+import { api, postStream } from "@/lib/api";
 import type { CitationConfidence } from "@/lib/types";
 import { countWords, parseWordRange, wordCountColor } from "@/lib/wordCount";
 import StreamingText from "@/components/ui/StreamingText";
@@ -126,9 +126,9 @@ function NewReportForm() {
   useEffect(() => {
     if (sourceType !== "debate") return;
     setDebatesLoading(true);
-    authFetch(`${BASE_URL}/api/debate/`)
-      .then((r) => r.json())
-      .then((data: DebateOption[]) => {
+    api.debate
+      .list()
+      .then((data) => {
         setDebates(data.filter((d) => d.status === "complete"));
         setDebatesLoading(false);
       })
@@ -139,9 +139,9 @@ function NewReportForm() {
   useEffect(() => {
     if (sourceType !== "research") return;
     setSessionsLoading(true);
-    authFetch(`${BASE_URL}/api/research/`)
-      .then((r) => r.json())
-      .then((data: ResearchSession[]) => {
+    api.research
+      .list()
+      .then((data) => {
         setSessions(data.filter((s) => s.status === "complete"));
         setSessionsLoading(false);
       })

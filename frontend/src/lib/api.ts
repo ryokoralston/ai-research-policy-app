@@ -1,4 +1,4 @@
-import type { ResearchSession, Document, Report, RiskAnalysis } from "./types";
+import type { ResearchSession, Document, Report, RiskAnalysis, Debate, DebateDetail } from "./types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -335,6 +335,24 @@ export const api = {
       }),
     delete: (key: string) =>
       request<{ deleted: string }>(`/api/admin/personas/${key}`, { method: "DELETE" }),
+  },
+
+  debate: {
+    // GET /api/debate/ — the caller's debates, most recent first (see
+    // backend routers/debate.py list_debates / schemas/debate.py
+    // DebateResponse). No arguments transcript — that's get() below only.
+    list: () => request<Debate[]>("/api/debate/"),
+    // GET /api/debate/{id} — full detail including the argument transcript
+    // (schemas/debate.py DebateDetail).
+    get: (id: string) => request<DebateDetail>(`/api/debate/${id}`),
+    start: (body: { topic: string; persona_keys: string[] }, signal?: AbortSignal) =>
+      request<{ debate_id: string }>("/api/debate/start", {
+        method: "POST",
+        body: JSON.stringify(body),
+        signal,
+      }),
+    delete: (id: string) => request<{ deleted: string }>(`/api/debate/${id}`, { method: "DELETE" }),
+    streamUrl: (debateId: string) => `${BASE_URL}/api/debate/${debateId}/stream`,
   },
 
   auditLog: {

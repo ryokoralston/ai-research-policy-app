@@ -3,13 +3,11 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Users, Download, ChevronDown, ChevronRight, Loader2, FileText } from "lucide-react";
-import { authFetch, consumeSseStream, type PersonaApi } from "@/lib/api";
+import { api, authFetch, consumeSseStream, type PersonaApi } from "@/lib/api";
 import { type Argument, buildMarkdown, buildPlainText, downloadBlob, exportAsPdf } from "@/lib/exportDebate";
 import type { ConsensusClaim } from "@/lib/types";
 import ConsensusMeter from "@/components/debate/ConsensusMeter";
 import Badge from "@/components/ui/Badge";
-
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // ── Persona metadata ────────────────────────────────────────────────────────
 // Fetched from GET /api/personas/ (built-in + admin-created custom personas,
@@ -128,9 +126,9 @@ export default function DebatePage() {
   // them to a debate — see backend/routers/debate.py's DEFAULT_PERSONA_ORDER),
   // so the initial selection is the built-in subset only.
   useEffect(() => {
-    authFetch(`${BASE_URL}/api/personas/`)
-      .then((r) => r.json())
-      .then((data: PersonaApi[]) => {
+    api.personas
+      .list()
+      .then((data) => {
         const list = data.map(toPersonaMeta);
         setPersonas(list);
         setSelectedPersonas(new Set(list.filter((p) => !p.isCustom).map((p) => p.key)));
@@ -141,10 +139,7 @@ export default function DebatePage() {
 
   // Load past debates on mount
   useEffect(() => {
-    authFetch(`${BASE_URL}/api/debate/`)
-      .then((r) => r.json())
-      .then(setPastDebates)
-      .catch(() => {});
+    api.debate.list().then(setPastDebates).catch(() => {});
   }, []);
 
   // Auto-scroll as content streams
@@ -179,21 +174,18 @@ export default function DebatePage() {
 
     try {
       // 1. Create debate
-      const startRes = await authFetch(`${BASE_URL}/api/debate/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      const { debate_id } = await api.debate.start(
+        {
           topic: topic.trim(),
           persona_keys: Array.from(selectedPersonas),
-        }),
-        signal: abortRef.current.signal,
-      });
-      const { debate_id } = await startRes.json();
+        },
+        abortRef.current.signal
+      );
       setDebate((prev) => ({ ...prev, debateId: debate_id }));
 
       // 2. Stream SSE events
       await consumeGetSSE(
-        `${BASE_URL}/api/debate/${debate_id}/stream`,
+        api.debate.streamUrl(debate_id),
         (event, data) => {
           const d = data as Record<string, unknown>;
 
@@ -266,10 +258,7 @@ export default function DebatePage() {
           } else if (event === "complete") {
             setDebate((prev) => ({ ...prev, status: "complete", currentPersona: null }));
             // Refresh past debates list
-            authFetch(`${BASE_URL}/api/debate/`)
-              .then((r) => r.json())
-              .then(setPastDebates)
-              .catch(() => {});
+            api.debate.list().then(setPastDebates).catch(() => {});
           } else if (event === "error") {
             setDebate((prev) => ({
               ...prev,
@@ -294,9 +283,8 @@ export default function DebatePage() {
 
   const handleLoadPast = async (id: string) => {
     try {
-      const res = await authFetch(`${BASE_URL}/api/debate/${id}`);
-      const data = await res.json();
-      const args: Argument[] = (data.arguments ?? []).map((a: Record<string, unknown>) => ({
+      const data = await api.debate.get(id);
+      const args: Argument[] = (data.arguments ?? []).map((a) => ({
         personaKey: a.persona_key as string,
         personaName: a.persona_name as string,
         roundNumber: a.round_number as number,
@@ -332,7 +320,7 @@ export default function DebatePage() {
     // Without this, the click would bubble up to the row's own onClick
     // (handleLoadPast) since this button sits inside that row.
     e.stopPropagation();
-    await authFetch(`${BASE_URL}/api/debate/${id}`, { method: "DELETE" });
+    await api.debate.delete(id);
     setPastDebates((prev) => prev.filter((d) => d.id !== id));
     if (debate.debateId === id) {
       setDebate({ debateId: null, status: "idle", currentRound: 0, currentPersona: null, arguments: [], synthesis: "", consensus: [], error: null });

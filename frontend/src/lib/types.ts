@@ -172,6 +172,26 @@ export interface Debate {
   completed_at: string | null;
 }
 
+// One persona's turn in a debate transcript — backend
+// schemas/debate.py DebateArgumentResponse.
+export interface DebateArgument {
+  id: string;
+  persona_key: string;
+  persona_name: string;
+  round_number: number;
+  round_name: string;
+  content: string;
+  order_index: number;
+  created_at: string;
+}
+
+// GET /api/debate/{id} response — Debate plus the full argument transcript
+// (backend schemas/debate.py DebateDetail). GET /api/debate/ (list) returns
+// plain Debate[] — no arguments array — see DebateResponse in the same file.
+export interface DebateDetail extends Debate {
+  arguments: DebateArgument[];
+}
+
 // One claim in the Multi-Persona Debate's "Consensus Meter" — see backend
 // services/consensus_meter.py's extract_consensus(). `stances` is keyed by
 // persona_key (see backend templates/personas.py), one entry per persona
