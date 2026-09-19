@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Upload, RefreshCw, Link } from "lucide-react";
 import { api } from "@/lib/api";
+import { isSubmitEnter } from "@/lib/keyboard";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 
 interface UploadPanelProps {
@@ -78,7 +79,7 @@ export default function UploadPanel({ onUploaded }: UploadPanelProps) {
             type="url"
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleIngestUrl()}
+            onKeyDown={(e) => isSubmitEnter(e) && handleIngestUrl()}
             placeholder="Paste a web page URL or YouTube link..."
             disabled={ingesting}
             className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100

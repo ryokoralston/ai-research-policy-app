@@ -4,6 +4,7 @@ import { Suspense, useState, useRef, useEffect, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ExternalLink, FileText, FolderPlus, ArrowUp, Square } from "lucide-react";
 import { api, authFetch, consumeSseStream } from "@/lib/api";
+import { isSubmitEnter } from "@/lib/keyboard";
 import StreamingText from "@/components/ui/StreamingText";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import ModelPicker, { type ModelOption } from "@/components/ui/ModelPicker";
@@ -239,7 +240,7 @@ function ResearchAgent() {
               // isComposing guard: while an IME is mid-conversion (Japanese, etc.)
               // Enter commits the candidate — submitting there would fire on a
               // half-typed query.
-              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+              if (isSubmitEnter(e)) {
                 e.preventDefault();
                 handleSubmit(e);
               }

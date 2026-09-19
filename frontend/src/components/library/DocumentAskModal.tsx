@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { X } from "lucide-react";
 import { api, postStream } from "@/lib/api";
+import { isSubmitEnter } from "@/lib/keyboard";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import type { Document, DocumentCitation } from "@/lib/types";
 
@@ -133,7 +134,7 @@ export default function DocumentAskModal({ doc, onClose }: DocumentAskModalProps
               type="text"
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && !running && handleAsk()}
+              onKeyDown={(e) => isSubmitEnter(e) && !running && handleAsk()}
               placeholder="Ask a question about this document..."
               className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500"
               disabled={running}

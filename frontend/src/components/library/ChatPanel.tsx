@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Settings2, ChevronDown } from "lucide-react";
 import { api, postStream } from "@/lib/api";
+import { isSubmitEnter } from "@/lib/keyboard";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
 import StreamingText from "@/components/ui/StreamingText";
 import RemindersPanel, { type Reminder } from "./RemindersPanel";
@@ -401,7 +402,7 @@ export default function ChatPanel({
             type="text"
             value={question}
             onChange={(e) => setQuestion(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !qaRunning && handleAsk()}
+            onKeyDown={(e) => isSubmitEnter(e) && !qaRunning && handleAsk()}
             placeholder={chatMessages.length > 0 ? "Ask a follow-up question..." : "Ask a question..."}
             className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500"
             disabled={qaRunning}

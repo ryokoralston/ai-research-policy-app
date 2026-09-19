@@ -6,6 +6,7 @@ import {
   FileCode, File, Youtube, FolderPlus, Pencil, Check, X, MessageCircleQuestion,
 } from "lucide-react";
 import { api } from "@/lib/api";
+import { isSubmitEnter } from "@/lib/keyboard";
 import type { Document } from "@/lib/types";
 import Badge from "@/components/ui/Badge";
 import LoadingSpinner from "@/components/ui/LoadingSpinner";
@@ -472,7 +473,7 @@ export default function FolderSection({ docs, setDocs, loading, selectedDocs, se
               type="text"
               value={folderName}
               onChange={(e) => { setFolderName(e.target.value); setSelectedFolderId(""); }}
-              onKeyDown={(e) => e.key === "Enter" && handleAssignFolder()}
+              onKeyDown={(e) => isSubmitEnter(e) && handleAssignFolder()}
               placeholder="New folder name..."
               className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500 mb-4"
               autoFocus
