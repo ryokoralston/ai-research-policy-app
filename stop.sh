@@ -1,7 +1,7 @@
 #!/bin/bash
 # Stop both backend and frontend development servers
 
-echo "Stopping IAPS Research App..."
+echo "Stopping AI Policy Research Assistant..."
 
 PIDS=$(lsof -ti:8000,3000,3001 2>/dev/null)
 
