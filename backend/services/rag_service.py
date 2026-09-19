@@ -482,6 +482,35 @@ def _partial_query_from_snapshot(snapshot) -> str | None:
     return None
 
 
+# Shared spans of the Ask Documents system prompt: identical text that appears
+# in both the default system prompt and the custom_system branch below
+# (extracted verbatim — see T-15 audit — so it exists in exactly one place).
+CITATION_AND_SOURCE_RULES = (
+    "Cite sources using the bracketed number shown before each source in the search results "
+    "(e.g. [1]). Place the citation number immediately after the specific sentence or claim it "
+    "supports — do not just cite once at the end. If a claim draws on multiple sources, cite "
+    "each one, e.g. [1][3]. "
+    "If the tool returns no relevant content, say so explicitly. "
+    "Answer library-first: prefer material from search_documents. You may also use the "
+    "web_search tool when the document library lacks the information you need or the question "
+    "concerns current events; when your answer draws on web results, make clear which parts come "
+    "from the web — the bracketed [N] citations remain library-only and never refer to web sources. "
+)
+
+PRIOR_RESULTS_AND_REMINDERS_INTRO = (
+    "Search results from earlier turns remain visible in the conversation history — if they "
+    "already contain what you need, you may cite their bracketed numbers directly without "
+    "searching again. "
+    "You can also set reminders for the user. "
+)
+
+DRAFT_WORKSPACE_INSTRUCTIONS = (
+    "You also have a draft workspace: use the text editor tool to create and revise draft files "
+    "(memos, briefs, notes) when the user asks you to draft, save, or edit a document — refer to "
+    "files by simple relative names like 'briefing.md'. Before modifying or overwriting an existing draft, view it first; after your final edit, view the file once more to verify the result before reporting it done."
+)
+
+
 async def answer_question(
     question: str,
     doc_ids: list[str] | None,
@@ -617,50 +646,26 @@ async def answer_question(
         "Answer questions based only on material returned by the search_documents tool. "
         "Before answering any substantive question, call search_documents with a relevant query. "
         "Be concise and direct — aim for 3–5 sentences unless the question requires more detail. "
-        "Cite sources using the bracketed number shown before each source in the search results "
-        "(e.g. [1]). Place the citation number immediately after the specific sentence or claim it "
-        "supports — do not just cite once at the end. If a claim draws on multiple sources, cite "
-        "each one, e.g. [1][3]. "
-        "If the tool returns no relevant content, say so explicitly. "
-        "Answer library-first: prefer material from search_documents. You may also use the "
-        "web_search tool when the document library lacks the information you need or the question "
-        "concerns current events; when your answer draws on web results, make clear which parts come "
-        "from the web — the bracketed [N] citations remain library-only and never refer to web sources. "
-        "You have access to the conversation history — use it to answer follow-up questions naturally. "
-        "Search results from earlier turns remain visible in the conversation history — if they "
-        "already contain what you need, you may cite their bracketed numbers directly without "
-        "searching again. "
-        "You can also set reminders for the user. "
-        "For any relative date or time expression ('next Thursday', 'in two weeks', 'a week from Friday'), "
+        + CITATION_AND_SOURCE_RULES
+        + "You have access to the conversation history — use it to answer follow-up questions naturally. "
+        + PRIOR_RESULTS_AND_REMINDERS_INTRO
+        + "For any relative date or time expression ('next Thursday', 'in two weeks', 'a week from Friday'), "
         "you MUST call get_current_datetime first, then add_duration_to_datetime to compute the exact "
         "target datetime, and finally call set_reminder — never compute dates yourself. "
-        "You also have a draft workspace: use the text editor tool to create and revise draft files "
-        "(memos, briefs, notes) when the user asks you to draft, save, or edit a document — refer to "
-        "files by simple relative names like 'briefing.md'. Before modifying or overwriting an existing draft, view it first; after your final edit, view the file once more to verify the result before reporting it done."
+        + DRAFT_WORKSPACE_INSTRUCTIONS
     )
     system = (
-        f"{custom_system}\n\n"
-        "Additional constraints: Answer based only on material returned by the search_documents tool. "
-        "Call the tool before answering substantive questions. "
-        "Cite sources using the bracketed number shown before each source in the search results "
-        "(e.g. [1]). Place the citation number immediately after the specific sentence or claim it "
-        "supports — do not just cite once at the end. If a claim draws on multiple sources, cite "
-        "each one, e.g. [1][3]. "
-        "If the tool returns no relevant content, say so explicitly. "
-        "Answer library-first: prefer material from search_documents. You may also use the "
-        "web_search tool when the document library lacks the information you need or the question "
-        "concerns current events; when your answer draws on web results, make clear which parts come "
-        "from the web — the bracketed [N] citations remain library-only and never refer to web sources. "
-        "Search results from earlier turns remain visible in the conversation history — if they "
-        "already contain what you need, you may cite their bracketed numbers directly without "
-        "searching again. "
-        "You can also set reminders for the user. "
-        "For any relative date or time ('next Thursday', 'in two weeks', 'a week from Friday'), "
-        "call get_current_datetime first, then add_duration_to_datetime, then set_reminder — "
-        "never compute dates yourself. "
-        "You also have a draft workspace: use the text editor tool to create and revise draft files "
-        "(memos, briefs, notes) when the user asks you to draft, save, or edit a document — refer to "
-        "files by simple relative names like 'briefing.md'. Before modifying or overwriting an existing draft, view it first; after your final edit, view the file once more to verify the result before reporting it done."
+        (
+            f"{custom_system}\n\n"
+            "Additional constraints: Answer based only on material returned by the search_documents tool. "
+            "Call the tool before answering substantive questions. "
+            + CITATION_AND_SOURCE_RULES
+            + PRIOR_RESULTS_AND_REMINDERS_INTRO
+            + "For any relative date or time ('next Thursday', 'in two weeks', 'a week from Friday'), "
+            "call get_current_datetime first, then add_duration_to_datetime, then set_reminder — "
+            "never compute dates yourself. "
+            + DRAFT_WORKSPACE_INSTRUCTIONS
+        )
         if custom_system else default_system
     )
     # The retrieved chunks are untrusted document content — guard against any
