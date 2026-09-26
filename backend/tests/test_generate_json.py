@@ -22,6 +22,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite://")
 
 import services.anthropic_client as anthropic_client
 import services.research_agent as research_agent
+from services.tavily_client import SearchResult as FakeSearchResult
 
 
 # ── generate_json unit tests ──────────────────────────────────────────────────
@@ -86,12 +87,31 @@ class _FakeTavily:
         pass
 
     async def search(self, query, max_results=5, **kwargs):
-        return []  # no sources — pipeline continues with an empty result set
+        # Must stay non-empty: run_research_agent raises RuntimeError on a
+        # zero-sources result set (see research_agent.py's Step 2 guard), so
+        # an empty list here would crash these decomposition-focused tests
+        # instead of letting them assert.
+        return [
+            FakeSearchResult(
+                url="https://example.com/fake-source",
+                title="Fake Source Title",
+                snippet="A fake snippet describing the fake source.",
+                content="Fake full page content used for summarization.",
+                score=0.9,
+                published_date="2026-01-01",
+            )
+        ]
 
 
 async def _fake_stream_text(prompt, system="", model=None, max_tokens=8192, temperature=1.0):
     yield "synthesis "
     yield "text"
+
+
+async def _fake_generate_text(prompt, system="", temperature=None, **kwargs):
+    # Matches services.source_tier.split_tier's expected format: a first line
+    # `SOURCE_TYPE: <type>` followed by the summary body on the next line.
+    return "SOURCE_TYPE: general_web\nA fake summary of the fake source."
 
 
 def _run_agent(monkey_generate_json):
@@ -112,10 +132,16 @@ def _run_agent(monkey_generate_json):
     db.add(session)
     db.commit()
 
-    orig = (research_agent.generate_json, research_agent.TavilyClient, research_agent.stream_text)
+    orig = (
+        research_agent.generate_json,
+        research_agent.TavilyClient,
+        research_agent.stream_text,
+        research_agent.generate_text,
+    )
     research_agent.generate_json = monkey_generate_json
     research_agent.TavilyClient = _FakeTavily
     research_agent.stream_text = _fake_stream_text
+    research_agent.generate_text = _fake_generate_text
     try:
         queue = asyncio.Queue()
         asyncio.run(research_agent.run_research_agent(
@@ -125,7 +151,12 @@ def _run_agent(monkey_generate_json):
         while not queue.empty():
             events.append(queue.get_nowait())
     finally:
-        research_agent.generate_json, research_agent.TavilyClient, research_agent.stream_text = orig
+        (
+            research_agent.generate_json,
+            research_agent.TavilyClient,
+            research_agent.stream_text,
+            research_agent.generate_text,
+        ) = orig
 
     db.refresh(session)
     return session, events, db
@@ -141,6 +172,17 @@ def test_decomposition_uses_generate_json():
     assert len(queries_events) == 1
     assert "angle one" in queries_events[0]
     assert session.status == "complete", session.status
+
+    # Proves _fake_generate_text (not a swallowed exception falling back to
+    # DEFAULT_TIER, and not a live API call) actually produced the summary:
+    # a real call would hit an empty ANTHROPIC_API_KEY and 401, which
+    # _summarize_source's bare `except Exception` would silently swallow.
+    from models import SearchResult
+
+    rows = db.query(SearchResult).filter_by(session_id=session.id).all()
+    assert len(rows) == 1, rows
+    assert rows[0].source_tier == "general_web", rows[0].source_tier
+    assert rows[0].ai_summary == "A fake summary of the fake source.", rows[0].ai_summary
     db.close()
 
 
