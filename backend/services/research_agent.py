@@ -13,6 +13,7 @@ Pipeline:
      build_gap_check_prompt / MAX_GAP_ITERATIONS below.
 """
 import asyncio
+import logging
 import uuid
 from datetime import datetime
 
@@ -28,6 +29,8 @@ from services.anthropic_client import (
 )
 from services.source_tier import DEFAULT_TIER, TIER_INSTRUCTION, split_tier, tier_label
 from services.tavily_client import TavilyClient, SearchResult as TavilyResult
+
+logger = logging.getLogger(__name__)
 
 
 # Evidence-gap-closing loop (see build_gap_check_prompt / run_research_agent
@@ -332,8 +335,9 @@ async def run_research_agent(
     # Deduplicate by URL
     seen_urls: set[str] = set()
     unique_results: list[TavilyResult] = []
-    for batch in results_nested:
+    for sub_query, batch in zip(sub_queries, results_nested):
         if isinstance(batch, Exception):
+            logger.error("Tavily search failed for sub-query %r: %s", sub_query, batch)
             continue
         for r in batch:
             if r.url not in seen_urls:
@@ -345,6 +349,12 @@ async def run_research_agent(
     unique_results = unique_results[:max_sources]
 
     await queue.put(sse_event("sources_found", {"count": len(unique_results)}))
+
+    if not unique_results:
+        raise RuntimeError(
+            f"No sources found for query {query!r} — all {len(sub_queries)} "
+            "sub-query searches failed or returned zero results"
+        )
 
     # ── Step 3: Per-Source Summarization ──────────────────────────────────────
     await queue.put(sse_event("status", {"message": "Summarizing sources..."}))
@@ -463,8 +473,9 @@ async def run_research_agent(
         # sources never duplicate anything already found (original or prior
         # gap rounds).
         new_unique: list[TavilyResult] = []
-        for batch in gap_results_nested:
+        for gap_query, batch in zip(gap_queries, gap_results_nested):
             if isinstance(batch, Exception):
+                logger.error("Tavily gap search failed for sub-query %r: %s", gap_query, batch)
                 continue
             for r in batch:
                 if r.url not in seen_urls:
