@@ -7,6 +7,16 @@
 - If you edit a service file (e.g. `research_agent.py`, `risk_analyzer.py`), run the related eval.
 - Never commit code that has not been executed at least once in this session.
 
+## テストのルール
+
+- テストを書くときは、必ず期待する結果をアサートで確認する。
+  「エラーなく動いた」だけのテストは書かない。
+- 正常なケースに加えて、エッジケース（空の入力、不正な値、上限値など）もテストする。
+- テストが失敗したら、テストを書き換えて合格させない。
+  先に原因を説明し、直すのがコードかテストかを私に確認する。
+- テスト実行後は、合格・失敗の件数に加えて、
+  「各テストが何を確認しているか」を短く報告する。
+
 ## Project Preferences
 
 - No LangChain — use Anthropic SDK directly.
@@ -33,5 +43,5 @@ Use simple explanations so non-engineers can understand.
 
 - **Backend**: Python + FastAPI — `cd backend && source venv/bin/activate && uvicorn main:app --reload --port 8000`
 - **Frontend**: Next.js 15 + TypeScript + Tailwind — `cd frontend && pnpm dev` (port 3000). Package manager is **pnpm**, not npm — install scripts are denied by default in `frontend/pnpm-workspace.yaml`.
-- **Models**: claude-opus-4-6 (synthesis/reports), claude-haiku-3-5 (per-source summaries), claude-haiku-4-5 (dataset generation)
+- **Models**: claude-opus-5 (synthesis/reports, `config.py` `claude_model`), claude-haiku-4-5 (per-source summaries and dataset generation, `claude_fast_model`). Model names can also be changed at runtime from the Settings screen (DB `model_settings` takes priority).
 - **Evals**: `python -m evals.eval_research_queries` / `eval_synthesis_quality` / `eval_prompt_versions`
