@@ -67,6 +67,7 @@ dnspython==2.8.0
 # imported directly by this project. ---
 requests>=2.34.2          # PYSEC-2026-2275
 urllib3>=2.7.0             # PYSEC-2026-141/142
+certifi>=2026.10.19        # removes the compromised eMudhra emSign roots (Oct 2026)
 Pillow>=12.3.0              # PYSEC-2026-165/2250..2257/2874/3451..3453 — processes uploaded images (services/ingestion.py vision path)
 idna==3.18                  # PYSEC-2026-215 — hostname parsing, relevant to the SSRF-guard fetch path (services/ingestion.py); pinned for email-validator compatibility
 transformers>=5.10.0        # PYSEC-2025-217, PYSEC-2026-2290/2288/2289, CVE-2026-9856 — version comes from sentence-transformers; this floor just stops a resolve back into the unfixed 4.x line
